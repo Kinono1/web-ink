@@ -31,3 +31,7 @@ Web Ink has no account, server API, cloud synchronization, analytics, telemetry,
 You can pause an origin, disable a page, and delete individual annotations. Export JSON before uninstalling, clearing browser or extension data, changing profiles, or replacing a profile. Uninstalling removes extension-local data; Web Ink cannot recover records that were not backed up.
 
 Backup schema v2 accepts v1 imports. Imported settings do not replace local settings. Conflicting IDs retain local records unless overwrite is explicitly selected.
+
+## Deletion metadata
+
+Deleting an annotation removes its content from the annotation library. A small local deletion record (ID, source key and revision, without quotation/note/drawing data) remains to reject stale writes and support safe session undo. These internal deletion records are not included in exported backups.

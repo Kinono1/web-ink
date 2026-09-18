@@ -13,11 +13,20 @@ export interface LibraryStatsRecord {
   pageBytes: number;
 }
 
+/** Durable deletion generation used to prevent an ID/revision ABA resurrection. */
+export interface TombstoneRecord {
+  id: string;
+  pageUrl: string;
+  /** Revision of the record that was deleted. A restoration must advance it. */
+  revision: number;
+}
+
 /** Extension-owned IndexedDB. Content scripts access it only through the service worker. */
 export class WebInkDatabase extends Dexie {
   annotations!: Table<Annotation, string>;
   pages!: Table<PageRecord, string>;
   stats!: Table<LibraryStatsRecord, 'library'>;
+  tombstones!: Table<TombstoneRecord, string>;
 
   constructor(name = 'web-ink') {
     super(name);
@@ -43,6 +52,12 @@ export class WebInkDatabase extends Dexie {
       });
       await pages.each(page => { pageCount += 1; pageBytes += new TextEncoder().encode(JSON.stringify(page)).byteLength; });
       await transaction.table('stats').put({ id: 'library', annotationCount, textCount, imageCount, pdfTextCount, pdfAreaCount, pageCount, annotationBytes, pageBytes });
+    });
+    this.version(3).stores({
+      annotations: 'id, pageUrl, updatedAt, [updatedAt+id], [pageUrl+updatedAt+id], [kind+updatedAt+id], [color+updatedAt+id], *tags',
+      pages: 'url, updatedAt',
+      stats: 'id',
+      tombstones: 'id, pageUrl, revision',
     });
   }
 }

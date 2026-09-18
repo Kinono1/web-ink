@@ -129,6 +129,8 @@ export type Result<T> = { ok: true; data: T } | { ok: false; error: string; code
 export type Request =
   | { type: 'annotations.list'; pageUrl?: string }
   | { type: 'annotations.put'; annotation: Annotation; expectedRevision: number }
+  /** Restore a just-deleted identity through its tombstone; never use put(expectedRevision: 0). */
+  | { type: 'annotations.restore'; annotation: Annotation }
   | { type: 'annotations.delete'; id: string; expectedRevision: number }
   | { type: 'annotations.query'; query: AnnotationQuery }
   | { type: 'annotations.query.cancel'; requestId: string }

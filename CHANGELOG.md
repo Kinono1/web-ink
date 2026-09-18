@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.1 — annotation removal fix, 2026-09-19
+
+- Added direct removal on saved webpage text/image annotations and PDF highlights/areas, with session undo.
+- Replaced browser-native delete confirmation with an inline confirmation in the library.
+- Kept PDF text selection working through the annotation overlay.
+- Added durable deletion revisions so restoration cannot let a stale window overwrite restored records. Internal database v3 preserves existing data; portable backup schema remains v2.
+
+
 ## 0.2.0 — preview, 2026-09-19
 
 This preview adds PDF reading and a quieter webpage engine. Local validation and measurement boundaries are documented in docs/VALIDATION.md and docs/PERFORMANCE.md; publishing requires the dedicated CI checks to pass.

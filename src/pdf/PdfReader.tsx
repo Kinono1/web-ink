@@ -61,9 +61,12 @@ export function PdfReader() {
     [rotation, setRotation] = useState(0),
     [pageNumber, setPageNumber] = useState(1);
   const [selection, setSelection] = useState<SelectionTarget>();
+  const [picked, setPicked] = useState<PdfAnnotation>();
+  const [undoRecord, setUndoRecord] = useState<PdfAnnotation>();
   const [unsaved, setUnsaved] = useState<PdfAnnotation>();
   const [busy, setBusy] = useState(false),
-    [saving, setSaving] = useState(false);
+    [saving, setSaving] = useState(false),
+    [removing, setRemoving] = useState(false);
   const [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   const [pageWindow, setPageWindow] = useState({ start: 0, end: 3 });
@@ -200,7 +203,7 @@ export function PdfReader() {
     return () => { scroller.removeEventListener('scroll', scroll); resize.disconnect(); cancelAnimationFrame(frame); };
   }, [opened, layout]);
   async function openPdf(file?: File) {
-    if (unsaved || saving) {
+    if (unsaved || saving || removing) {
       setError(
         t(
           "请先保存或放弃未保存标注。",
@@ -230,6 +233,8 @@ export function PdfReader() {
     setBusy(true);
     setOpened(undefined);
     setSelection(undefined);
+    setPicked(undefined);
+    setUndoRecord(undefined);
     setRecords([]);
     setDimensions({});
     setPageWindow({ start: 0, end: 3 });
@@ -341,7 +346,7 @@ export function PdfReader() {
     }
   }
   async function toggle() {
-    if (!key || unsaved || saving) return;
+    if (!key || unsaved || saving || removing) return;
     try {
       const mode = await request<PageMode>({
         type: "page.mode.put",
@@ -350,6 +355,7 @@ export function PdfReader() {
       });
       setEnabled(mode.enabled);
       setSelection(undefined);
+      setPicked(undefined);
       setArea(false);
     } catch (cause) {
       setError(errorText(cause));
@@ -377,12 +383,46 @@ export function PdfReader() {
       setSaving(false);
     }
   }
+  async function remove(record: PdfAnnotation) {
+    if (removing || saving || unsaved || record.pageUrl !== key) return;
+    setRemoving(true);
+    setError("");
+    try {
+      await request({ type: "annotations.delete", id: record.id, expectedRevision: record.revision });
+      setRecords((old) => old.filter((item) => item.id !== record.id));
+      setPicked((current) => current?.id === record.id ? undefined : current);
+      setUndoRecord(record);
+      tell(t("已移除标注，可撤销。", "Annotation removed. Undo is available."));
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setRemoving(false);
+    }
+  }
+  async function restoreRemoved() {
+    if (!undoRecord || removing || saving || unsaved || undoRecord.pageUrl !== key) return;
+    setRemoving(true);
+    setError("");
+    try {
+      const restored = await request<PdfAnnotation>({
+        type: "annotations.restore",
+        annotation: { ...undoRecord, updatedAt: new Date().toISOString() },
+      });
+      setRecords((old) => [...old.filter((item) => item.id !== restored.id), restored]);
+      setUndoRecord(undefined);
+      tell(t("标注已恢复。", "Annotation restored."));
+    } catch (cause) {
+      setError(errorText(cause));
+    } finally {
+      setRemoving(false);
+    }
+  }
   function mark(
     target: SelectionTarget,
     kind: "pdf-text" | "pdf-area",
     chosen = color,
   ) {
-    if (!opened || !key || !enabled || saving || unsaved) return;
+    if (!opened || !key || !enabled || saving || removing || unsaved) return;
     const now = new Date().toISOString();
     const pdfTarget: PdfTarget = {
       ...target,
@@ -433,7 +473,7 @@ export function PdfReader() {
             aria-label={t("选择本地 PDF", "Choose local PDF")}
             type="file"
             accept="application/pdf,.pdf"
-            disabled={busy || saving || !!unsaved}
+            disabled={busy || saving || removing || !!unsaved}
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) void openPdf(file);
@@ -455,7 +495,7 @@ export function PdfReader() {
             onChange={(e) => setSource(e.target.value)}
             required
           />
-          <button disabled={busy || saving || !!unsaved}>
+          <button disabled={busy || saving || removing || !!unsaved}>
             {busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}
           </button>
         </form>
@@ -594,9 +634,23 @@ export function PdfReader() {
               >
                 {t("应用当前颜色", "Use current color")}
               </button>
-              <button onClick={() => setSelection(undefined)}>
+              <button onClick={() => { setSelection(undefined); getSelection()?.removeAllRanges(); }}>
                 {t("取消", "Cancel")}
               </button>
+            </div>
+          )}
+          {picked && enabled && (
+            <div className="pdf-mark-menu" role="status">
+              <span>{picked.kind === "pdf-text" ? t("文字标注", "Text annotation") : t("区域标注", "Area annotation")}</span>
+              <button disabled={removing} onClick={() => void remove(picked)}>{t("取消标注", "Remove annotation")}</button>
+              <button disabled={removing} onClick={() => setPicked(undefined)}>{t("关闭", "Close")}</button>
+            </div>
+          )}
+          {undoRecord && (
+            <div className="pdf-undo" role="status">
+              <span>{t("标注已移除。", "Annotation removed.")}</span>
+              <button disabled={removing} onClick={() => void restoreRemoved()}>{t("撤销移除", "Undo remove")}</button>
+              <button disabled={removing} onClick={() => setUndoRecord(undefined)}>{t("关闭", "Close")}</button>
             </div>
           )}
           <div className="pdf-workspace">
@@ -641,6 +695,7 @@ export function PdfReader() {
                       area={area}
                       color={color}
                       onSelection={setSelection}
+                      onPick={(record) => { setPicked(record); setSelection(undefined); }}
                       onArea={(target) => mark(target, "pdf-area")}
                       onDimensions={(width, height) =>
                         setDimensions((old) =>
@@ -682,6 +737,8 @@ export function PdfReader() {
                     language={settings.language}
                     onJump={() => jump(r.target.pageNumber)}
                     onError={setError}
+                    onRemove={remove}
+                    removing={removing}
                   />
                 ))}
             </aside>
@@ -729,6 +786,7 @@ function PdfPage({
   area,
   color,
   onSelection,
+  onPick,
   onArea,
   onDimensions,
   onError,
@@ -742,6 +800,7 @@ function PdfPage({
   area: boolean;
   color: string;
   onSelection: (v: SelectionTarget | undefined) => void;
+  onPick: (record: PdfAnnotation) => void;
   onArea: (v: SelectionTarget) => void;
   onDimensions: (w: number, h: number) => void;
   onError: (e: string) => void;
@@ -837,10 +896,19 @@ function PdfPage({
         .finally(() => page?.cleanup());
     };
   }, [opened, number, zoom, rotation]);
-  function capture() {
+  function capture(event: React.MouseEvent<HTMLDivElement>) {
     if (!enabled || area || !geometry || !text.current || !root.current) return;
     const s = getSelection();
-    if (!s || s.isCollapsed || !s.rangeCount) return;
+    if (!s || s.isCollapsed || !s.rangeCount) {
+      const page = root.current.getBoundingClientRect();
+      const x = event.clientX - page.left, y = event.clientY - page.top;
+      const picked = [...records].reverse().find((record) => record.target.rects.some((rect) => {
+        const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
+        return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height;
+      }));
+      if (picked) onPick(picked); else onSelection(undefined);
+      return;
+    }
     const range = s.getRangeAt(0);
     if (
       !text.current.contains(range.startContainer) ||
@@ -902,6 +970,7 @@ function PdfPage({
       className="pdf-page"
       ref={root}
       onMouseUp={capture}
+      onClick={capture}
       style={{
         width: geometry?.viewport.width,
         height: geometry?.viewport.height,
@@ -995,11 +1064,15 @@ function PdfNote({
   language,
   onJump,
   onError,
+  onRemove,
+  removing,
 }: {
   record: PdfAnnotation;
   language: Settings["language"];
   onJump: () => void;
   onError: (e: string) => void;
+  onRemove: (record: PdfAnnotation) => void;
+  removing: boolean;
 }) {
   const [editing, setEditing] = useState(false),
     [note, setNote] = useState(record.note),
@@ -1103,18 +1176,7 @@ function PdfNote({
       ) : (
         <div className="pdf-note-actions">
           <button onClick={edit}>{t("编辑", "Edit")}</button>
-          <button
-            onClick={() => {
-              if (confirm(t("删除这条标注？", "Delete this annotation?")))
-                void request({
-                  type: "annotations.delete",
-                  id: record.id,
-                  expectedRevision: record.revision,
-                }).catch((cause) => onError(errorText(cause)));
-            }}
-          >
-            {t("删除", "Delete")}
-          </button>
+          <button disabled={removing} onClick={() => onRemove(record)}>{t("取消标注", "Remove annotation")}</button>
         </div>
       )}
     </article>

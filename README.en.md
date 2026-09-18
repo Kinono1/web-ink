@@ -4,7 +4,15 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 
 [中文](README.md) · [Privacy](PRIVACY.md) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release process](docs/RELEASING.md)
 
-> v0.2.0 is a preview. See [validation boundaries](docs/VALIDATION.md) and [performance measurements](docs/PERFORMANCE.md).
+> v0.2.1 is a preview. See [validation boundaries](docs/VALIDATION.md) and [performance measurements](docs/PERFORMANCE.md).
+
+## Removing annotations
+
+- On a webpage, click a saved text highlight or image mark and choose **Remove annotation**. Reselecting marked text also shows this action; overlapping records are removed individually.
+- In the PDF reader, click a saved highlight or area mark, then choose **Remove annotation**.
+- Page/PDF removal can be undone in the current session, preserving the note, tags and color.
+- In the library, use **Delete → Confirm delete** within the page; no native modal dialog is required.
+- The bottom-right switch only hides/shows annotations; it never deletes them.
 
 ## Web annotations
 

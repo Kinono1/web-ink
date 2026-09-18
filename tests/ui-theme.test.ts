@@ -13,6 +13,11 @@ const pdf: Annotation = {
   createdAt: '2026-09-18T00:00:00.000Z', updatedAt: '2026-09-18T00:00:00.000Z', revision: 1,
   target: { documentHash: 'abc123', fileName: 'paper.pdf', sourceUrl: 'https://example.test/paper.pdf?token=x', pageNumber: 3, rects: [{ x: .1, y: .2, width: .3, height: .1 }], exact: 'finding', prefix: '', suffix: '' },
 };
+const web: Annotation = {
+  id: 'web-1', kind: 'text', pageUrl: 'https://example.test/article', pageTitle: 'Article', color: '#facc15', note: '', tags: [],
+  createdAt: '2026-09-19T00:00:00.000Z', updatedAt: '2026-09-19T00:00:00.000Z', revision: 1,
+  target: { exact: 'A removable highlight', prefix: '', suffix: '', start: 0, end: 20, rootSelector: 'body' },
+};
 
 describe('shared UI presentation contract', () => {
   it('keeps light and dark token sets usable by both React and Shadow DOM', () => {
@@ -36,9 +41,11 @@ describe('shared UI presentation contract', () => {
 describe('management mount lifecycle', () => {
   let root: Root | undefined;
   const chromeDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'chrome');
+  const confirmDescriptor = Object.getOwnPropertyDescriptor(window, 'confirm');
   afterEach(async () => {
     await act(async () => root?.unmount()); root = undefined; document.body.replaceChildren();
     if (chromeDescriptor) Object.defineProperty(globalThis, 'chrome', chromeDescriptor); else Reflect.deleteProperty(globalThis, 'chrome');
+    if (confirmDescriptor) Object.defineProperty(window, 'confirm', confirmDescriptor); else Reflect.deleteProperty(window, 'confirm');
   });
   it('loads settings and the first library page once after a stable mount', async () => {
     const sent = vi.fn(async (message: { type: string }) => {
@@ -87,5 +94,31 @@ describe('management mount lifecycle', () => {
     expect(writes).toHaveLength(2);
     expect(writes[0]).toMatchObject({ theme: 'dark', language: 'zh-CN' });
     expect(writes[1]).toMatchObject({ theme: 'dark', language: 'en' });
+  });
+  it('uses inline confirmation for a management delete without calling window.confirm', async () => {
+    const sent = vi.fn(async (message: { type: string }) => {
+      if (message.type === 'settings.get') return { ok: true, data: { language: 'zh-CN', defaultColor: '#facc15', disabledOrigins: [] } };
+      if (message.type === 'annotations.query') return { ok: true, data: { items: [web] } };
+      if (message.type === 'annotations.delete') return { ok: true, data: { id: web.id, deleted: true } };
+      if (message.type === 'annotations.query.cancel') return { ok: true, data: true };
+      return { ok: true, data: true };
+    });
+    const event = { addListener: vi.fn(), removeListener: vi.fn() };
+    Object.defineProperty(globalThis, 'chrome', { configurable: true, value: {
+      runtime: { sendMessage: sent, onMessage: event, getURL: (path: string) => `chrome-extension://test/${path.replace(/^\//, '')}` },
+      permissions: { contains: async () => true }, tabs: { query: async () => [], onActivated: event, onUpdated: event },
+    } });
+    const confirm = vi.fn(() => { throw new Error('native confirmation must not run'); });
+    Object.defineProperty(window, 'confirm', { configurable: true, value: confirm });
+    const host = document.createElement('div'); document.body.append(host); root = createRoot(host);
+    await act(async () => { root!.render(createElement(ManagementApp, { mode: 'library' })); await new Promise(resolve => setTimeout(resolve, 20)); });
+    const detail = host.querySelector('.annotation-detail')!;
+    const remove = [...detail.querySelectorAll('button')].find(button => button.textContent === '删除')!;
+    await act(async () => { remove.click(); });
+    expect(sent.mock.calls.filter(([message]) => message.type === 'annotations.delete')).toHaveLength(0);
+    const confirmDelete = [...detail.querySelectorAll('button')].find(button => button.textContent === '确认删除')!;
+    await act(async () => { confirmDelete.click(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(sent.mock.calls.filter(([message]) => message.type === 'annotations.delete')).toHaveLength(1);
   });
 });

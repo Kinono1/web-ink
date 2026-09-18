@@ -1,6 +1,6 @@
 {
   "name": "web-ink",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "Local-first webpage and PDF annotations",
   "license": "MIT",

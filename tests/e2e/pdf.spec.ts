@@ -116,6 +116,58 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
     fullPage: true,
   });
 });
+test("PDF mark removal is explicit and does not return after reselecting the same file", async () => {
+  await open();
+  await page.getByRole("button", { name: "开启标注", exact: true }).click();
+  await expect(page.getByRole("button", {name:"关闭标注",exact:true})).toHaveAttribute("aria-pressed", "true");
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(page.locator(".pdf-selection")).toBeVisible();
+  await page.locator(".pdf-selection").getByRole("button", { name: "取消", exact: true }).click();
+  const markBox = await page.locator("[data-pdf-annotation]").first().boundingBox();
+  await page.mouse.click(markBox!.x + markBox!.width / 2, markBox!.y + markBox!.height / 2);
+  await page.locator(".pdf-mark-menu").getByRole("button", { name: "取消标注", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(0);
+  await expect(page.locator("[data-pdf-annotation]")).toHaveCount(0);
+  await open(fixturePdf(), "reading.pdf");
+  await expect(page.locator("[data-pdf-annotation]")).toHaveCount(0);
+});
+
+test("PDF undo restore keeps the deleted annotation fields and revision-safe identity", async () => {
+  await open();
+  await page.getByRole("button", { name: "开启标注", exact: true }).click();
+  await expect(page.getByRole("button", {name:"关闭标注",exact:true})).toHaveAttribute("aria-pressed", "true");
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const selection = getSelection()!; selection.removeAllRanges(); selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" }) as any[]).length).toBe(1);
+  const [initial] = await rpc({ type: "annotations.list" }) as any[];
+  await rpc({ type: "annotations.put", annotation: { ...initial, note: "keep this note", tags: ["undo", "PDF"], updatedAt: new Date().toISOString() }, expectedRevision: initial.revision });
+  const [beforeDelete] = await rpc({ type: "annotations.list" }) as any[];
+  await expect(page.locator(`[data-pdf-annotation="${beforeDelete.id}"]`)).toBeVisible();
+  const markBox = await page.locator(`[data-pdf-annotation="${beforeDelete.id}"]`).first().boundingBox();
+  await page.mouse.click(markBox!.x + markBox!.width / 2, markBox!.y + markBox!.height / 2);
+  await page.locator(".pdf-mark-menu").getByRole("button", { name: "取消标注", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" }) as any[]).length).toBe(0);
+  await page.locator(".pdf-undo").getByRole("button", { name: "撤销移除", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" }) as any[]).length).toBe(1);
+  const [restored] = await rpc({ type: "annotations.list" }) as any[];
+  expect(restored).toMatchObject({ id: beforeDelete.id, color: beforeDelete.color, note: "keep this note", tags: ["undo", "PDF"], target: beforeDelete.target });
+  expect(restored.revision).toBeGreaterThan(beforeDelete.revision);
+});
 test("changed PDF identity leaves previous notes intact and canvas count remains bounded", async () => {
   await open();
   await page.getByRole("button", { name: "开启标注", exact: true }).click();

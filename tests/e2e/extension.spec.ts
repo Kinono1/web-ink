@@ -393,3 +393,70 @@ test('shared dark preferences and 320px layout remain usable across library and 
   await expect.poll(()=>manager.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await manager.screenshot({path:'test-results/library-dark-narrow.png',fullPage:true});
 });
+
+async function clickHighlightedText(page: Page) {
+  const point = await page.locator('#selection strong').evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    const rect = range.getClientRects()[0]!;
+    return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};
+  });
+  await page.mouse.click(point.x, point.y);
+}
+
+test('click or reselect existing text to remove it, undo preserves notes, and reload does not resurrect it', async () => {
+  await enable(); const page = await article(); await selectAndMark(page);
+  const [first] = await rpc<any[]>(manager, {type:'annotations.list'});
+  const saved = await rpc<any>(manager, {type:'annotations.put',annotation:{...first,note:'Keep my note',tags:['paper']},expectedRevision:first.revision});
+  await expect(manager.locator('.note')).toHaveText('Keep my note');
+  await clickHighlightedText(page);
+  await expect(page.getByRole('button',{name:'取消标注',exact:true})).toBeVisible();
+  await page.screenshot({path:'test-results/cancel-annotation.png'});
+  await page.getByRole('button',{name:'取消标注',exact:true}).click();
+  await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(0);
+  await expect.poll(()=>page.evaluate(()=>CSS.highlights.size)).toBe(0);
+  await page.getByRole('button',{name:'撤销取消',exact:true}).click();
+  await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);
+  const [restored]=await rpc<any[]>(manager,{type:'annotations.list'});
+  expect(restored).toMatchObject({id:saved.id,note:saved.note,tags:saved.tags,color:saved.color,target:saved.target});
+  expect(restored.revision).toBeGreaterThan(saved.revision);
+  await page.reload(); await expect.poll(()=>page.evaluate(()=>CSS.highlights.size)).toBe(1);
+  await page.locator('#selection strong').evaluate(element=>{const r=document.createRange();r.selectNodeContents(element);const s=getSelection()!;s.removeAllRanges();s.addRange(r);element.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));});
+  await page.getByRole('button',{name:'取消标注',exact:true}).click();
+  await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(0);
+  await page.reload(); await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed','true');
+  expect(await page.evaluate(()=>CSS.highlights.size)).toBe(0);
+});
+
+test('existing image marks can be removed directly after reload', async () => {
+  await enable();const page=await article();const tab=(await manager.evaluate(()=>chrome.tabs.query({}))).find(t=>t.url==='http://127.0.0.1:4173/article')!;
+  await page.locator('#diagram').scrollIntoViewIfNeeded();await rpc(manager,{type:'page.action',tabId:tab.id,action:'draw'});await page.locator('#diagram').click();
+  const box=await page.locator('#diagram').boundingBox();await page.mouse.move(box!.x+100,box!.y+80);await page.mouse.down();await page.mouse.move(box!.x+240,box!.y+180,{steps:4});await page.mouse.up();
+  await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);await page.getByRole('button',{name:'完成',exact:true}).click();
+  await page.reload();await expect(page.locator('g[data-annotation-id]')).toHaveCount(1);
+  const toggle=page.locator('.web-ink-palette-toggle');await toggle.click();await expect(page.locator('g[data-annotation-id]')).toHaveCount(0);
+  expect((await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);
+  await toggle.click();await expect(page.locator('g[data-annotation-id]')).toHaveCount(1);
+  const rect=await page.locator('g[data-annotation-id] > rect').boundingBox();await page.mouse.click(rect!.x+rect!.width/2,rect!.y+rect!.height/2);
+  await page.getByRole('button',{name:'取消标注',exact:true}).click();await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(0);await expect(page.locator('g[data-annotation-id]')).toHaveCount(0);
+  await page.reload();expect(await rpc(manager,{type:'annotations.list'})).toEqual([]);
+});
+
+test('overlapping highlights remove only the chosen record and failed deletion keeps the mark', async () => {
+  await enable();const page=await article();await selectAndMark(page);const [original]=await rpc<any[]>(manager,{type:'annotations.list'});
+  await rpc(manager,{type:'annotations.put',annotation:{...original,id:'second-overlap',color:'#4ade80',note:'Another mark',revision:0},expectedRevision:0});
+  await expect.poll(()=>page.evaluate(()=>CSS.highlights.size)).toBe(2);await clickHighlightedText(page);
+  await page.getByRole('button',{name:'取消标注 1',exact:true}).click();await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);
+  await expect.poll(()=>page.evaluate(()=>CSS.highlights.size)).toBe(1);
+  const tab=(await manager.evaluate(()=>chrome.tabs.query({}))).find(t=>t.url==='http://127.0.0.1:4173/article')!;
+  await manager.evaluate(async tabId=>{await chrome.scripting.executeScript({target:{tabId},func:()=>{const send=chrome.runtime.sendMessage.bind(chrome.runtime);chrome.runtime.sendMessage=((m:any)=>m.type==='annotations.delete'?Promise.resolve({ok:false,code:'INTERNAL',error:'Synthetic delete failure'}):send(m))as typeof chrome.runtime.sendMessage;}});},tab.id!);
+  await clickHighlightedText(page);await page.getByRole('button',{name:'取消标注',exact:true}).click();await expect(page.locator('.toast.error')).toContainText('取消失败');
+  expect((await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);expect(await page.evaluate(()=>CSS.highlights.size)).toBe(1);
+});
+
+test('library removes an existing annotation through inline confirmation without native dialogs', async () => {
+  await enable();const page=await article();await selectAndMark(page);let dialogs=0;manager.on('dialog',async dialog=>{dialogs++;await dialog.dismiss();});
+  await manager.getByRole('button',{name:'删除',exact:true}).click();await expect(manager.getByRole('button',{name:'确认删除',exact:true})).toBeVisible();
+  expect((await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);
+  await manager.getByRole('button',{name:'确认删除',exact:true}).click();await expect(manager.locator('.annotation-row')).toHaveCount(0);await expect.poll(()=>page.evaluate(()=>CSS.highlights.size)).toBe(0);
+  expect(dialogs).toBe(0);await page.reload();expect(await rpc(manager,{type:'annotations.list'})).toEqual([]);
+});

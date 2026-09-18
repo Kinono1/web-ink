@@ -189,6 +189,48 @@ describe('settings and backup import boundary', () => {
   }, 10_000);
 });
 
+describe('tombstone restore generations', () => {
+  it('prevents ABA after delete/restore and makes the same restore idempotent', async () => {
+    const original = textAnnotation('aba-record');
+    await handleDataRequest({ type: 'annotations.put', annotation: original, expectedRevision: 0 }, { trusted: true });
+    const deleted = { ...original, revision: 1 };
+    expect(await handleDataRequest({ type: 'annotations.delete', id: deleted.id, expectedRevision: 1 }, { trusted: true }))
+      .toEqual({ ok: true, data: { id: deleted.id, deleted: true } });
+    expect(await handleDataRequest({ type: 'annotations.put', annotation: original, expectedRevision: 0 }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'CONFLICT' });
+    const restored = await handleDataRequest({ type: 'annotations.restore', annotation: deleted }, { trusted: true });
+    expect(restored).toEqual({ ok: true, data: { ...deleted, revision: 2 } });
+    expect(await handleDataRequest({ type: 'annotations.restore', annotation: deleted }, { trusted: true }))
+      .toEqual(restored);
+    const stale = { ...deleted, note: 'old window edit', updatedAt: '2026-09-18T00:01:00.000Z' };
+    expect(await handleDataRequest({ type: 'annotations.put', annotation: stale, expectedRevision: 1 }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'CONFLICT' });
+    expect((await db.annotations.get(deleted.id))?.revision).toBe(2);
+  });
+
+  it('requires the latest deletion generation and never overwrites an explicit imported recovery', async () => {
+    const original = textAnnotation('generation-record');
+    await handleDataRequest({ type: 'annotations.put', annotation: original, expectedRevision: 0 }, { trusted: true });
+    const revisionOne = { ...original, revision: 1 };
+    await handleDataRequest({ type: 'annotations.delete', id: original.id, expectedRevision: 1 }, { trusted: true });
+    const imported = { ...revisionOne, note: 'explicit imported recovery' };
+    const backup = { format: 'web-ink', schemaVersion: 2, exportedAt: '2026-09-18T03:00:00.000Z', annotations: [imported] };
+    await handleDataRequest({ type: 'backup.import', backup, overwrite: false }, { trusted: true });
+    expect(await db.annotations.get(original.id)).toMatchObject({ note: 'explicit imported recovery', revision: 2 });
+    expect(await handleDataRequest({ type: 'annotations.restore', annotation: revisionOne }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'CONFLICT' });
+    expect((await db.annotations.get(original.id))?.note).toBe('explicit imported recovery');
+
+    const current = await db.annotations.get(original.id);
+    if (!current) throw new Error('missing imported record');
+    await handleDataRequest({ type: 'annotations.delete', id: current.id, expectedRevision: current.revision }, { trusted: true });
+    expect(await handleDataRequest({ type: 'annotations.restore', annotation: revisionOne }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'CONFLICT' });
+    expect(await handleDataRequest({ type: 'annotations.restore', annotation: current }, { trusted: true }))
+      .toEqual({ ok: true, data: { ...current, revision: 3 } });
+  });
+});
+
 describe('PDF and cursor query boundary', () => {
   it('allows only trusted UI to write and query a validated PDF annotation', async () => {
     const pdf = pdfAnnotation();
@@ -348,6 +390,27 @@ describe('Dexie lifecycle under fake IndexedDB', () => {
     expect(await upgraded.annotations.get(record.id)).toMatchObject({ id: 'v1-record', revision: 7, pageUrl });
     expect(await upgraded.pages.get(pageUrl)).toMatchObject({ enabled: true, title: 'Legacy page' });
     expect(await upgraded.stats.get('library')).toMatchObject({ annotationCount: 1, textCount: 1, pageCount: 1 });
+    upgraded.close();
+    await upgraded.delete();
+  });
+
+  it('upgrades a real v2 database while preserving existing annotation records', async () => {
+    const name = `web-ink-v2-${crypto.randomUUID()}`;
+    const legacy = new Dexie(name);
+    legacy.version(2).stores({
+      annotations: 'id, pageUrl, updatedAt, [updatedAt+id], [pageUrl+updatedAt+id], [kind+updatedAt+id], [color+updatedAt+id], *tags',
+      pages: 'url, updatedAt', stats: 'id',
+    });
+    await legacy.open();
+    const record = { ...textAnnotation('v2-record', 4), updatedAt: '2026-09-18T00:04:00.000Z' };
+    await legacy.table('annotations').put(record);
+    await legacy.table('pages').put({ url: pageUrl, title: 'V2 page', updatedAt: record.updatedAt, enabled: true });
+    legacy.close();
+    const upgraded = new WebInkDatabase(name);
+    await upgraded.open();
+    expect(await upgraded.annotations.get(record.id)).toMatchObject({ id: record.id, revision: 4, note: 'A note' });
+    expect(await upgraded.pages.get(pageUrl)).toMatchObject({ enabled: true, title: 'V2 page' });
+    expect(await upgraded.tombstones.count()).toBe(0);
     upgraded.close();
     await upgraded.delete();
   });

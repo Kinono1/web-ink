@@ -175,7 +175,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 3;
+  z-index: 5;
 }
 .pdf-area-capture {
   position: absolute;
@@ -184,6 +184,26 @@
   cursor: crosshair;
   touch-action: none;
 }
+.pdf-mark-menu,
+.pdf-undo {
+  position: fixed;
+  z-index: 31;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100vw - 24px);
+  padding: 8px 10px;
+  border: 1px solid var(--ink-separator);
+  border-radius: 10px;
+  background: var(--ink-surface);
+  box-shadow: var(--ink-shadow);
+}
+.pdf-undo { bottom: 70px; }
+.pdf-mark-menu span,
+.pdf-undo span { font-size: 12px; white-space: nowrap; }
 .pdf-notes {
   width: 300px;
   flex-shrink: 0;

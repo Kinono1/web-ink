@@ -34,7 +34,10 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
   let generation = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let renderFrame = 0;
+  let refreshDepth = 0;
   let selectedRange: Range | undefined;
+  let actionRecords: Array<TextAnnotation | ImageAnnotation> = [];
+  const removedRecords: Array<TextAnnotation | ImageAnnotation> = [];
   let rebinding: Annotation | undefined;
   let mode: 'idle' | 'choose-image' | 'drawing' = 'idle';
   let selectedImage: HTMLImageElement | undefined;
@@ -95,7 +98,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     for (const [color, ranges] of groups) { const name = `web-ink-${color.slice(1)}`; CSS.highlights.set(name, new Highlight(...ranges)); highlightNames.add(name); rules.push(`::highlight(${name}) { background-color: ${color}99; color: inherit; }`); }
     highlightStyle.textContent = rules.join('\n');
   };
-  const hideSelection = () => { selectedRange = undefined; view.selection.style.display = 'none'; };
+  const hideSelection = () => { selectedRange = undefined; actionRecords = []; view.selection.style.display = 'none'; };
   const exitDrawing = () => {
     mode = 'idle'; selectedImage = undefined; drawingPointer = undefined; drawingPoints = []; previewShape = undefined;
     view.svg.style.pointerEvents = 'none'; view.svg.style.cursor = ''; view.drawing.style.display = 'none'; schedulePaint();
@@ -128,6 +131,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
   }
 
   function showPalette(range: Range) {
+    actionRecords = [];
     selectedRange = range.cloneRange();
     const rect = range.getBoundingClientRect();
     view.selection.replaceChildren();
@@ -146,9 +150,97 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
       const apply = button(label('应用', 'Apply'), () => { void saveSelection(custom.value); }); apply.addEventListener('pointerdown', event => event.preventDefault()); view.selection.append(custom, apply);
     }, label('更多颜色', 'More colors'));
     view.selection.append(more);
-    view.selection.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 320))}px`;
-    view.selection.style.top = `${Math.min(window.innerHeight - 60, Math.max(8, rect.bottom + 8))}px`;
+    const matches = matchingSelection(range);
+    if (matches.length === 1) view.selection.append(removeButton(matches[0]!));
+    else if (matches.length > 1) view.selection.append(button(label(`已有 ${matches.length} 条标注`, `${matches.length} existing annotations`), () => showAnnotationActions(matches, rect)));
+    placeSelection(rect);
+  }
+
+  function placeSelection(rect: { left: number; bottom: number }) {
     view.selection.style.display = 'flex';
+    view.selection.style.flexWrap = 'wrap';
+    view.selection.style.maxWidth = `${Math.max(160, innerWidth - 16)}px`;
+    const bounds = view.selection.getBoundingClientRect();
+    view.selection.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - bounds.width - 8))}px`;
+    view.selection.style.top = `${Math.max(8, Math.min(rect.bottom + 8, innerHeight - bounds.height - 8))}px`;
+  }
+  function matchingSelection(range: Range): TextAnnotation[] {
+    return annotations.filter((record): record is TextAnnotation => {
+      const target = record.kind === 'text' ? textRanges.get(record.id) : undefined;
+      if (!target?.startContainer.isConnected) return false;
+      // Non-empty intersection only; adjacent annotations are not selected.
+      return range.compareBoundaryPoints(Range.END_TO_START, target) < 0 &&
+        range.compareBoundaryPoints(Range.START_TO_END, target) > 0;
+    });
+  }
+  function removeButton(record: TextAnnotation | ImageAnnotation, index?: number) {
+    const name = label('取消标注', 'Remove annotation') + (index === undefined ? '' : ` ${index + 1}`);
+    const control = button(name, () => { void removeAnnotation(record); });
+    control.style.color = 'var(--ink-danger)';
+    control.title = record.kind === 'text' ? record.target.exact : record.target.alt || label('图片标注', 'Image annotation');
+    control.addEventListener('pointerdown', event => event.preventDefault());
+    return control;
+  }
+  function showAnnotationActions(records: Array<TextAnnotation | ImageAnnotation>, rect: { left: number; bottom: number }) {
+    selectedRange = undefined; actionRecords = records;
+    view.selection.replaceChildren();
+    for (const [index, record] of records.entries()) {
+      if (records.length > 1) {
+        const summary = document.createElement('span');
+        summary.textContent = `${index + 1}. ${record.kind === 'text' ? record.target.exact.slice(0, 28) : label('图片标注', 'Image annotation')}`;
+        summary.style.borderLeft = `3px solid ${record.color}`; summary.style.paddingLeft = '5px';
+        view.selection.append(summary);
+      }
+      view.selection.append(removeButton(record, records.length > 1 ? index : undefined));
+    }
+    view.selection.append(button(label('关闭', 'Close'), hideSelection));
+    placeSelection(rect);
+  }
+  function annotationsAtPoint(x: number, y: number): Array<TextAnnotation | ImageAnnotation> {
+    return annotations.filter((record): record is TextAnnotation | ImageAnnotation => {
+      if (record.kind === 'text') return Array.from(textRanges.get(record.id)?.getClientRects() ?? [])
+        .some(rect => rect.width > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom);
+      if (record.kind !== 'image') return false;
+      const image = images.get(record.id), shape = svgLayers.get(record.id)?.shape;
+      const geometry = image?.isConnected ? clippedGeometry(image) : null;
+      if (!geometry || !clientToImage(x, y, geometry) || !(shape instanceof SVGGeometryElement)) return false;
+      const matrix = shape.getScreenCTM(); if (!matrix) return false;
+      const point = new DOMPoint(x, y).matrixTransform(matrix.inverse());
+      return shape.isPointInFill(point) || shape.isPointInStroke(point);
+    });
+  }
+  async function removeAnnotation(record: TextAnnotation | ImageAnnotation) {
+    if (!enabled() || pendingSave || unsaved) return;
+    pendingSave = true;
+    try {
+      await request({ type: 'annotations.delete', id: record.id, expectedRevision: record.revision });
+      if (disposed || record.pageUrl !== pageKey(location.href)) return;
+      applyAnnotationDelta(undefined, record.id, record.pageUrl); hideSelection();
+      getSelection()?.removeAllRanges();
+      removedRecords.push(record); if (removedRecords.length > 20) removedRecords.shift();
+      notifications.show(label('已取消标注', 'Annotation removed'), { kind: 'success', sticky: true,
+        dismissLabel: label('关闭提示', 'Dismiss'), actions: [{ label: label('撤销取消', 'Undo removal'), run: () => { void undoRemoval(record); } }] });
+    } catch (error) {
+      if (error instanceof RequestError && error.code === 'CONFLICT') { hideSelection(); void refresh(); }
+      notifications.show(label('取消失败：', 'Could not remove: ') + (error instanceof Error ? error.message : String(error)), {
+        kind: 'error', sticky: true, dismissLabel: label('关闭提示', 'Dismiss'),
+        actions: error instanceof RequestError && error.code === 'CONFLICT' ? [] : [{ label: label('重试取消', 'Retry removal'), run: () => { void removeAnnotation(record); } }],
+      });
+    } finally { pendingSave = false; }
+  }
+  async function undoRemoval(record = removedRecords.at(-1)) {
+    if (!record || pendingSave || unsaved || !enabled() || record.pageUrl !== pageKey(location.href)) return;
+    pendingSave = true;
+    try {
+      const restored = await request<Annotation>({ type: 'annotations.restore', annotation: { ...record, updatedAt: new Date().toISOString() } });
+      if (disposed || record.pageUrl !== pageKey(location.href)) return;
+      applyAnnotationDelta(restored, undefined, record.pageUrl);
+      const index = removedRecords.lastIndexOf(record); if (index >= 0) removedRecords.splice(index, 1);
+      notifications.show(label('已恢复标注', 'Annotation restored'), { kind: 'success', dismissLabel: label('关闭提示', 'Dismiss') });
+    } catch (error) {
+      notifications.show(label('无法恢复：', 'Could not restore: ') + (error instanceof Error ? error.message : String(error)), { kind: 'error', sticky: true,
+        dismissLabel: label('关闭提示', 'Dismiss'), actions: [{ label: label('重试恢复', 'Retry restore'), run: () => { void undoRemoval(record); } }] });
+    } finally { pendingSave = false; }
   }
 
   function baseRecord(color: string) {
@@ -247,8 +339,8 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     if (pendingSave || unsaved) return;
     const old = redo.at(-1); if (!old) return;
     try {
-      const record = { ...old, revision: 0, updatedAt: new Date().toISOString() };
-      const saved = await request<ImageAnnotation>({ type: 'annotations.put', annotation: record, expectedRevision: 0 });
+      const record = { ...old, updatedAt: new Date().toISOString() };
+      const saved = await request<ImageAnnotation>({ type: 'annotations.restore', annotation: record });
       redo.pop(); undo.push(saved); await refresh();
     } catch (error) { fail(error); }
   }
@@ -312,6 +404,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
 
   async function refresh() {
     const token = ++generation;
+    refreshDepth++;
     let requestedUrl = currentUrl;
     try {
       const nextUrl = pageKey(location.href);
@@ -321,7 +414,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
         currentUrl = nextUrl; annotations = []; states = []; images.clear(); clearText(); resolveText.invalidate(); exitDrawing();
         pageEnabled = false; modeReady = false; updatePalette();
         mutationObserver.disconnect(); resizeObserver.disconnect();
-        undo.length = 0; redo.length = 0; rebinding = undefined; hideSelection();
+        undo.length = 0; redo.length = 0; removedRecords.length = 0; rebinding = undefined; hideSelection();
       }
       requestedUrl = currentUrl;
       const [newSettings, pageMode] = await Promise.all([
@@ -388,7 +481,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
         kind: 'error', key: `restore:${error instanceof RequestError ? error.code : 'unavailable'}`, passive: true,
         dismissLabel: label('关闭提示', 'Dismiss'),
       });
-    }
+    } finally { refreshDepth--; }
   }
   function publishStates() {
     void request({ type: 'page.states', states, pageUrl: currentUrl }).catch(() => undefined);
@@ -451,14 +544,26 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     } else if (mode === 'idle') hideSelection();
   }, { capture: true, signal });
   document.addEventListener('mouseup', e => {
-    if (!enabled() || mode !== 'idle' || e.composedPath().includes(view.host)) return;
+    if (!enabled() || mode !== 'idle' || e.button !== 0 || e.composedPath().includes(view.host)) return;
     const selection = window.getSelection();
-    if (!selection || selection.isCollapsed || !selection.rangeCount) { hideSelection(); return; }
+    if (!selection || selection.isCollapsed || !selection.rangeCount) {
+      hideSelection();
+      const element = e.target instanceof Element ? e.target : undefined;
+      // Do not intercept native links, form fields, editors, or page controls.
+      if (element?.closest('a,button,input,textarea,select,summary,[role="button"],[contenteditable]')) return;
+      const matches = annotationsAtPoint(e.clientX, e.clientY);
+      if (matches.length) showAnnotationActions(matches, { left: e.clientX, bottom: e.clientY });
+      return;
+    }
     const range = selection.getRangeAt(0);
     try { captureText(range); showPalette(range); } catch { hideSelection(); }
   }, { signal });
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') { exitDrawing(); hideSelection(); rebinding = undefined; return; }
+    if (mode === 'idle' && !e.shiftKey && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z' && removedRecords.length &&
+      !e.composedPath().some(n => n instanceof HTMLElement && (n.matches('input,textarea') || n.isContentEditable))) {
+      e.preventDefault(); void undoRemoval(); return;
+    }
     if (mode === 'idle' || e.composedPath().some(n => n instanceof HTMLElement && (n.matches('input,textarea') || n.isContentEditable))) return;
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) void redoDrawing(); else void undoDrawing(); }
   }, { signal });
@@ -487,7 +592,10 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     if (!enabled() || (pageUrl && pageUrl !== currentUrl)) return true;
     if (!annotation && !deletedId) return false;
     if (deletedId) {
+      if (refreshDepth) { generation++; queueRefresh(); }
       annotations = annotations.filter(record => record.id !== deletedId); textRanges.delete(deletedId); images.delete(deletedId); appliedRevisions.delete(deletedId);
+      states = states.filter(state => state.id !== deletedId);
+      if (actionRecords.some(record => record.id === deletedId)) hideSelection();
       dropImageLayers(deletedId);
       applyTextStyles(); publishStates(); schedulePaint(); return true;
     }
@@ -535,6 +643,10 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
   const stop = () => {
     disposed = true; generation++; observers.abort(); mutationObserver.disconnect(); resizeObserver.disconnect();
     clearTimeout(refreshTimer); clearTimeout(passiveRetryTimer); cancelAnimationFrame(renderFrame); clearText(); notifications.dispose();
+    // The bootstrap keeps the host alive; every engine-owned visual must go away.
+    hideSelection(); view.drawing.style.display = 'none';
+    view.svg.replaceChildren(); view.svg.style.pointerEvents = 'none'; view.svg.style.cursor = '';
+    images.clear(); svgLayers.clear();
     chrome.runtime.onMessage.removeListener(onMessage); highlightStyle.remove();
   };
   const canStop = () => {

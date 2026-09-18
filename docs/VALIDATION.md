@@ -1,5 +1,12 @@
 # Validation — Web Ink
 
+## 0.2.1 removal fix — 2026-09-19
+
+Local TypeScript/build, **90 unit tests and 23 browser tests passed**. New scenarios exercise direct removal of saved webpage text/images, selecting existing text, individual overlapping-mark removal, delete failures preserving data, native-dialog-free library deletion, PDF removal after reselecting the same file, and revision-safe undo preserving notes/tags/color/identity. Existing PDF text selection continues through the non-interactive overlay.
+
+Internal IndexedDB v3 adds deletion revisions; v1/v2 upgrades preserve records and page preferences. Portable backup schema remains v2. The dedicated Chrome 125 PDF CI suite now contains six tests and remains a release gate.
+
+
 ## 0.2.0 candidate — 2026-09-19
 
 Local TypeScript/build and **86 unit tests across 11 files** passed. Browser regression development covers optional hosts, actual webpage selection/drawing/rebinding, SPA isolation, failed-save recovery, CAS drafts, backup import/export, per-page mode persistence, native Range/SVG reuse, PDF local/HTTPS input, unchanged-file restoration, changed-file isolation, Chinese/multicolumn text, zoom/rotation and bounded page rendering. The local Chromium suite passed all 17 browser tests, including the 320px dark UI. The final CI result is linked from the release.

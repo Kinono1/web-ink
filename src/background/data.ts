@@ -16,6 +16,7 @@ export interface DataRequestContext { trusted: boolean; pageUrl?: string }
 type KnownMessage =
   | { type: 'annotations.list'; pageUrl?: string }
   | { type: 'annotations.put'; annotation: unknown; expectedRevision: unknown }
+  | { type: 'annotations.restore'; annotation: unknown }
   | { type: 'annotations.delete'; id: unknown; expectedRevision: unknown }
   | { type: 'annotations.query'; query: unknown }
   | { type: 'annotations.query.cancel'; requestId: unknown }
@@ -50,6 +51,7 @@ function parseMessage(value: unknown): KnownMessage | undefined {
   switch (message.type) {
     case 'annotations.list': return hasOnly(message, ['type'], ['pageUrl']) ? message as KnownMessage : undefined;
     case 'annotations.put': return hasOnly(message, ['type', 'annotation', 'expectedRevision']) ? message as KnownMessage : undefined;
+    case 'annotations.restore': return hasOnly(message, ['type', 'annotation']) ? message as KnownMessage : undefined;
     case 'annotations.delete': return hasOnly(message, ['type', 'id', 'expectedRevision']) ? message as KnownMessage : undefined;
     case 'annotations.query': return hasOnly(message, ['type', 'query']) ? message as KnownMessage : undefined;
     case 'annotations.query.cancel': return hasOnly(message, ['type', 'requestId']) ? message as KnownMessage : undefined;
@@ -179,7 +181,7 @@ async function putPageMode(pageUrl: string, enabled: boolean): Promise<Result<Pa
 async function putAnnotation(annotation: Annotation, expectedRevision: number, ownPage?: string): Promise<Result<Annotation>> {
   if (annotation.revision !== expectedRevision) return fail('annotation.revision must equal expectedRevision', 'INVALID_INPUT');
   const db = getDatabase();
-  return db.transaction('rw', db.annotations, db.pages, db.stats, async () => {
+  return db.transaction('rw', db.annotations, db.pages, db.stats, db.tombstones, async () => {
     const existing = await db.annotations.get(annotation.id);
     const candidate = committedVersion(annotation, expectedRevision);
     // Check the owner from the transactional read, rather than trusting an ID and
@@ -190,6 +192,7 @@ async function putAnnotation(annotation: Annotation, expectedRevision: number, o
     // A service-worker retry may carry the pre-commit revision. Do not turn it into another edit.
     if (existing && sameAnnotation(existing, candidate)) return ok(existing);
     if (existing && existing.revision !== expectedRevision) return fail('Annotation changed in another tab.', 'CONFLICT');
+    if (!existing && await db.tombstones.get(annotation.id)) return fail('Annotation was deleted; restore it through its tombstone.', 'CONFLICT');
     if (!existing && expectedRevision !== 0) return fail('Annotation no longer exists.', 'CONFLICT');
     const existingPage = await db.pages.get(candidate.pageUrl);
     const storedPage = pageRecord(candidate, existingPage);
@@ -200,14 +203,38 @@ async function putAnnotation(annotation: Annotation, expectedRevision: number, o
   });
 }
 
+async function restoreAnnotation(annotation: Annotation, ownPage?: string): Promise<Result<Annotation>> {
+  const db = getDatabase();
+  return db.transaction('rw', db.annotations, db.pages, db.stats, db.tombstones, async () => {
+    const tombstone = await db.tombstones.get(annotation.id);
+    const existing = await db.annotations.get(annotation.id);
+    if (!tombstone) return fail('Annotation cannot be restored because its deletion generation is unavailable.', 'CONFLICT');
+    if (ownPage !== undefined && tombstone.pageUrl !== ownPage) return fail('Content scripts may only restore annotations from their own page.', 'FORBIDDEN');
+    if (annotation.pageUrl !== tombstone.pageUrl || annotation.revision !== tombstone.revision) return fail('Annotation deletion generation has changed.', 'CONFLICT');
+    if (tombstone.revision >= MAX_REVISION) throw new ValidationError('Annotation revision limit reached.');
+    const restored = { ...annotation, revision: tombstone.revision + 1 } as Annotation;
+    if (existing) {
+      if (sameAnnotation(existing, restored)) return ok(existing);
+      return fail('Annotation ID has been reused by a newer record.', 'CONFLICT');
+    }
+    const existingPage = await db.pages.get(restored.pageUrl);
+    const storedPage = pageRecord(restored, existingPage);
+    await db.annotations.put(restored);
+    await db.pages.put(storedPage);
+    await applyIncrementalStats({ afterAnnotation: restored, ...(existingPage ? { beforePage: existingPage } : {}), afterPage: storedPage });
+    return ok(restored);
+  });
+}
+
 async function deleteAnnotation(id: string, expectedRevision: number, ownPage?: string): Promise<Result<{ id: string; deleted: true }>> {
   const db = getDatabase();
-  return db.transaction('rw', db.annotations, db.stats, async () => {
+  return db.transaction('rw', db.annotations, db.stats, db.tombstones, async () => {
     const existing = await db.annotations.get(id);
     if (!existing) return fail('Annotation no longer exists.', 'CONFLICT');
     if (ownPage !== undefined && existing.pageUrl !== ownPage) return fail('Content scripts may only delete annotations from their own page.', 'FORBIDDEN');
     if (existing.revision !== expectedRevision) return fail('Annotation changed in another tab.', 'CONFLICT');
     await db.annotations.delete(id);
+    await db.tombstones.put({ id: existing.id, pageUrl: existing.pageUrl, revision: existing.revision });
     await applyIncrementalStats({ beforeAnnotation: existing });
     return ok({ id, deleted: true });
   });
@@ -236,7 +263,7 @@ async function previewBackup(annotations: Annotation[]): Promise<ImportPreview> 
 async function importBackup(annotations: Annotation[], overwrite: boolean): Promise<ImportPreview> {
   const db = getDatabase();
   // `parseBackup` ran before this call. All mutations below are one Dexie transaction.
-  return db.transaction('rw', db.annotations, db.pages, db.stats, async () => {
+  return db.transaction('rw', db.annotations, db.pages, db.stats, db.tombstones, async () => {
     const existing = await db.annotations.bulkGet(annotations.map(annotation => annotation.id));
     const preview = classifyImport(annotations, existing);
     for (let index = 0; index < annotations.length; index += 1) {
@@ -247,7 +274,11 @@ async function importBackup(annotations: Annotation[], overwrite: boolean): Prom
         // Imported revisions are foreign clocks. A local overwrite is a new local
         // mutation, so it must advance the local clock and invalidate stale tabs.
         if (local && local.revision >= MAX_REVISION) throw new ValidationError('Annotation revision limit reached.');
-        const stored = local ? { ...incoming, revision: local.revision + 1 } as Annotation : incoming;
+        const tombstone = !local ? await db.tombstones.get(incoming.id) : undefined;
+        if (tombstone && Math.max(incoming.revision, tombstone.revision) >= MAX_REVISION) throw new ValidationError('Annotation revision limit reached.');
+        const stored = local ? { ...incoming, revision: local.revision + 1 } as Annotation
+          : tombstone ? { ...incoming, revision: Math.max(incoming.revision, tombstone.revision) + 1 } as Annotation
+          : incoming;
         const existingPage = await db.pages.get(stored.pageUrl);
         const storedPage = pageRecord(stored, existingPage);
         await db.annotations.put(stored);
@@ -369,6 +400,12 @@ export async function handleDataRequest(message: unknown, context: DataRequestCo
         if (isPdfAnnotation(annotation) && !context.trusted) return fail('Content scripts cannot write PDF annotations.', 'FORBIDDEN');
         if (!context.trusted && annotation.pageUrl !== ownPage) return fail('Content scripts may only write their own page.', 'FORBIDDEN');
         return putAnnotation(annotation, validExpectedRevision(request.expectedRevision), ownPage);
+      }
+      case 'annotations.restore': {
+        const annotation = validateAnnotation(request.annotation);
+        if (isPdfAnnotation(annotation) && !context.trusted) return fail('Content scripts cannot restore PDF annotations.', 'FORBIDDEN');
+        if (!context.trusted && annotation.pageUrl !== ownPage) return fail('Content scripts may only restore their own page.', 'FORBIDDEN');
+        return restoreAnnotation(annotation, ownPage);
       }
       case 'annotations.delete': return deleteAnnotation(validId(request.id), validExpectedRevision(request.expectedRevision), ownPage);
       case 'annotations.query': {
