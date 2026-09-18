@@ -906,6 +906,11 @@ test("click or reselect existing text to remove it, undo preserves notes, and re
 test("existing image marks can be removed directly after reload", async () => {
   await enable();
   const page = await article();
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => {
+    pageErrors.push(error.message);
+    console.error("Image marking page error:", error.message);
+  });
   const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(
     (t) => t.url === "http://127.0.0.1:4173/article",
   )!;
@@ -962,6 +967,7 @@ test("existing image marks can be removed directly after reload", async () => {
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(0);
   await page.reload();
   expect(await rpc(manager, { type: "annotations.list" })).toEqual([]);
+  expect(pageErrors).toEqual([]);
 });
 
 test("overlapping highlights remove only the chosen record and failed deletion keeps the mark", async () => {

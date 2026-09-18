@@ -58,8 +58,14 @@ export function annotationsAtPoint(
     )
       return false;
     const matrix = shape.getScreenCTM();
-    if (!matrix) return false;
-    const point = new DOMPoint(x, y).matrixTransform(matrix.inverse());
+    const svg = shape.ownerSVGElement;
+    if (!matrix || !svg) return false;
+    // Chrome 120's SVG hit-test methods require a native SVGPoint. Creating it
+    // through the owning SVG also works in browsers accepting DOMPointInit.
+    const screenPoint = svg.createSVGPoint();
+    screenPoint.x = x;
+    screenPoint.y = y;
+    const point = screenPoint.matrixTransform(matrix.inverse());
     return shape.isPointInFill(point) || shape.isPointInStroke(point);
   });
 }
