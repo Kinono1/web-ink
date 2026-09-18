@@ -12,18 +12,16 @@ import {
   type ShapeKind,
   type TextAnnotation,
 } from "../core/model";
-import { captureText, createTextResolver } from "../core/text-anchor";
+import { TextAnchorSession } from "../core/text-anchor";
 import { captureImage, resolveImage } from "../core/image-anchor";
-import {
-  clientToImage,
-  getImageGeometry,
-  type ImageGeometry,
-} from "../core/geometry";
+import { clientToImage } from "../core/geometry";
 import { pageKey } from "../core/url";
 import { button, createView, svgElement } from "./view-lite";
 import { renderShape } from "./render-shape";
 import { createNotifications } from "./notifications";
 import { ICON_PATHS } from "../ui/icons";
+import { annotationsAtPoint, matchingTextSelection } from "./annotation-hit";
+import { ImageLayerManager } from "./image-layers";
 
 export interface ContentEngine {
   stop: () => void;
@@ -73,18 +71,15 @@ export function startEngine(
   let focusId: string | undefined;
   let passiveRetryCount = 0;
   let passiveRetryTimer: ReturnType<typeof setTimeout> | undefined;
-  const resolveText = createTextResolver();
+  // One session owns every reading index and DOM reference for this engine run.
+  // It is flushed by capture/resolve, so a save cannot reuse a stale mouseup index.
+  const textSession = new TextAnchorSession(document);
   const images = new Map<string, HTMLImageElement>();
   const textRanges = new Map<string, Range>();
   const highlightNames = new Set<string>();
   const appliedRevisions = new Map<string, number>();
-  type SvgLayer = {
-    group: SVGGElement;
-    clip: SVGRectElement;
-    shape?: SVGElement;
-    shapeKey?: string;
-  };
-  const svgLayers = new Map<string, SvgLayer>();
+  const deletedRevisions = new Map<string, number>();
+  const imageLayers = new ImageLayerManager(view.svg);
   const transientLayer = svgElement("g", { "data-web-ink-transient": "true" });
   const recentColors: string[] = [];
   const undo: ImageAnnotation[] = [];
@@ -270,7 +265,7 @@ export function startEngine(
       label("更多颜色", "More colors"),
     );
     view.selection.append(more);
-    const matches = matchingSelection(range);
+    const matches = matchingTextSelection(annotations, textRanges, range);
     if (matches.length === 1) view.selection.append(removeButton(matches[0]!));
     else if (matches.length > 1)
       view.selection.append(
@@ -292,18 +287,6 @@ export function startEngine(
     const bounds = view.selection.getBoundingClientRect();
     view.selection.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - bounds.width - 8))}px`;
     view.selection.style.top = `${Math.max(8, Math.min(rect.bottom + 8, innerHeight - bounds.height - 8))}px`;
-  }
-  function matchingSelection(range: Range): TextAnnotation[] {
-    return annotations.filter((record): record is TextAnnotation => {
-      const target =
-        record.kind === "text" ? textRanges.get(record.id) : undefined;
-      if (!target?.startContainer.isConnected) return false;
-      // Non-empty intersection only; adjacent annotations are not selected.
-      return (
-        range.compareBoundaryPoints(Range.END_TO_START, target) < 0 &&
-        range.compareBoundaryPoints(Range.START_TO_END, target) > 0
-      );
-    });
   }
   function removeButton(
     record: TextAnnotation | ImageAnnotation,
@@ -344,40 +327,6 @@ export function startEngine(
     }
     view.selection.append(button(label("关闭", "Close"), hideSelection));
     placeSelection(rect);
-  }
-  function annotationsAtPoint(
-    x: number,
-    y: number,
-  ): Array<TextAnnotation | ImageAnnotation> {
-    return annotations.filter(
-      (record): record is TextAnnotation | ImageAnnotation => {
-        if (record.kind === "text")
-          return Array.from(
-            textRanges.get(record.id)?.getClientRects() ?? [],
-          ).some(
-            (rect) =>
-              rect.width > 0 &&
-              x >= rect.left &&
-              x <= rect.right &&
-              y >= rect.top &&
-              y <= rect.bottom,
-          );
-        if (record.kind !== "image") return false;
-        const image = images.get(record.id),
-          shape = svgLayers.get(record.id)?.shape;
-        const geometry = image?.isConnected ? clippedGeometry(image) : null;
-        if (
-          !geometry ||
-          !clientToImage(x, y, geometry) ||
-          !(shape instanceof SVGGeometryElement)
-        )
-          return false;
-        const matrix = shape.getScreenCTM();
-        if (!matrix) return false;
-        const point = new DOMPoint(x, y).matrixTransform(matrix.inverse());
-        return shape.isPointInFill(point) || shape.isPointInStroke(point);
-      },
-    );
   }
   async function removeAnnotation(record: TextAnnotation | ImageAnnotation) {
     if (!enabled() || pendingSave || unsaved) return;
@@ -528,7 +477,8 @@ export function startEngine(
         kind: "success",
         dismissLabel: label("关闭提示", "Dismiss"),
       });
-      await refresh();
+      if (!disposed && stored.pageUrl === pageKey(location.href))
+        applyAnnotationDelta(stored, undefined, stored.pageUrl);
     } catch (error) {
       const reason =
         error instanceof RequestError && error.code === "PAGE_CHANGED"
@@ -555,7 +505,9 @@ export function startEngine(
   async function saveSelection(color: string) {
     if (!selectedRange || !enabled() || pendingSave || unsaved) return;
     try {
-      const target = captureText(selectedRange);
+      // Mouseup captured this once for the palette. Reuse only if the session
+      // can prove that no queued DOM change or range-boundary drift occurred.
+      const target = textSession.captureSelected(selectedRange);
       const record: TextAnnotation =
         rebinding?.kind === "text"
           ? { ...rebinding, target, updatedAt: new Date().toISOString() }
@@ -651,8 +603,7 @@ export function startEngine(
     view.drawing.style.display = "flex";
   }
   function chooseImage(image: HTMLImageElement) {
-    const geometry = getImageGeometry(image);
-    if (!geometry) {
+    if (!imageLayers.supports(image)) {
       toast(
         label(
           "此图片尚未加载，或使用了暂不支持的变换。",
@@ -734,111 +685,6 @@ export function startEngine(
     }
   }
 
-  function clippedGeometry(image: HTMLImageElement): ImageGeometry | null {
-    const geometry = getImageGeometry(image);
-    if (!geometry) return null;
-    let left = Math.max(0, geometry.clipRect.x),
-      top = Math.max(0, geometry.clipRect.y);
-    let right = Math.min(
-      innerWidth,
-      geometry.clipRect.x + geometry.clipRect.width,
-    );
-    let bottom = Math.min(
-      innerHeight,
-      geometry.clipRect.y + geometry.clipRect.height,
-    );
-    for (let p = image.parentElement; p; p = p.parentElement) {
-      const style = getComputedStyle(p),
-        r = p.getBoundingClientRect();
-      if (/(hidden|clip|auto|scroll)/.test(style.overflowX)) {
-        left = Math.max(left, r.left);
-        right = Math.min(right, r.right);
-      }
-      if (/(hidden|clip|auto|scroll)/.test(style.overflowY)) {
-        top = Math.max(top, r.top);
-        bottom = Math.min(bottom, r.bottom);
-      }
-    }
-    if (right <= left || bottom <= top) return null;
-    return {
-      imageRect: geometry.imageRect,
-      clipRect: { x: left, y: top, width: right - left, height: bottom - top },
-    };
-  }
-  function drawOne(
-    record: ImageAnnotation,
-    image: HTMLImageElement,
-    suffix = "",
-  ) {
-    const key = `${record.id}${suffix}`;
-    let layer = svgLayers.get(key);
-    const geometry = clippedGeometry(image);
-    if (!geometry) {
-      if (layer) layer.group.style.display = "none";
-      return;
-    }
-    if (!layer) {
-      const clipId = `clip-${key.replace(/[^a-zA-Z0-9_-]/g, "_")}`;
-      const defs = svgElement("defs"),
-        clipPath = svgElement("clipPath", { id: clipId }),
-        clip = svgElement("rect");
-      clipPath.append(clip);
-      defs.append(clipPath);
-      const group = svgElement("g", {
-        "clip-path": `url(#${clipId})`,
-        "data-annotation-id": record.id,
-      });
-      group.append(defs);
-      view.svg.append(group);
-      layer = { group, clip };
-      svgLayers.set(key, layer);
-    }
-    const visible =
-      geometry.clipRect.x < innerWidth &&
-      geometry.clipRect.y < innerHeight &&
-      geometry.clipRect.x + geometry.clipRect.width > 0 &&
-      geometry.clipRect.y + geometry.clipRect.height > 0;
-    layer.group.style.display = visible ? "" : "none";
-    if (!visible) return;
-    const local = {
-      imageRect: {
-        x: 0,
-        y: 0,
-        width: geometry.imageRect.width,
-        height: geometry.imageRect.height,
-      },
-      clipRect: {
-        x: geometry.clipRect.x - geometry.imageRect.x,
-        y: geometry.clipRect.y - geometry.imageRect.y,
-        width: geometry.clipRect.width,
-        height: geometry.clipRect.height,
-      },
-    };
-    layer.group.setAttribute(
-      "transform",
-      `translate(${geometry.imageRect.x} ${geometry.imageRect.y})`,
-    );
-    layer.clip.setAttribute("x", String(local.clipRect.x));
-    layer.clip.setAttribute("y", String(local.clipRect.y));
-    layer.clip.setAttribute("width", String(local.clipRect.width));
-    layer.clip.setAttribute("height", String(local.clipRect.height));
-    const shapeKey = `${record.revision}:${record.color}:${record.shape.kind}:${record.shape.width}:${JSON.stringify(record.shape.points)}:${local.imageRect.width}:${local.imageRect.height}`;
-    if (layer.shapeKey !== shapeKey) {
-      layer.shape?.remove();
-      layer.shape = renderShape(record.shape, local, record.color);
-      layer.group.append(layer.shape);
-      layer.shapeKey = shapeKey;
-    }
-    if (record.id === focusId) layer.shape?.setAttribute("opacity", "0.6");
-    else layer.shape?.removeAttribute("opacity");
-  }
-  function dropImageLayers(id: string) {
-    for (const [key, layer] of svgLayers)
-      if (key === id || key.startsWith(`${id}-`)) {
-        layer.group.remove();
-        svgLayers.delete(key);
-      }
-  }
   function paintImages() {
     renderFrame = 0;
     if (disposed) return;
@@ -849,14 +695,11 @@ export function startEngine(
       if (record.kind === "image") {
         validLayers.add(record.id);
         const image = images.get(record.id);
-        if (image?.isConnected) drawOne(record, image);
-        else {
-          const layer = svgLayers.get(record.id);
-          if (layer) layer.group.style.display = "none";
-        }
+        if (image?.isConnected) imageLayers.draw(record, image, focusId);
+        else imageLayers.hide(record.id);
       }
     if (selectedImage?.isConnected) {
-      const geometry = clippedGeometry(selectedImage);
+      const geometry = imageLayers.clippedGeometry(selectedImage);
       if (geometry)
         transientLayer.append(
           svgElement("rect", {
@@ -875,13 +718,10 @@ export function startEngine(
     if (unsaved?.kind === "image") {
       validLayers.add(`${unsaved.id}-unsaved`);
       const match = resolveImage(unsaved.target);
-      if (match.image) drawOne(unsaved, match.image, "-unsaved");
+      if (match.image)
+        imageLayers.draw(unsaved, match.image, focusId, "-unsaved");
     }
-    for (const [key, layer] of svgLayers)
-      if (!validLayers.has(key)) {
-        layer.group.remove();
-        svgLayers.delete(key);
-      }
+    imageLayers.reconcile(validLayers);
     view.svg.append(transientLayer);
   }
   function schedulePaint() {
@@ -903,9 +743,11 @@ export function startEngine(
         currentUrl = nextUrl;
         annotations = [];
         states = [];
+        appliedRevisions.clear();
+        deletedRevisions.clear();
         images.clear();
         clearText();
-        resolveText.invalidate();
+        textSession.invalidate();
         exitDrawing();
         pageEnabled = false;
         modeReady = false;
@@ -946,8 +788,7 @@ export function startEngine(
         states = [];
         clearText();
         images.clear();
-        for (const layer of svgLayers.values()) layer.group.remove();
-        svgLayers.clear();
+        imageLayers.clear();
         transientLayer.replaceChildren();
         exitDrawing();
         hideSelection();
@@ -965,14 +806,17 @@ export function startEngine(
         queueRefresh();
         return;
       }
-      annotations = records;
+      annotations = records.filter(
+        (record) => (deletedRevisions.get(record.id) ?? -1) < record.revision,
+      );
       clearText();
       resizeObserver.disconnect();
       images.clear();
       states = [];
       appliedRevisions.clear();
-      for (const layer of svgLayers.values()) layer.group.remove();
-      svgLayers.clear();
+      for (const record of annotations)
+        appliedRevisions.set(record.id, record.revision);
+      imageLayers.clear();
       if (!enabled()) {
         exitDrawing();
         publishStates();
@@ -982,6 +826,14 @@ export function startEngine(
         "highlights" in CSS && typeof Highlight !== "undefined";
       for (let i = 0; i < records.length; i++) {
         const record = records[i]!;
+        // A response started before a delete is never allowed to restore the
+        // deleted version into this engine's local state.
+        if (
+          (deletedRevisions.get(record.id) ?? -1) >= record.revision ||
+          annotations.find((item) => item.id === record.id)?.revision !==
+            record.revision
+        )
+          continue;
         if (record.kind === "text") {
           if (!supportsHighlight)
             states.push({
@@ -990,7 +842,7 @@ export function startEngine(
               reason: "CSS Custom Highlight is unavailable",
             });
           else {
-            const match = resolveText(record.target);
+            const match = textSession.resolve(record.target);
             states.push({
               id: record.id,
               status: match.status,
@@ -1111,7 +963,7 @@ export function startEngine(
         e.button !== 0
       )
         return;
-      const geometry = clippedGeometry(selectedImage);
+      const geometry = imageLayers.clippedGeometry(selectedImage);
       if (!geometry) return;
       const point = clientToImage(e.clientX, e.clientY, geometry);
       if (!point) return;
@@ -1132,7 +984,7 @@ export function startEngine(
     (e) => {
       if (drawingPointer !== e.pointerId || !selectedImage || !previewShape)
         return;
-      const geometry = clippedGeometry(selectedImage);
+      const geometry = imageLayers.clippedGeometry(selectedImage);
       if (!geometry) return;
       const point = clientToImage(e.clientX, e.clientY, geometry);
       if (!point) return;
@@ -1217,7 +1069,17 @@ export function startEngine(
           )
         )
           return;
-        const matches = annotationsAtPoint(e.clientX, e.clientY);
+        const matches = annotationsAtPoint(
+          {
+            annotations,
+            textRanges,
+            images,
+            imageShape: (id) => imageLayers.shapeFor(id),
+            geometryForImage: (image) => imageLayers.clippedGeometry(image),
+          },
+          e.clientX,
+          e.clientY,
+        );
         if (matches.length)
           showAnnotationActions(matches, {
             left: e.clientX,
@@ -1227,7 +1089,7 @@ export function startEngine(
       }
       const range = selection.getRangeAt(0);
       try {
-        captureText(range);
+        textSession.capture(range);
         showPalette(range);
       } catch {
         hideSelection();
@@ -1320,10 +1182,11 @@ export function startEngine(
         (m) =>
           m.type !== "attributes" ||
           m.attributeName === "src" ||
-          m.attributeName === "srcset",
+          m.attributeName === "srcset" ||
+          m.attributeName === "contenteditable" ||
+          m.attributeName === "id",
       )
     ) {
-      resolveText.invalidate();
       queueRefresh();
     }
     if (relevant.length) schedulePaint();
@@ -1334,7 +1197,14 @@ export function startEngine(
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["src", "srcset", "class", "style"],
+      attributeFilter: [
+        "src",
+        "srcset",
+        "class",
+        "style",
+        "contenteditable",
+        "id",
+      ],
     });
   }
   function applyAnnotationDelta(
@@ -1349,6 +1219,13 @@ export function startEngine(
         generation++;
         queueRefresh();
       }
+      const deleted = annotations.find((record) => record.id === deletedId);
+      const known = appliedRevisions.get(deletedId) ?? deleted?.revision;
+      if (known !== undefined)
+        deletedRevisions.set(
+          deletedId,
+          Math.max(deletedRevisions.get(deletedId) ?? -1, known),
+        );
       annotations = annotations.filter((record) => record.id !== deletedId);
       textRanges.delete(deletedId);
       images.delete(deletedId);
@@ -1356,7 +1233,7 @@ export function startEngine(
       states = states.filter((state) => state.id !== deletedId);
       if (actionRecords.some((record) => record.id === deletedId))
         hideSelection();
-      dropImageLayers(deletedId);
+      imageLayers.drop(deletedId);
       applyTextStyles();
       publishStates();
       schedulePaint();
@@ -1370,6 +1247,8 @@ export function startEngine(
       return true;
     const known = appliedRevisions.get(annotation.id);
     if (known !== undefined && known >= annotation.revision) return true;
+    if ((deletedRevisions.get(annotation.id) ?? -1) >= annotation.revision)
+      return true;
     const previous = annotations.find((record) => record.id === annotation.id);
     annotations = previous
       ? annotations.map((record) =>
@@ -1377,12 +1256,14 @@ export function startEngine(
         )
       : [...annotations, annotation];
     appliedRevisions.set(annotation.id, annotation.revision);
+    if ((deletedRevisions.get(annotation.id) ?? -1) < annotation.revision)
+      deletedRevisions.delete(annotation.id);
     if (annotation.kind === "text") {
       const targetChanged =
         previous?.kind !== "text" ||
         JSON.stringify(previous.target) !== JSON.stringify(annotation.target);
       if (targetChanged) {
-        const match = resolveText(annotation.target);
+        const match = textSession.resolve(annotation.target);
         textRanges.delete(annotation.id);
         states = states.filter((state) => state.id !== annotation!.id);
         states.push({
@@ -1396,7 +1277,7 @@ export function startEngine(
     } else {
       const match = resolveImage(annotation.target);
       images.delete(annotation.id);
-      dropImageLayers(annotation.id);
+      imageLayers.drop(annotation.id);
       states = states.filter((state) => state.id !== annotation!.id);
       states.push({
         id: annotation.id,
@@ -1463,6 +1344,7 @@ export function startEngine(
       exitDrawing();
       view.svg.replaceChildren();
       mutationObserver.disconnect();
+      textSession.invalidate();
       notifications.hide();
       updatePalette();
     }
@@ -1495,6 +1377,7 @@ export function startEngine(
     observers.abort();
     mutationObserver.disconnect();
     resizeObserver.disconnect();
+    textSession.dispose();
     clearTimeout(refreshTimer);
     clearTimeout(passiveRetryTimer);
     cancelAnimationFrame(renderFrame);
@@ -1507,7 +1390,7 @@ export function startEngine(
     view.svg.style.pointerEvents = "none";
     view.svg.style.cursor = "";
     images.clear();
-    svgLayers.clear();
+    imageLayers.clear();
     chrome.runtime.onMessage.removeListener(onMessage);
     highlightStyle.remove();
   };

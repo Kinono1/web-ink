@@ -65,43 +65,308 @@ type Reading = {
   atoms: RawAtom[];
 };
 
-export function captureText(range: Range): TextTarget {
-  const doc = range.startContainer.ownerDocument ?? document;
-  const root = readingRoot(range, doc);
-  const reading = buildReading(root);
-  const start = normalOffset(
-    reading,
-    root,
-    range.startContainer,
-    range.startOffset,
-  );
-  const end = normalOffset(reading, root, range.endContainer, range.endOffset);
-  if (start === undefined || end === undefined || start >= end) {
-    throw new Error(
-      "The selection cannot be represented in readable page text.",
+type CachedReading = { reading: Reading; version: number };
+type RangeSnapshot = {
+  target: TextTarget;
+  root: Element;
+  selector: string;
+  version: number;
+  epoch: number;
+  start: Boundary;
+  end: Boundary;
+};
+
+/** Test-only hook. It is deliberately injected instead of being product telemetry. */
+export interface TextAnchorSessionOptions {
+  onIndexBuild?: (root: Element) => void;
+}
+
+/**
+ * Owns the short-lived DOM reading indexes used by one content-engine instance.
+ * The session is intentionally not persisted: DOM nodes and cache versions are
+ * meaningful only for the current document lifecycle.
+ */
+export class TextAnchorSession {
+  private readonly readings = new Map<Element, CachedReading>();
+  // Versions must never keep a replaced article/main root alive. A WeakMap has
+  // no enumeration API; whole-session invalidation replaces it instead of clear().
+  private rootVersions = new WeakMap<Element, number>();
+  private readonly observer: MutationObserver;
+  private snapshot: RangeSnapshot | undefined;
+  private epoch = 0;
+  private disposed = false;
+
+  constructor(
+    private readonly doc: Document = document,
+    private readonly options: TextAnchorSessionOptions = {},
+  ) {
+    this.observer = new MutationObserver((mutations) =>
+      this.applyMutations(mutations),
     );
+    // documentElement survives a body replacement and lets us release indexes
+    // for roots removed during a route transition.
+    this.observer.observe(this.doc.documentElement, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class", "style", "contenteditable", "id"],
+    });
   }
-  const exact = reading.text.slice(start, end);
-  if (!exact || rangeForOffsets(reading, root, start, end) === undefined) {
-    throw new Error("The selection has no stable readable text anchor.");
+
+  /** Process records queued after the browser's observer microtask, before a save. */
+  flush(): void {
+    if (this.disposed) return;
+    const records = this.observer.takeRecords();
+    if (records.length) this.applyMutations(records);
+    this.dropDisconnectedRoots();
   }
-  const container = stableContainer(range, root);
-  return {
-    exact,
-    prefix: reading.text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
-    suffix: reading.text.slice(end, end + CONTEXT_LENGTH),
-    start,
-    end,
-    rootSelector: selectorForRoot(root),
-    ...(container?.id ? { containerId: container.id } : {}),
-  };
+
+  capture(range: Range): TextTarget {
+    if (this.disposed)
+      throw new Error("The text anchor session has been disposed.");
+    this.flush();
+    const target = this.captureFresh(range);
+    const root = rootFromTarget(target, this.doc);
+    if (!root) throw new Error("The selection reading root is unavailable.");
+    this.snapshot = {
+      target,
+      root,
+      selector: target.rootSelector,
+      version: this.versionFor(root),
+      epoch: this.epoch,
+      start: { node: range.startContainer, offset: range.startOffset },
+      end: { node: range.endContainer, offset: range.endOffset },
+    };
+    return target;
+  }
+
+  /** Reuses a mouseup capture only when the exact live range is still valid. */
+  captureSelected(range: Range): TextTarget {
+    if (this.disposed)
+      throw new Error("The text anchor session has been disposed.");
+    this.flush();
+    const snapshot = this.snapshot;
+    if (
+      snapshot &&
+      snapshot.root.isConnected &&
+      rootFromTarget(snapshot.target, this.doc) === snapshot.root &&
+      snapshot.selector === snapshot.target.rootSelector &&
+      snapshot.version === this.versionFor(snapshot.root) &&
+      snapshot.epoch === this.epoch &&
+      sameBoundary(range.startContainer, range.startOffset, snapshot.start) &&
+      sameBoundary(range.endContainer, range.endOffset, snapshot.end) &&
+      rangeBoundariesAreValid(range, snapshot.root)
+    )
+      return snapshot.target;
+    return this.capture(range);
+  }
+
+  resolve(target: TextTarget): {
+    range?: Range;
+    status: AnchorStatus;
+    reason?: string;
+  } {
+    if (this.disposed)
+      return {
+        status: "unresolved",
+        reason: "Text anchor session is disposed.",
+      };
+    this.flush();
+    return this.resolveInReading(target);
+  }
+
+  /** Explicit invalidation remains useful for callers that replace an entire root. */
+  invalidate(root?: Element): void {
+    if (this.disposed) return;
+    if (!root) {
+      this.epoch++;
+      this.readings.clear();
+      this.rootVersions = new WeakMap<Element, number>();
+      this.snapshot = undefined;
+      return;
+    }
+    this.invalidateRoot(root);
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.observer.disconnect();
+    this.readings.clear();
+    this.rootVersions = new WeakMap<Element, number>();
+    this.snapshot = undefined;
+  }
+
+  private captureFresh(range: Range): TextTarget {
+    const root = readingRoot(range, this.doc);
+    const reading = this.readingFor(root);
+    const start = normalOffset(
+      reading,
+      root,
+      range.startContainer,
+      range.startOffset,
+    );
+    const end = normalOffset(
+      reading,
+      root,
+      range.endContainer,
+      range.endOffset,
+    );
+    if (start === undefined || end === undefined || start >= end) {
+      throw new Error(
+        "The selection cannot be represented in readable page text.",
+      );
+    }
+    const exact = reading.text.slice(start, end);
+    if (!exact || rangeForOffsets(reading, root, start, end) === undefined) {
+      throw new Error("The selection has no stable readable text anchor.");
+    }
+    const container = stableContainer(range, root);
+    return {
+      exact,
+      prefix: reading.text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
+      suffix: reading.text.slice(end, end + CONTEXT_LENGTH),
+      start,
+      end,
+      rootSelector: selectorForRoot(root),
+      ...(container?.id ? { containerId: container.id } : {}),
+    };
+  }
+
+  private resolveInReading(target: TextTarget): {
+    range?: Range;
+    status: AnchorStatus;
+    reason?: string;
+  } {
+    const root = rootFromTarget(target, this.doc);
+    if (!root)
+      return { status: "unresolved", reason: "Reading root is unavailable." };
+
+    let container: Element | undefined;
+    if (target.containerId) {
+      container = this.doc.getElementById(target.containerId) ?? undefined;
+      if (!container || !root.contains(container)) {
+        return {
+          status: "unresolved",
+          reason: "The original stable container is unavailable.",
+        };
+      }
+    }
+    const reading = this.readingFor(root);
+    const matches = contextMatches(reading.text, target).filter((start) => {
+      if (!container) return true;
+      const range = rangeForOffsets(
+        reading,
+        root,
+        start,
+        start + target.exact.length,
+      );
+      return Boolean(
+        range &&
+        container.contains(range.startContainer) &&
+        container.contains(range.endContainer),
+      );
+    });
+    if (matches.length !== 1) {
+      return {
+        status: "unresolved",
+        reason:
+          matches.length === 0
+            ? "Exact text with its surrounding context was not found."
+            : "Exact text is ambiguous in the original scope.",
+      };
+    }
+    const start = matches[0]!;
+    const range = rangeForOffsets(
+      reading,
+      root,
+      start,
+      start + target.exact.length,
+    );
+    if (!range)
+      return {
+        status: "unresolved",
+        reason: "The resolved text cannot be mapped to DOM positions.",
+      };
+    return { range, status: "located" };
+  }
+
+  private readingFor(root: Element): Reading {
+    const version = this.versionFor(root);
+    const cached = this.readings.get(root);
+    if (cached?.version === version) return cached.reading;
+    const reading = buildReading(root);
+    this.options.onIndexBuild?.(root);
+    this.readings.set(root, { reading, version });
+    return reading;
+  }
+
+  private versionFor(root: Element): number {
+    return this.rootVersions.get(root) ?? 0;
+  }
+
+  private invalidateRoot(root: Element): void {
+    this.epoch++;
+    this.rootVersions.set(root, this.versionFor(root) + 1);
+    this.readings.delete(root);
+    if (this.snapshot?.root === root) this.snapshot = undefined;
+  }
+
+  private applyMutations(mutations: MutationRecord[]): void {
+    if (this.disposed || !mutations.length) return;
+    const affected = new Set<Element>();
+    for (const mutation of mutations) {
+      if (extensionUiMutation(mutation)) continue;
+      // class/style are geometry-only changes. They must not force an expensive
+      // text rebuild, but the content controller still repaints image overlays.
+      if (
+        mutation.type === "attributes" &&
+        (mutation.attributeName === "class" ||
+          mutation.attributeName === "style")
+      )
+        continue;
+      for (const root of this.readings.keys())
+        if (mutationTouchesRoot(mutation, root)) affected.add(root);
+      if (this.snapshot && mutationTouchesRoot(mutation, this.snapshot.root))
+        affected.add(this.snapshot.root);
+    }
+    for (const root of affected) this.invalidateRoot(root);
+    this.dropDisconnectedRoots();
+  }
+
+  private dropDisconnectedRoots(): void {
+    for (const root of this.readings.keys())
+      if (!root.isConnected) {
+        this.readings.delete(root);
+        this.rootVersions.delete(root);
+      }
+    if (this.snapshot && !this.snapshot.root.isConnected)
+      this.snapshot = undefined;
+  }
+}
+
+export function captureText(range: Range): TextTarget {
+  const session = new TextAnchorSession(
+    range.startContainer.ownerDocument ?? document,
+  );
+  try {
+    return session.capture(range);
+  } finally {
+    session.dispose();
+  }
 }
 
 export function resolveText(
   target: TextTarget,
   doc: Document = document,
 ): { range?: Range; status: AnchorStatus; reason?: string } {
-  return resolveInReading(target, doc, new Map());
+  const session = new TextAnchorSession(doc);
+  try {
+    return session.resolve(target);
+  } finally {
+    session.dispose();
+  }
 }
 
 /** Share the text index within one restore pass; discard it whenever the DOM changes. */
@@ -113,78 +378,17 @@ export interface TextResolver {
   };
   /** Drop cached root indexes after a meaningful DOM mutation. */
   invalidate: (root?: Element) => void;
+  /** Release observer and all document references when the restore pass ends. */
+  dispose: () => void;
 }
 
 export function createTextResolver(doc: Document = document): TextResolver {
-  const readings = new Map<Element, Reading>();
+  const session = new TextAnchorSession(doc);
   const resolve = ((target: TextTarget) =>
-    resolveInReading(target, doc, readings)) as TextResolver;
-  resolve.invalidate = (root?: Element) => {
-    if (root) readings.delete(root);
-    else readings.clear();
-  };
+    session.resolve(target)) as TextResolver;
+  resolve.invalidate = (root?: Element) => session.invalidate(root);
+  resolve.dispose = () => session.dispose();
   return resolve;
-}
-
-function resolveInReading(
-  target: TextTarget,
-  doc: Document,
-  readings: Map<Element, Reading>,
-): { range?: Range; status: AnchorStatus; reason?: string } {
-  const root = rootFromTarget(target, doc);
-  if (!root)
-    return { status: "unresolved", reason: "Reading root is unavailable." };
-
-  let container: Element | undefined;
-  if (target.containerId) {
-    container = doc.getElementById(target.containerId) ?? undefined;
-    if (!container || !root.contains(container)) {
-      return {
-        status: "unresolved",
-        reason: "The original stable container is unavailable.",
-      };
-    }
-  }
-  // Context is always relative to the stored reading root. A stable container narrows
-  // candidates; it must not discard the preceding root-level context captured above.
-  const reading = readings.get(root) ?? buildReading(root);
-  readings.set(root, reading);
-  const matches = contextMatches(reading.text, target).filter((start) => {
-    if (!container) return true;
-    const range = rangeForOffsets(
-      reading,
-      root,
-      start,
-      start + target.exact.length,
-    );
-    return Boolean(
-      range &&
-      container.contains(range.startContainer) &&
-      container.contains(range.endContainer),
-    );
-  });
-  if (matches.length !== 1) {
-    return {
-      status: "unresolved",
-      reason:
-        matches.length === 0
-          ? "Exact text with its surrounding context was not found."
-          : "Exact text is ambiguous in the original scope.",
-    };
-  }
-  const start = matches[0]!;
-  const range = rangeForOffsets(
-    reading,
-    root,
-    start,
-    start + target.exact.length,
-  );
-  if (!range)
-    return {
-      status: "unresolved",
-      reason: "The resolved text cannot be mapped to DOM positions.",
-    };
-  return { range, status: "located" };
 }
 
 function readingRoot(range: Range, doc: Document): Element {
@@ -214,6 +418,45 @@ function rootFromTarget(
   } catch {
     return undefined;
   }
+}
+
+function sameBoundary(node: Node, offset: number, boundary: Boundary): boolean {
+  return node === boundary.node && offset === boundary.offset;
+}
+
+function rangeBoundariesAreValid(range: Range, root: Element): boolean {
+  if (
+    !root.contains(range.startContainer) ||
+    !root.contains(range.endContainer)
+  )
+    return false;
+  try {
+    const probe = root.ownerDocument.createRange();
+    probe.setStart(range.startContainer, range.startOffset);
+    probe.setEnd(range.endContainer, range.endOffset);
+    return !probe.collapsed;
+  } catch {
+    return false;
+  }
+}
+
+function mutationTouchesRoot(mutation: MutationRecord, root: Element): boolean {
+  if (!root.isConnected) return true;
+  if (root.contains(mutation.target)) return true;
+  if (mutation.type !== "childList") return false;
+  // A cached root may itself have been detached/replaced. Added nodes outside a
+  // root cannot affect its reading, but removing/reparenting the root can.
+  return Array.from(mutation.removedNodes).some(
+    (node) => node === root || (node instanceof Element && node.contains(root)),
+  );
+}
+
+function extensionUiMutation(mutation: MutationRecord): boolean {
+  const element =
+    mutation.target.nodeType === Node.ELEMENT_NODE
+      ? (mutation.target as Element)
+      : mutation.target.parentElement;
+  return Boolean(element?.closest("[data-web-ink]"));
 }
 
 function stableContainer(range: Range, root: Element): Element | undefined {
