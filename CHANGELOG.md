@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.0 — performance preview, 2026-09-19
+
+- Shared the webpage text index between selection capture and restoration, flushing queued DOM mutations before save and releasing replaced roots. Successful saves apply record deltas instead of full-page refreshes.
+- Added owner-scoped cancellable query tasks, a single bulk read for indexed pagination, and 25/128-row batches for complete residual substring filtering. The library cancels previous input immediately before its 180 ms debounce.
+- Reduced known-length PDF input copies; isolated document sessions and cleanup; replaced repeated page-offset rebuilding with a Fenwick index and batched size updates.
+- Kept only the PDF viewport and neighboring pages mounted. Grouped annotations by page, paginated notes, and retained editor drafts across list reordering.
+- Split PDF rendering, session, layout, input, and notes; management presentation/query; query planning; webpage hit testing and image layers into focused modules.
+- Preserved extension identity, IndexedDB v3, backup schema v2, deletion revisions, and runtime dependencies.
+
 ## 0.2.1 — annotation removal fix, 2026-09-19
 
 - Added direct removal on saved webpage text/image annotations and PDF highlights/areas, with session undo.

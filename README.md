@@ -4,7 +4,15 @@ Web Ink 是本地优先的 Chrome 标注工具：网页文字、图片绘制，�
 
 [English](README.en.md) · [隐私说明](PRIVACY.md) · [第三方许可](THIRD_PARTY_NOTICES.md) · [发布流程](docs/RELEASING.md)
 
-> v0.2.1 为预览版本。支持范围与测试边界见 [验证记录](docs/VALIDATION.md)，性能数据见 [测量报告](docs/PERFORMANCE.md)。
+> v0.3.0 为预览版本。支持范围与测试边界见 [验证记录](docs/VALIDATION.md)，性能数据见 [测量报告](docs/PERFORMANCE.md)。
+
+## v0.3 的优化
+
+- 文字选区和恢复共用当前页面的文字索引；保存后更新新增记录，正文变动时重新验证定位。
+- 资料库每页最多 50 条，搜索保持完整子串匹配；输入变化立即取消旧任务，再防抖发起新查询。
+- 已知长度 PDF 直接填入一个目标缓冲区；长文档只挂载可见页及相邻页，缩放和页面尺寸更新保留阅读位置。
+- PDF 标注列表每次显示 50 条，可加载更多；编辑中的笔记跨列表重排保留，换文件前先保存或明确放弃。
+- 不新增运行时依赖，数据库仍为 v3、备份仍为 schema v2，无本轮数据迁移。
 
 ## 取消标注
 
@@ -25,7 +33,7 @@ Web Ink 是本地优先的 Chrome 标注工具：网页文字、图片绘制，�
 
 普通网页要求 Chrome 120 或更高版本。iframe、网页自身 Shadow DOM、浏览器内部页、file URL 与 canvas 内容不在网页标注范围内。
 
-## PDF（v0.2 基础范围）
+## PDF
 
 PDF 支持基础文字标注与区域标注，坐标保存为未旋转页面坐标中的归一化值。PDF 页面需要 Chrome 125 或更高版本；最低版本由专门的 Chrome 125 CI 用例验证。
 
@@ -61,7 +69,7 @@ npm run test:e2e
 npm run zip
 ```
 
-构建、测试和发布验收的真实结果将在根完成后写入验证记录；不要将本 README 当作已完成的 v0.2 测试证明。
+性能复现：`npm run benchmark:v03` 与 `npm run benchmark:pdf`。这两组测量使用人工样例和临时浏览器 profile；测量环境、原始样本和限制见 [性能报告](docs/PERFORMANCE.md)。
 
 ## 许可
 

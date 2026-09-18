@@ -12,7 +12,7 @@ Annotations are stored in extension-owned IndexedDB. Settings are stored in `chr
 
 PDF bytes are never stored in IndexedDB, `chrome.storage`, JSON backup, or Web Ink's own files. To restore annotations for a local PDF, the user selects the same-content file again and Web Ink compares its hash. A changed hash is treated as a different document.
 
-Local and direct-reader PDF input is capped at 50 MiB to protect browser memory. This is an input limit, not a retention policy.
+Local and direct-reader PDF input is capped at 50 MiB to protect browser memory. This is an input limit, not a retention policy. Text indexes, DOM ranges, query cancellation state, PDF input buffers, page-height indexes, and editor drafts are session-only objects. They are not added to the database or portable backups. Closing a document or the extension page releases its owned PDF loading/rendering work.
 
 For image annotations, Web Ink stores source-identification metadata and shape coordinates. It does not separately download ordinary page images or save screenshots. A permitted inline `data:image` URL may itself contain encoded image data; if present, it is metadata supplied by the page and remains subject to input validation limits.
 

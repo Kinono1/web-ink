@@ -1,5 +1,15 @@
 # Validation — Web Ink
 
+## 0.3.0 performance preview — 2026-09-19
+
+Local TypeScript/build, **123 unit tests across 15 files and all 27 Chromium browser tests passed**. The final runtime/benchmark source is `0326026`; later release documentation does not change runtime code. The matching release commit must also pass the dedicated Chrome 125 PDF/query and Chrome 120 webpage CI gates before publication. The release notes link that exact run.
+
+New coverage includes shared-index build counts; pending text/child-node mutations, replaced roots and contenteditable changes; scoped query cancellation, errors retaining prior UI records, full 1k/10k/50k reference-result comparisons and compound pagination; known/unknown/compressed PDF input, 20/50 MiB limits, mismatched lengths, interruption/reselection; 500/1000-page mixed-size jumps and zoom/rotation; rapid A/B/C sessions; 50-row PDF notes and draft retention through reordering; frame-local shared-image geometry reads. Existing deletion, undo, stale writes, browser restart, v1/v2 database upgrades, v1 backups, per-page toggles, SPA ownership and 320px/dark UI cases remain green.
+
+The database, message model and backup files differ from v0.2.1 only by deterministic formatting; their persisted structures are unchanged. IndexedDB remains v3, backup schema remains v2, and the manifest public identity key is unchanged. The install ZIP was checked against the built files and contains 224 runtime/resource/license files, without PDFs, source maps, profiles, backups or secrets.
+
+[Performance results](PERFORMANCE.md) include 30-sample baseline/candidate runs and raw data. All stated webpage timing gates passed. PDF results explicitly separate allocation ownership and bounded canvas counts from unavailable whole-browser peak memory; the large-file opening test does not show a startup speedup. Synthetic PDF/library screenshots were inspected. Native Chrome permission approval and personal-profile acceptance remain the manual boundary described below.
+
 ## 0.2.1 removal fix — 2026-09-19
 
 Local TypeScript/build, **90 unit tests and 23 browser tests passed**. New scenarios exercise direct removal of saved webpage text/images, selecting existing text, individual overlapping-mark removal, delete failures preserving data, native-dialog-free library deletion, PDF removal after reselecting the same file, and revision-safe undo preserving notes/tags/color/identity. Existing PDF text selection continues through the non-interactive overlay.

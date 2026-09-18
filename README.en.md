@@ -4,7 +4,15 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 
 [中文](README.md) · [Privacy](PRIVACY.md) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release process](docs/RELEASING.md)
 
-> v0.2.1 is a preview. See [validation boundaries](docs/VALIDATION.md) and [performance measurements](docs/PERFORMANCE.md).
+> v0.3.0 is a preview. See [validation boundaries](docs/VALIDATION.md) and [performance measurements](docs/PERFORMANCE.md).
+
+## v0.3 improvements
+
+- Selection capture and restoration share a page-local text index. Saving applies a record delta; document mutations invalidate and revalidate anchors.
+- Library pages contain at most 50 records. Search retains complete substring matching and cancels superseded work immediately, before debouncing a new query.
+- Known-length PDFs fill one destination buffer. Long documents mount only visible and adjacent pages, retaining the reading position as sizes change.
+- PDF notes use 50-row batches with Load more. Drafts survive list reordering; file changes require saving or explicitly discarding edits.
+- No new runtime dependencies or data migration. IndexedDB remains v3 and portable backups remain schema v2.
 
 ## Removing annotations
 
@@ -25,7 +33,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 
 Ordinary webpage annotation requires Chrome 120 or later. Iframes, page-owned Shadow DOM, browser-internal pages, file URLs, and canvas content are outside this webpage scope.
 
-## PDF: v0.2 baseline scope
+## PDF
 
 PDF support covers baseline text and area annotations. Coordinates are normalized in the unrotated PDF page coordinate space. The PDF page requires Chrome 125 or later; the minimum version is covered by a dedicated Chrome 125 CI step.
 
@@ -61,7 +69,7 @@ npm run test:e2e
 npm run zip
 ```
 
-Final validation and performance results will be recorded after root integration is complete. This README is not evidence of completed v0.2 testing.
+Reproduce measurements with `npm run benchmark:v03` and `npm run benchmark:pdf`. Both use artificial fixtures and disposable browser profiles. Environment, raw samples, and limitations are in the [performance report](docs/PERFORMANCE.md).
 
 ## License
 
