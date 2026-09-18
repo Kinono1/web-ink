@@ -1,0 +1,42 @@
+# Dependencies and build output
+node_modules/
+.wxt/
+.output/
+/Web-Ink-Chrome/
+# Local test results and browser profiles
+coverage/
+test-results/
+playwright-report/
+/browser-profile*/
+/test-profile*/
+/profiles/
+# Local configuration and credentials
+*.local
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+# Personal exports and local databases (never source artifacts)
+/backups/
+web-ink-backup*.json
+web-ink-annotations*.md
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.backup.json
+!tests/fixtures/*.json
+# OS/editor/cache files
+.DS_Store
+._*
+.idea/
+.vscode/
+*.tsbuildinfo
+*.log
+# Distribution binaries belong in GitHub Releases, not the source tree
+*.zip
+*.crx

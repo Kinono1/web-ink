@@ -1,0 +1,26 @@
+{
+  "browser": "Playwright Chromium (pre-granted test manifest)",
+  "reports": [
+    {
+      "site": "Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Web_annotation",
+      "checkedAt": "2026-09-17T18:18:51.909Z",
+      "result": "text-create-and-reload-pass",
+      "records": 1
+    },
+    {
+      "site": "MDN",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API",
+      "checkedAt": "2026-09-17T18:18:55.184Z",
+      "result": "text-create-and-reload-pass",
+      "records": 1
+    },
+    {
+      "site": "GitHub",
+      "url": "https://github.com/wxt-dev/wxt",
+      "checkedAt": "2026-09-17T18:18:57.062Z",
+      "result": "text-create-and-reload-pass",
+      "records": 1
+    }
+  ]
+}
