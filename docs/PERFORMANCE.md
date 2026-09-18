@@ -1,6 +1,6 @@
 # v0.3 performance evidence
 
-Measured 2026-09-19, Asia/Shanghai, on an Apple M4 Pro (14 logical cores, 48 GiB), macOS 26.6.2, Node 26.5.0 and Playwright Chromium 153.0.8010.12. Baseline: published v0.2.1 `282ac0c`; candidate runtime/benchmark source: `0326026`. Raw samples, archive identities, environment, and Boolean acceptance gates are in [performance-v0.3.json](performance-v0.3.json).
+Measured 2026-09-19, Asia/Shanghai, on an Apple M4 Pro (14 logical cores, 48 GiB), macOS 26.6.2, Node 26.5.0 and Playwright Chromium 153.0.8010.12. Baseline: published v0.2.1 `282ac0c`; candidate webpage runtime/benchmark source: `69bdd60`. PDF measurements use `0326026`; the PDF source and dependencies are unchanged by the later isolated SVGPoint compatibility fix. Raw samples, archive identities, environment, and Boolean acceptance gates are in [performance-v0.3.json](performance-v0.3.json).
 
 ## Method
 
@@ -10,14 +10,14 @@ The article has **113,600 characters / 200 annotations**; the library has **10,0
 
 | P95 measurement | v0.2.1 | v0.3.0 |
 | --- | ---: | ---: |
-| Restore 200 annotations | 43.4 ms | 43.2 ms |
-| Selection to saved highlight | 29.9 ms | 6.4 ms |
-| Library query, first 50 | 1.4 ms | 1.1 ms |
-| Library first 50 rows painted | 31.8 ms | 32.7 ms |
-| Image paint callback | 4.2 ms | 5.4 ms |
-| Sparse substring query | 51.7 ms | 30.6 ms |
-| No-match substring query | 83.1 ms | 58.7 ms |
-| Sparse tag filter | 45.7 ms | 30.5 ms |
+| Restore 200 annotations | 43.4 ms | 42.3 ms |
+| Selection to saved highlight | 29.9 ms | 6.2 ms |
+| Library query, first 50 | 1.4 ms | 1.0 ms |
+| Library first 50 rows painted | 31.8 ms | 31.2 ms |
+| Image paint callback | 4.2 ms | 5.6 ms |
+| Sparse substring query | 51.7 ms | 30.4 ms |
+| No-match substring query | 83.1 ms | 58.1 ms |
+| Sparse tag filter | 45.7 ms | 30.7 ms |
 
 All stated webpage gates pass: capture/save improves by about **79%** (target ≥30%); no-match search is below 65 ms; sparse search is below 40 ms. Restore, pagination and first paint stay within the larger of 20% or 2 ms of baseline. The image callback also stays inside that tolerance, but its P95 is higher than the baseline: this run does **not** establish an image-scroll speedup.
 
@@ -44,7 +44,7 @@ Page-height updates use a Fenwick tree, O(log N), with O(1) per-page dimension m
 
 ## Runtime size and reproduction
 
-The resident webpage entry is unchanged at **14,236 raw / 5,121 gzip bytes**. The full v0.3.0 ZIP is **2,857,755 bytes (about 2.73 MiB)**, 3,327 bytes larger than v0.2.1. PDF.js and its resources remain separate from ordinary webpage loading. There are no new runtime dependencies, schema changes or persistent indexes.
+The resident webpage entry is unchanged at **14,236 raw / 5,121 gzip bytes**. The full v0.3.0 ZIP is **2,857,784 bytes (about 2.73 MiB)**, 3,356 bytes larger than v0.2.1. PDF.js and its resources remain separate from ordinary webpage loading. There are no new runtime dependencies, schema changes or persistent indexes.
 
 Run `npm run build`, then `npm run benchmark:v03` and `npm run benchmark:pdf`. To measure a baseline archive, extract it outside the source tree and set `WEB_INK_BUILD` to that directory for the same scripts. Do not run competing browser/unit workloads during timing. All fixtures/profiles are temporary; no personal PDFs or annotations enter the repository.
 

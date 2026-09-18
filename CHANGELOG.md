@@ -7,6 +7,7 @@
 - Reduced known-length PDF input copies; isolated document sessions and cleanup; replaced repeated page-offset rebuilding with a Fenwick index and batched size updates.
 - Kept only the PDF viewport and neighboring pages mounted. Grouped annotations by page, paginated notes, and retained editor drafts across list reordering.
 - Split PDF rendering, session, layout, input, and notes; management presentation/query; query planning; webpage hit testing and image layers into focused modules.
+- Fixed legacy Chrome image-mark click/removal by passing a native SVG point to geometry hit-test methods.
 - Preserved extension identity, IndexedDB v3, backup schema v2, deletion revisions, and runtime dependencies.
 
 ## 0.2.1 — annotation removal fix, 2026-09-19
