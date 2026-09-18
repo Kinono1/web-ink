@@ -34,7 +34,10 @@ test.beforeEach(async () => {
       channel: "chromium",
     ...(process.env.WEB_INK_TEST_BROWSER_PATH ? { executablePath: process.env.WEB_INK_TEST_BROWSER_PATH } : {}),
       headless: true,
-      args: [
+      // Chrome 125 defaults to old headless, which cannot load extensions.
+    // https://developer.chrome.com/docs/extensions/how-to/test/end-to-end-testing
+    args: [
+      "--headless=new",
         `--disable-extensions-except=${extension}`,
         `--load-extension=${extension}`,
       ],
