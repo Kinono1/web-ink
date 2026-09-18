@@ -1,6 +1,6 @@
 # Web Ink
 
-Web Ink is a local-first Chrome annotation tool for webpage text, image drawings, and an in-progress PDF text/area workflow. Data stays in the browser profile; there is no account, cloud sync, or telemetry.
+Web Ink is a local-first Chrome annotation tool for webpage text, image drawings, and PDF text and area annotations. Data stays in the browser profile; there is no account, cloud sync, or telemetry.
 
 [中文](README.md) · [Privacy](PRIVACY.md) · [Third-party notices](THIRD_PARTY_NOTICES.md) · [Release process](docs/RELEASING.md)
 
@@ -19,7 +19,7 @@ Ordinary webpage annotation requires Chrome 120 or later. Iframes, page-owned Sh
 
 ## PDF: v0.2 baseline scope
 
-PDF support covers baseline text and area annotations. Coordinates are normalized in the unrotated PDF page coordinate space. The PDF page requires Chrome 125 or later; that minimum-version boundary still needs final browser verification.
+PDF support covers baseline text and area annotations. Coordinates are normalized in the unrotated PDF page coordinate space. The PDF page requires Chrome 125 or later; the minimum version is covered by a dedicated Chrome 125 CI step.
 
 - Open a local file or a specifically authorized HTTPS PDF reader page.
 - A single PDF input is limited to **50 MiB**. This protects local rendering and browser memory; it does not mean that the file is stored.

@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased v0.2
+## 0.2.0 — preview, 2026-09-19
 
-This section describes work in the integration branch. It is not a release note and does not claim completed validation.
+This preview adds PDF reading and a quieter webpage engine. Local validation and measurement boundaries are documented in docs/VALIDATION.md and docs/PERFORMANCE.md; publishing requires the dedicated CI checks to pass.
 
 - Added a quiet-by-default per-page webpage engine: the resident bootstrap keeps the palette and mode state, while selection, mutation observation, text indexing, and drawing load only after enable.
 - Added shared macOS-style system/light/dark presentation tokens and reduced-motion/reduced-transparency preferences.
