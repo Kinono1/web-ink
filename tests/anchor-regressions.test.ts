@@ -125,6 +125,30 @@ describe("TextAnchorSession lifecycle", () => {
     }
   });
 
+  it("recaptures offsets and context after a pending sibling insertion", () => {
+    document.body.innerHTML =
+      '<main id="story"><p id="target">before chosen after</p></main>';
+    let builds = 0;
+    const session = new TextAnchorSession(document, {
+      onIndexBuild: () => builds++,
+    });
+    try {
+      const range = selectRange("#target", 7, 13);
+      const before = session.capture(range);
+      document
+        .querySelector("#target")!
+        .insertAdjacentHTML("beforebegin", "<p>new preceding context</p>");
+      const after = session.captureSelected(range);
+      expect(after.exact).toBe("chosen");
+      expect(after.start).toBeGreaterThan(before.start);
+      expect(after.prefix).toContain("new preceding context");
+      expect(session.resolve(after).range?.toString()).toBe("chosen");
+      expect(builds).toBe(2);
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("rebuilds after a replacement root and rejects contenteditable text", () => {
     document.body.innerHTML =
       '<main id="story"><p id="target">before chosen after</p></main>';

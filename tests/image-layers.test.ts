@@ -85,4 +85,24 @@ describe("ImageLayerManager", () => {
     manager.clear();
     expect(svg.childElementCount).toBe(0);
   });
+
+  it("calculates shared image geometry once per paint frame", () => {
+    const { image, svg } = imageFixture();
+    const manager = new ImageLayerManager(svg);
+    const record = annotation();
+    let imageRectReads = 0;
+    image.getBoundingClientRect = () => {
+      imageRectReads++;
+      return new DOMRect(10, 20, 200, 100);
+    };
+
+    manager.beginPaint();
+    manager.draw(record, image);
+    manager.draw({ ...record, id: "image-2" }, image);
+    expect(imageRectReads).toBe(1);
+
+    manager.beginPaint();
+    manager.draw(record, image);
+    expect(imageRectReads).toBe(2);
+  });
 });

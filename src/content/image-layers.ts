@@ -13,6 +13,12 @@ export type ImageLayer = {
 /** Owns the live SVG nodes for persisted image annotations in one engine run. */
 export class ImageLayerManager {
   private readonly layers = new Map<string, ImageLayer>();
+  // Geometry is valid only for one rAF paint: scroll, resize, and layout changes
+  // schedule a new paint and must recompute it.
+  private readonly paintGeometry = new Map<
+    HTMLImageElement,
+    ImageGeometry | null
+  >();
 
   constructor(private readonly svg: SVGSVGElement) {}
 
@@ -62,6 +68,10 @@ export class ImageLayerManager {
     return this.layers.get(id)?.shape;
   }
 
+  beginPaint(): void {
+    this.paintGeometry.clear();
+  }
+
   draw(
     record: ImageAnnotation,
     image: HTMLImageElement,
@@ -70,7 +80,7 @@ export class ImageLayerManager {
   ): void {
     const key = `${record.id}${suffix}`;
     let layer = this.layers.get(key);
-    const geometry = this.clippedGeometry(image);
+    const geometry = this.geometryForPaint(image);
     if (!geometry) {
       if (layer) layer.group.style.display = "none";
       return;
@@ -155,5 +165,13 @@ export class ImageLayerManager {
   clear(): void {
     for (const layer of this.layers.values()) layer.group.remove();
     this.layers.clear();
+    this.paintGeometry.clear();
+  }
+
+  private geometryForPaint(image: HTMLImageElement): ImageGeometry | null {
+    if (this.paintGeometry.has(image)) return this.paintGeometry.get(image)!;
+    const geometry = this.clippedGeometry(image);
+    this.paintGeometry.set(image, geometry);
+    return geometry;
   }
 }

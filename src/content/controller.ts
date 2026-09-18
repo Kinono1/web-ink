@@ -689,6 +689,7 @@ export function startEngine(
     renderFrame = 0;
     if (disposed) return;
     if (!enabled()) return;
+    imageLayers.beginPaint();
     transientLayer.replaceChildren();
     const validLayers = new Set<string>();
     for (const record of annotations)
