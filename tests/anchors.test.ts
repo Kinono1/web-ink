@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { captureImage, resolveImage } from '../src/core/image-anchor';
 import { captureText, resolveText } from '../src/core/text-anchor';
+import { createTextResolver } from '../src/core/text-anchor';
 import type { TextTarget } from '../src/core/model';
 
 function select(doc: Document, selector: string, start: number, end: number): Range {
@@ -70,6 +71,16 @@ describe('text anchors', () => {
     const result = resolveText(target, document);
     expect(result.status).toBe('located');
     expect(result.range?.toString()).toBe('chosen');
+  });
+
+  it('drops a cached reading index when the caller invalidates its mutated root', () => {
+    document.body.innerHTML = '<main id="story"><p id="stable">before chosen after</p></main>';
+    const target = captureText(select(document, '#stable', 7, 13));
+    const resolver = createTextResolver(document);
+    expect(resolver(target).status).toBe('located');
+    document.querySelector('#stable')!.textContent = 'before replaced after';
+    resolver.invalidate();
+    expect(resolver(target).status).toBe('unresolved');
   });
 });
 

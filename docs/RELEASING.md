@@ -1,31 +1,30 @@
 # Release process and file boundary
 
-The initial public release is **v0.1.3**, marked as a GitHub prerelease. PDF support and universal site compatibility are not claimed.
+This document is a release checklist. It does not assert that any unreleased feature has passed validation.
 
-## What belongs where
+## Source, release assets, and local-only data
 
 | Destination | Contents |
 | --- | --- |
-| Git source tree | `src/`, `entrypoints/`, artificial `tests/`, build/check scripts, `package.json`, `package-lock.json`, TypeScript/WXT/Playwright/Vitest config, CI, public icons/license notices, README/privacy/license/changelog, reviewed `docs/` |
-| GitHub Release assets | `web-ink-<version>-chrome.zip` and its `.zip.sha256` |
-| Local only | `node_modules/`, `.wxt/`, `.output/`, `Web-Ink-Chrome/`, test reports/traces, browser profiles, exported annotations, databases, environment files and private keys |
+| Git source tree | Source, entrypoints, reviewed docs, artificial fixtures, tests, lockfile, scripts, public icons, generated license manifests, and resource license files required by the package |
+| GitHub Release assets | `web-ink-<version>-chrome.zip` and matching `.zip.sha256` |
+| Local only | `node_modules/`, `.wxt/`, `.output/`, unpacked install folders, browser profiles, test traces/reports, exported annotations, IndexedDB databases, environment files, PDF files, and private keys |
 
-The manifest `key` is a **public** extension identity key. It keeps the unpacked extension ID stable and is intentionally tracked. No private signing key is included.
+The manifest `key` is a public extension-identity key used for stable unpacked updates. It is intentionally tracked and is not a signing private key.
 
-`.gitignore` is a guard for untracked files, not a substitute for reviewing the staged list. Personal data is never suitable for source control merely because its filename is not ignored.
+## Pre-release checks
 
-## Build and publish
+1. Review staged paths and documentation claims. Never add browser profiles, real PDFs, personal annotations, exports, credentials, or private keys.
+2. Run the repository's documented Node/npm commands. Node and npm workflow remain unchanged; install from the committed `package-lock.json`.
+3. Run build, unit, browser, and packaging checks required by the target release. Record only results actually observed for that exact commit.
+4. Inspect ZIP entries. Runtime code, HTML/CSS, icons, PDF.js assets, matching worker, CMaps/fonts/WASM, and their required licenses may be present. Exclude source maps unless intentionally released, user data, credentials, profiles, and original PDFs.
+5. Verify PDF.js packaging uses version `6.3.289` legacy build with a matching worker. Check that every bundled PDF resource has the relevant upstream license/notice retained; do not summarize all fonts/CMaps/WASM as Apache-2.0.
+6. Check the public extension ID remains stable. Upgrade by replacing files in the same unpacked directory and using **Reload**; do not uninstall as an upgrade test because uninstall deletes extension-local storage.
 
-1. Check the package version, README, changelog and known limitations. Inspect `git status` for unrelated or personal files.
-2. Run `npm ci`, `npm run check`, `npm test`, `npm run build`, `npx playwright install chromium`, and `npm run test:e2e`.
-3. Run `npm run zip` and `node scripts/checksum.mjs`. In `.output`, run `shasum -a 256 -c web-ink-<version>-chrome.zip.sha256` (Linux: `sha256sum`).
-4. Inspect ZIP entries: only the runtime manifest, HTML/JS/CSS, icons and license notices belong inside. Exclude source maps, credentials, user data and browser profiles.
-5. Review the explicit staged source paths and the commit identity. Commit and push source, then confirm GitHub Actions passed for that commit.
-6. Tag that exact commit as `v<version>`. Create a GitHub prerelease with the ZIP and checksum assets and installation/upgrade instructions.
-7. Verify the release URL, prerelease flag, tag target and asset digests. Do not overwrite an existing public release silently; use a new version for changed artifacts.
+## PDF acceptance boundary
 
-CI uses read-only repository permissions and uploads build artifacts. It does not publish a release automatically. GitHub's automatic Source code archives contain the source tree; users should install the named extension ZIP asset.
+Before declaring PDF support accepted, test at least local-file open, same-hash re-selection restore, changed-hash non-migration, text and area annotation, direct HTTPS PDF authorization, redirect refusal, and no-cookie/no-credential behavior. Chrome 125 is the current intended minimum for the PDF page but remains subject to final browser validation. Webpage behavior continues to use the Chrome 120 boundary.
 
-## Manual acceptance boundary
+## Publish
 
-Automated functional tests pre-grant host permissions in a disposable test manifest. Native Chrome permission approval, its native side-panel entry and user-specific upgrade behavior still deserve a manual check. A GitHub prerelease makes the candidate available for testing; it does not turn these checks into completed results.
+Tag the exact verified commit, create the release/prerelease deliberately, upload ZIP and checksum assets, and verify the release URL, tag target, prerelease flag, and digests. CI may build artifacts but does not replace release acceptance or publish authorization.

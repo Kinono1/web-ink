@@ -18,11 +18,11 @@ export function createPaletteToggle(root: ShadowRoot, onToggle: () => void): Pal
   const style = document.createElement('style');
   style.dataset.webInkPaletteToggle = 'true';
   style.textContent = `
-    .web-ink-palette-toggle { position:fixed; right:18px; bottom:18px; width:40px; height:40px; padding:0; border-radius:50%; border:1px solid #ffffffcc; box-shadow:0 3px 12px #17223542; display:grid; place-items:center; cursor:pointer; pointer-events:auto; color:#172235; background:#eef2f7; transition:background-color .16s ease, transform .16s ease, box-shadow .16s ease; }
-    .web-ink-palette-toggle[data-enabled=true] { background:conic-gradient(from 210deg, #facc15, #fb7185, #c084fc, #38bdf8, #4ade80, #facc15); color:#10253e; }
+    .web-ink-palette-toggle { position:fixed; right:18px; bottom:18px; width:40px; height:40px; padding:0; border-radius:50%; border:1px solid var(--ink-separator); box-shadow:var(--ink-shadow); display:grid; place-items:center; cursor:pointer; pointer-events:auto; color:var(--ink-text); background:var(--ink-fill); transition:background-color .16s ease, transform .16s ease, box-shadow .16s ease; }
+    .web-ink-palette-toggle[data-enabled=true] { background:conic-gradient(from 210deg, #facc15, #fb7185, #c084fc, var(--ink-accent), #4ade80, #facc15); color:var(--ink-text); }
     .web-ink-palette-toggle[data-enabled=false] svg { filter:grayscale(1); opacity:.72; }
     .web-ink-palette-toggle:not(:disabled):hover { transform:translateY(-1px); box-shadow:0 5px 16px #17223555; }
-    .web-ink-palette-toggle:focus-visible { outline:3px solid #38bdf8; outline-offset:3px; }
+    .web-ink-palette-toggle:focus-visible { outline:3px solid var(--ink-accent); outline-offset:3px; }
     .web-ink-palette-toggle:disabled { cursor:not-allowed; opacity:.57; filter:grayscale(.75); }
     .web-ink-palette-toggle svg { width:22px; height:22px; } .web-ink-palette-toggle .state-dot { position:absolute; right:5px; bottom:5px; width:6px; height:6px; border:1px solid #fff; border-radius:50%; background:#8b98a9; } .web-ink-palette-toggle[data-enabled=true] .state-dot { background:#166534; }
     @media (prefers-reduced-motion: reduce) { .web-ink-palette-toggle { transition:none; } }

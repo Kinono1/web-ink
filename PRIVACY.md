@@ -2,20 +2,32 @@
 
 Web Ink is designed for local use.
 
-## Data it stores
+## Data stored in the browser profile
 
-- Annotation records: canonical page URL, page title, selected text or image-identification metadata, drawing geometry, note, tags, color, timestamps, and revision.
-- Extension settings: language, default color, paused website origins and per-page enabled/disabled preferences.
-- These records are stored in the browser profile: annotations in extension-owned IndexedDB and settings in `chrome.storage.local`.
+- Web annotations: canonical URL, page title, selected text or image-identification metadata, drawing geometry, note, tags, color, timestamps, revision, and per-page enabled preference.
+- PDF annotations: SHA-256 document hash, file name, optional source URL, page number, text anchor/context, and area geometry.
+- Settings: language, theme, reduced-motion/reduced-transparency preferences, default color, and paused origins.
 
-For image annotations, Web Ink stores a source reference and shape coordinates. It does not separately download ordinary network images or save webpage screenshots/PDF files. A permitted inline data:image URL may itself contain a small encoded image payload; that URL is stored as metadata and is subject to the input length limit.
+Annotations are stored in extension-owned IndexedDB. Settings are stored in `chrome.storage.local`.
 
-## Data it does not send
+PDF bytes are never stored in IndexedDB, `chrome.storage`, JSON backup, or Web Ink's own files. To restore annotations for a local PDF, the user selects the same-content file again and Web Ink compares its hash. A changed hash is treated as a different document.
 
-The extension has no account, server API, cloud synchronization, analytics, telemetry, advertising SDK, or code that uploads annotation data. The optional HTTP(S) permission is used to run the content script on pages that the user enables. Normal network activity of the websites themselves is outside Web Ink's storage behavior.
+Local and direct-reader PDF input is capped at 50 MiB to protect browser memory. This is an input limit, not a retention policy.
 
-## Your controls and retention
+For image annotations, Web Ink stores source-identification metadata and shape coordinates. It does not separately download ordinary page images or save screenshots. A permitted inline `data:image` URL may itself contain encoded image data; if present, it is metadata supplied by the page and remains subject to input validation limits.
 
-You can pause an origin from the extension UI and delete individual annotations. Export a JSON backup before uninstalling, changing browser profiles, clearing browser/extension data, or replacing a browser profile. Uninstalling the extension removes its local storage; Web Ink cannot recover records that were not backed up.
+## HTTPS PDF reader requests
 
-JSON import is validated before writes, is limited to 20 MiB and 50,000 annotations, and does not import settings over local settings. Conflicting IDs keep the local record unless the user explicitly selects overwrite.
+When an explicitly authorized HTTPS PDF reader is opened, Web Ink requests the direct PDF using `credentials: 'omit'`, `cache: 'no-store'`, and `redirect: 'error'`. It does not forward cookies, authorization headers, login state, or other credentials. Redirects are rejected in the MVP; use a final direct PDF URL or download and select the file locally.
+
+Web Ink does not provide OCR, authenticated-page scraping, cloud retrieval, or PDF write-back/editing.
+
+## Data not sent by Web Ink
+
+Web Ink has no account, server API, cloud synchronization, analytics, telemetry, advertising SDK, or code that uploads annotations. Website network activity and the browser's own behavior are outside Web Ink's local storage behavior.
+
+## Retention and user controls
+
+You can pause an origin, disable a page, and delete individual annotations. Export JSON before uninstalling, clearing browser or extension data, changing profiles, or replacing a profile. Uninstalling removes extension-local data; Web Ink cannot recover records that were not backed up.
+
+Backup schema v2 accepts v1 imports. Imported settings do not replace local settings. Conflicting IDs retain local records unless overwrite is explicitly selected.

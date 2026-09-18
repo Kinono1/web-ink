@@ -6,6 +6,10 @@ import {
   type ImageAnnotation,
   type ImageShape,
   type ImageTarget,
+  type PdfAreaAnnotation,
+  type PdfRect,
+  type PdfTarget,
+  type PdfTextAnnotation,
   type Point,
   type Settings,
   type TextAnnotation,
@@ -81,6 +85,12 @@ function canonicalPageUrl(value: unknown, name: string): string {
   } catch {
     invalid(`${name} must be a canonical HTTP(S) URL`);
   }
+}
+
+function pdfPageUrl(value: unknown, hash: string): string {
+  const pageUrl = text(value, 'annotation.pageUrl', 128, false);
+  if (pageUrl !== `urn:web-ink:pdf:${hash}`) invalid('annotation.pageUrl must match the PDF document hash');
+  return pageUrl;
 }
 
 function identifier(value: unknown, name: string): string {
@@ -180,16 +190,45 @@ function validateImageTarget(value: unknown, pageUrl: string): ImageTarget {
   };
 }
 
+function validatePdfRect(value: unknown, index: number): PdfRect {
+  const rect = object(value, `annotation.target.rects[${index}]`);
+  exactKeys(rect, `annotation.target.rects[${index}]`, ['x', 'y', 'width', 'height']);
+  const x = finite(rect.x, `annotation.target.rects[${index}].x`, 0, 1);
+  const y = finite(rect.y, `annotation.target.rects[${index}].y`, 0, 1);
+  const width = finite(rect.width, `annotation.target.rects[${index}].width`, 0.000001, 1);
+  const height = finite(rect.height, `annotation.target.rects[${index}].height`, 0.000001, 1);
+  if (x + width > 1 || y + height > 1) invalid(`annotation.target.rects[${index}] exceeds the PDF page viewBox`);
+  return { x, y, width, height };
+}
+
+function validatePdfTarget(value: unknown, kind: 'pdf-text' | 'pdf-area'): PdfTarget {
+  const target = object(value, 'annotation.target');
+  exactKeys(target, 'annotation.target', ['documentHash', 'fileName', 'pageNumber', 'rects', 'exact', 'prefix', 'suffix'], ['sourceUrl']);
+  const documentHash = text(target.documentHash, 'annotation.target.documentHash', 64, false).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(documentHash)) invalid('annotation.target.documentHash must be a SHA-256 hex digest');
+  if (!Array.isArray(target.rects) || target.rects.length < 1 || target.rects.length > 500) invalid('annotation.target.rects must contain 1 to 500 rectangles');
+  const sourceUrl = target.sourceUrl === undefined ? undefined : httpSource(target.sourceUrl, 'annotation.target.sourceUrl');
+  if (sourceUrl !== undefined && !sourceUrl.startsWith('https:')) invalid('annotation.target.sourceUrl must use HTTPS');
+  return {
+    documentHash,
+    fileName: text(target.fileName, 'annotation.target.fileName', 512, false),
+    ...(sourceUrl === undefined ? {} : { sourceUrl }),
+    pageNumber: integer(target.pageNumber, 'annotation.target.pageNumber', 1, 100_000),
+    rects: target.rects.map(validatePdfRect),
+    exact: text(target.exact, 'annotation.target.exact', 20_000, kind === 'pdf-area'),
+    prefix: text(target.prefix, 'annotation.target.prefix', 10_000),
+    suffix: text(target.suffix, 'annotation.target.suffix', 10_000),
+  };
+}
+
 export function validateAnnotation(value: unknown): Annotation {
   const annotation = object(value, 'annotation');
   exactKeys(annotation, 'annotation', ['id', 'pageUrl', 'pageTitle', 'color', 'note', 'tags', 'createdAt', 'updatedAt', 'revision', 'kind', 'target'], ['shape']);
-  const pageUrl = canonicalPageUrl(annotation.pageUrl, 'annotation.pageUrl');
   if (!Array.isArray(annotation.tags) || annotation.tags.length > 50) invalid('annotation.tags must contain at most 50 tags');
   const tags = annotation.tags.map((tag, index) => text(tag, `annotation.tags[${index}]`, 64, false));
   if (new Set(tags).size !== tags.length) invalid('annotation.tags must not contain duplicates');
   const base = {
     id: identifier(annotation.id, 'annotation.id'),
-    pageUrl,
     pageTitle: text(annotation.pageTitle, 'annotation.pageTitle', 500),
     color: color(annotation.color, 'annotation.color'),
     note: text(annotation.note, 'annotation.note', 10_000),
@@ -200,13 +239,26 @@ export function validateAnnotation(value: unknown): Annotation {
   };
   if (Date.parse(base.updatedAt) < Date.parse(base.createdAt)) invalid('annotation.updatedAt precedes createdAt');
   if (annotation.kind === 'text') {
+    const pageUrl = canonicalPageUrl(annotation.pageUrl, 'annotation.pageUrl');
     if ('shape' in annotation) invalid('text annotations cannot include shape');
-    const result: TextAnnotation = { ...base, kind: 'text', target: validateTextTarget(annotation.target) };
+    const result: TextAnnotation = { ...base, pageUrl, kind: 'text', target: validateTextTarget(annotation.target) };
     return result;
   }
   if (annotation.kind === 'image') {
+    const pageUrl = canonicalPageUrl(annotation.pageUrl, 'annotation.pageUrl');
     if (!('shape' in annotation)) invalid('image annotations require shape');
-    const result: ImageAnnotation = { ...base, kind: 'image', target: validateImageTarget(annotation.target, pageUrl), shape: validateShape(annotation.shape) };
+    const result: ImageAnnotation = { ...base, pageUrl, kind: 'image', target: validateImageTarget(annotation.target, pageUrl), shape: validateShape(annotation.shape) };
+    return result;
+  }
+  if (annotation.kind === 'pdf-text' || annotation.kind === 'pdf-area') {
+    if ('shape' in annotation) invalid('PDF annotations cannot include shape');
+    const target = validatePdfTarget(annotation.target, annotation.kind);
+    const pageUrl = pdfPageUrl(annotation.pageUrl, target.documentHash);
+    if (annotation.kind === 'pdf-text') {
+      const result: PdfTextAnnotation = { ...base, pageUrl, kind: 'pdf-text', target };
+      return result;
+    }
+    const result: PdfAreaAnnotation = { ...base, pageUrl, kind: 'pdf-area', target };
     return result;
   }
   invalid('annotation.kind is unsupported');
@@ -214,7 +266,7 @@ export function validateAnnotation(value: unknown): Annotation {
 
 export function validateSettings(value: unknown): Settings {
   const settings = object(value, 'settings');
-  exactKeys(settings, 'settings', ['language', 'defaultColor', 'disabledOrigins']);
+  exactKeys(settings, 'settings', ['language', 'defaultColor', 'disabledOrigins'], ['theme', 'reduceMotion', 'reduceTransparency']);
   if (settings.language !== 'zh-CN' && settings.language !== 'en') invalid('settings.language is unsupported');
   if (!Array.isArray(settings.disabledOrigins) || settings.disabledOrigins.length > 200) invalid('settings.disabledOrigins must contain at most 200 origins');
   const disabledOrigins = settings.disabledOrigins.map((origin, index) => {
@@ -228,7 +280,12 @@ export function validateSettings(value: unknown): Settings {
     }
   });
   if (new Set(disabledOrigins).size !== disabledOrigins.length) invalid('settings.disabledOrigins must not contain duplicates');
-  return { language: settings.language, defaultColor: color(settings.defaultColor, 'settings.defaultColor'), disabledOrigins };
+  const theme = settings.theme === undefined ? 'system' : settings.theme;
+  if (theme !== 'system' && theme !== 'light' && theme !== 'dark') invalid('settings.theme is unsupported');
+  const reduceMotion = settings.reduceMotion === undefined ? false : settings.reduceMotion;
+  const reduceTransparency = settings.reduceTransparency === undefined ? false : settings.reduceTransparency;
+  if (typeof reduceMotion !== 'boolean' || typeof reduceTransparency !== 'boolean') invalid('settings accessibility fields must be booleans');
+  return { language: settings.language, defaultColor: color(settings.defaultColor, 'settings.defaultColor'), disabledOrigins, theme, reduceMotion, reduceTransparency };
 }
 
 function jsonBytes(value: unknown): number {
@@ -241,13 +298,16 @@ export function validateBackup(value: unknown): BackupEnvelope {
   const backup = object(value, 'backup');
   exactKeys(backup, 'backup', ['format', 'schemaVersion', 'exportedAt', 'annotations'], ['settings']);
   if (backup.format !== 'web-ink') invalid('backup.format is unsupported');
-  if (backup.schemaVersion !== SCHEMA_VERSION) invalid('backup.schemaVersion is unsupported');
+  if (backup.schemaVersion !== 1 && backup.schemaVersion !== SCHEMA_VERSION) invalid('backup.schemaVersion is unsupported');
   const exportedAt = timestamp(backup.exportedAt, 'backup.exportedAt');
   if (!Array.isArray(backup.annotations) || backup.annotations.length > MAX_BACKUP_ANNOTATIONS) invalid(`backup.annotations must contain at most ${MAX_BACKUP_ANNOTATIONS} records`);
   const annotations = backup.annotations.map(validateAnnotation);
   const ids = new Set(annotations.map(annotation => annotation.id));
   if (ids.size !== annotations.length) invalid('backup.annotations contains duplicate IDs');
   const settings = backup.settings === undefined ? undefined : validateSettings(backup.settings);
+  if (backup.schemaVersion === 1 && annotations.some(annotation => annotation.kind === 'pdf-text' || annotation.kind === 'pdf-area')) {
+    invalid('schema v1 backup cannot contain PDF annotations');
+  }
   return { format: 'web-ink', schemaVersion: SCHEMA_VERSION, exportedAt, annotations, ...(settings === undefined ? {} : { settings }) };
 }
 

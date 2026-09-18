@@ -1,5 +1,16 @@
 # Validation — Web Ink
 
+## 0.2.0 candidate — 2026-09-19
+
+Local TypeScript/build and **86 unit tests across 11 files** passed. Browser regression development covers optional hosts, actual webpage selection/drawing/rebinding, SPA isolation, failed-save recovery, CAS drafts, backup import/export, per-page mode persistence, native Range/SVG reuse, PDF local/HTTPS input, unchanged-file restoration, changed-file isolation, Chinese/multicolumn text, zoom/rotation and bounded page rendering. The local Chromium suite passed all 17 browser tests, including the 320px dark UI. The final CI result is linked from the release.
+
+Performance results and their limits are in [PERFORMANCE.md](PERFORMANCE.md). PDF files are not persisted. Browser tests use isolated profiles and reviewed artificial fixtures; functional hosts are pre-granted in a disposable manifest. Native permission-dialog acceptance and personal user acceptance remain separate manual checks.
+
+The minimum PDF target is Chrome 125; the dedicated CI step runs the PDF suite in Chrome for Testing 125.0.6422.141. Its result must pass before publishing this prerelease. No account, credential or real research PDF is used in those tests.
+
+Public-page automation passed text creation and reload on Wikipedia and MDN. GitHub navigation timed out before DOMContentLoaded and was not verified in this run; see [raw site results](real-sites-v0.2.json).
+
+
 ## 0.1.3 — 2026-09-18
 
 TypeScript/build passed; **53 unit tests across 9 files and 11 Playwright browser tests passed**. The new palette test verifies quiet-by-default selection, enabling, persistence across reload, hiding existing highlights on disable without deleting them, restoration after re-enable, and independence of another page's default state. The browser-restart test now checks that the stored enabled state survives without an automatic test-helper click.

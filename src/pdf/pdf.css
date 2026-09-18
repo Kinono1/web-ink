@@ -1,0 +1,365 @@
+.pdf-app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--ink-bg);
+  color: var(--ink-text);
+  font:
+    13px/1.5 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  overflow: hidden;
+}
+.pdf-app * {
+  box-sizing: border-box;
+}
+.pdf-app button,
+.pdf-app input,
+.pdf-app textarea {
+  font: inherit;
+  color: var(--ink-text);
+}
+.pdf-app button {
+  border: 1px solid var(--ink-separator);
+  border-radius: 8px;
+  background: var(--ink-surface-solid);
+  min-height: 32px;
+  padding: 5px 10px;
+  cursor: pointer;
+}
+.pdf-app button[aria-pressed="true"] {
+  background: var(--ink-accent-fill);
+  color: var(--ink-accent);
+}
+.pdf-app button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.pdf-app :focus-visible {
+  outline: 2px solid var(--ink-accent);
+  outline-offset: 3px;
+}
+.pdf-header,
+.pdf-open,
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--ink-separator);
+  flex-shrink: 0;
+  background: var(--ink-surface-solid);
+}
+.pdf-header {
+  justify-content: space-between;
+}
+.pdf-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 16px;
+}
+.pdf-brand span {
+  font-weight: 400;
+  color: var(--ink-secondary);
+}
+.pdf-header a {
+  color: var(--ink-accent);
+  text-decoration: none;
+}
+.pdf-brand svg,
+.pdf-welcome > svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.pdf-open {
+  padding-block: 8px;
+}
+.pdf-open form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+.pdf-app input:not([type="color"]):not([type="file"]),
+.pdf-app textarea {
+  border: 1px solid var(--ink-separator);
+  border-radius: 7px;
+  background: var(--ink-fill);
+  padding: 6px 9px;
+  min-width: 0;
+}
+.pdf-open input[type="url"] {
+  flex: 1;
+  max-width: 560px;
+}
+.pdf-file-button {
+  position: relative;
+  border: 1px solid var(--ink-separator);
+  border-radius: 8px;
+  padding: 6px 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.pdf-file-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  width: 100%;
+  cursor: pointer;
+}
+.pdf-toolbar {
+  gap: 9px;
+  flex-wrap: wrap;
+  padding-block: 8px;
+}
+.pdf-name {
+  font-weight: 600;
+  max-width: 260px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  margin-right: auto;
+}
+.pdf-toolbar input[type="number"] {
+  width: 60px;
+}
+.pdf-toolbar input[type="color"] {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.pdf-workspace {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.pdf-pages {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 24px;
+  background: var(--ink-fill);
+  overscroll-behavior: contain;
+}
+.pdf-slot {
+  position: relative;
+  margin: 0 auto 20px;
+  background: white;
+  box-shadow: 0 2px 8px #0002;
+  flex-shrink: 0;
+}
+.pdf-page {
+  position: relative;
+  isolation: isolate;
+  --min-font-size: 1;
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+}
+.pdf-page > canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+}
+.pdf-page .textLayer {
+  z-index: 2;
+}
+.pdf-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.pdf-area-capture {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  cursor: crosshair;
+  touch-action: none;
+}
+.pdf-notes {
+  width: 300px;
+  flex-shrink: 0;
+  overflow: auto;
+  padding: 18px;
+  background: var(--ink-surface-solid);
+  border-left: 1px solid var(--ink-separator);
+}
+.pdf-notes h2 {
+  font-size: 14px;
+  margin: 0 0 16px;
+}
+.pdf-notes h2 span {
+  font-weight: 400;
+  color: var(--ink-secondary);
+  margin-left: 6px;
+}
+.pdf-note {
+  padding: 10px 0 12px 10px;
+  margin-bottom: 12px;
+  border-left: 3px solid;
+  border-bottom: 1px solid var(--ink-separator);
+}
+.pdf-note-source {
+  border: 0 !important;
+  padding: 0 !important;
+  text-align: left;
+  background: none !important;
+  font-size: 12px !important;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pdf-note p {
+  white-space: pre-wrap;
+  margin: 7px 0;
+}
+.pdf-note small {
+  color: var(--ink-secondary);
+}
+.pdf-note-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 5px;
+}
+.pdf-note-actions button {
+  background: none;
+  border: 0;
+  color: var(--ink-secondary);
+  padding: 2px 0;
+  font-size: 12px;
+}
+.pdf-note-editor {
+  display: grid;
+  gap: 8px;
+}
+.pdf-note-editor label {
+  display: grid;
+  gap: 3px;
+}
+.pdf-note-editor textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.pdf-selection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: fixed;
+  z-index: 30;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px;
+  background: var(--ink-surface);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--ink-separator);
+  border-radius: 12px;
+  box-shadow: var(--ink-shadow);
+}
+.pdf-selection .pdf-swatch {
+  width: 28px;
+  height: 28px;
+  min-height: 28px;
+  border-radius: 50%;
+  padding: 0;
+  box-shadow: inset 0 0 0 1px #0002;
+}
+.pdf-welcome {
+  max-width: 600px;
+  text-align: center;
+  margin: auto;
+  padding: 40px 28px;
+}
+.pdf-welcome > svg {
+  width: 50px;
+  height: 50px;
+  color: var(--ink-accent);
+  margin-bottom: 20px;
+}
+.pdf-welcome h1 {
+  font-size: 27px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  letter-spacing: -0.03em;
+}
+.pdf-welcome p {
+  line-height: 1.7;
+  color: var(--ink-secondary);
+}
+.pdf-muted {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+.pdf-message {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: center;
+  padding: 8px 16px;
+  background: var(--ink-accent-fill);
+  flex-shrink: 0;
+}
+.pdf-message.error {
+  color: var(--ink-danger);
+  background: var(--ink-surface-solid);
+}
+[data-reduce-transparency="true"] .pdf-selection {
+  backdrop-filter: none;
+  background: var(--ink-surface-solid);
+}
+@media (max-width: 850px) {
+  .pdf-notes {
+    width: 230px;
+  }
+  .pdf-name {
+    max-width: 150px;
+  }
+}
+@media (max-width: 600px) {
+  .pdf-header,
+  .pdf-open,
+  .pdf-toolbar {
+    padding-inline: 10px;
+  }
+  .pdf-open {
+    flex-wrap: wrap;
+  }
+  .pdf-open form {
+    min-width: 100%;
+  }
+  .pdf-workspace {
+    flex-direction: column;
+  }
+  .pdf-notes {
+    width: 100%;
+    max-height: 28%;
+    border-top: 1px solid var(--ink-separator);
+    border-left: 0;
+  }
+  .pdf-pages {
+    padding: 12px;
+  }
+  .pdf-name {
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .pdf-selection {
+    max-width: calc(100vw - 16px);
+    gap: 4px;
+    flex-wrap: wrap;
+    justify-content: center;
+    width: max-content;
+  }
+  .pdf-selection button {
+    font-size: 12px;
+  }
+}

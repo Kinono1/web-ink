@@ -1,4 +1,4 @@
-import { startContent } from '../src/content/controller';
+import { startBootstrap } from '../src/content/bootstrap';
 
 export default defineContentScript({
   matches: ['http://*/*', 'https://*/*'],
@@ -6,7 +6,7 @@ export default defineContentScript({
   runAt: 'document_idle',
   allFrames: false,
   main(ctx) {
-    const dispose = startContent();
+    const dispose = startBootstrap();
     ctx.onInvalidated(dispose);
   },
 });

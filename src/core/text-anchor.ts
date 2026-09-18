@@ -52,9 +52,17 @@ export function resolveText(
 }
 
 /** Share the text index within one restore pass; discard it whenever the DOM changes. */
-export function createTextResolver(doc: Document = document) {
+export interface TextResolver {
+  (target: TextTarget): { range?: Range; status: AnchorStatus; reason?: string };
+  /** Drop cached root indexes after a meaningful DOM mutation. */
+  invalidate: (root?: Element) => void;
+}
+
+export function createTextResolver(doc: Document = document): TextResolver {
   const readings = new Map<Element, Reading>();
-  return (target: TextTarget) => resolveInReading(target, doc, readings);
+  const resolve = ((target: TextTarget) => resolveInReading(target, doc, readings)) as TextResolver;
+  resolve.invalidate = (root?: Element) => { if (root) readings.delete(root); else readings.clear(); };
+  return resolve;
 }
 
 function resolveInReading(target: TextTarget, doc: Document, readings: Map<Element, Reading>): { range?: Range; status: AnchorStatus; reason?: string } {

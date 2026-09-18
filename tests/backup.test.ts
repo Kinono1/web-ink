@@ -14,18 +14,18 @@ function annotation(id = 'a-1'): TextAnnotation {
 describe('backup serialization', () => {
   it('returns a versioned, independently validated envelope', () => {
     const backup = serializeBackup([annotation('z-1'), annotation('a-1')], { language: 'en', defaultColor: '#ffffff', disabledOrigins: [] });
-    expect(backup).toMatchObject({ format: 'web-ink', schemaVersion: 1, annotations: [expect.objectContaining({ id: 'a-1' }), expect.objectContaining({ id: 'z-1' })] });
+    expect(backup).toMatchObject({ format: 'web-ink', schemaVersion: 2, annotations: [expect.objectContaining({ id: 'a-1' }), expect.objectContaining({ id: 'z-1' })] });
     expect(parseBackup(backup)).toEqual(backup);
   });
 
   it('rejects duplicate ids and inconsistent text offsets', () => {
-    const backup = { format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T00:00:00.000Z', annotations: [annotation(), annotation()] };
+    const backup = { format: 'web-ink', schemaVersion: 2, exportedAt: '2026-09-18T00:00:00.000Z', annotations: [annotation(), annotation()] };
     expect(() => parseBackup(backup)).toThrow('duplicate IDs');
     expect(() => parseBackup({ ...backup, annotations: [{ ...annotation(), target: { ...annotation().target, end: 12 } }] })).toThrow('offsets disagree');
   });
 
   it('enforces backup quotas and rejects hidden control characters', () => {
-    const header = { format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T00:00:00.000Z' };
+    const header = { format: 'web-ink', schemaVersion: 2, exportedAt: '2026-09-18T00:00:00.000Z' };
     expect(() => parseBackup({ ...header, annotations: Array.from({ length: MAX_BACKUP_ANNOTATIONS + 1 }, () => ({})) })).toThrow('at most');
     expect(() => parseBackup({ ...header, annotations: [], padding: 'x'.repeat(MAX_BACKUP_BYTES) })).toThrow('exceeds');
     expect(() => parseBackup({ ...header, annotations: [{ ...annotation(), note: 'hidden\u0001control' }] })).toThrow('plain text');
@@ -54,5 +54,10 @@ describe('backup serialization', () => {
     expect(markdown).toContain('> first line\n> \\#\\# not a section\n> \\!\\[not an image\\]\\(https://example.test/image.png\\)');
     expect(markdown).not.toContain('\n## fake section');
     expect(markdown).not.toContain('\n![note]');
+  });
+
+  it('imports a schema v1 envelope and normalizes it to v2', () => {
+    const legacy = { format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T00:00:00.000Z', annotations: [annotation()] };
+    expect(parseBackup(legacy)).toMatchObject({ schemaVersion: 2, annotations: [expect.objectContaining({ id: 'a-1', kind: 'text' })] });
   });
 });

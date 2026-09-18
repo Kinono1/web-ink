@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { beforeEach, afterEach, describe, it, expect } from 'vitest';
+import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest';
 import { WebInkDatabase, setDatabaseForTesting } from '../src/background/database';
 import { handleDataRequest } from '../src/background/data';
 import { DEFAULT_SETTINGS, type Annotation, type BackupEnvelope, type StorageStats } from '../src/core/model';
@@ -68,5 +68,28 @@ describe('local storage usage reporting', () => {
     expect(value.backupBytes).toBeGreaterThan(value.backupLimitBytes);
     expect(value.annotationCount).toBe(1);
     expect((await db.annotations.get('large'))!.note).toHaveLength(7 * 1024 * 1024);
+  });
+  it('reads the incremental snapshot normally and scans only on explicit recalculation', async () => {
+    await handleDataRequest({ type: 'annotations.put', annotation: row('incremental'), expectedRevision: 0 }, { trusted: true });
+    const each = vi.spyOn(db.annotations, 'each');
+    expect((await stats()).annotationCount).toBe(1);
+    expect(each).not.toHaveBeenCalled();
+    expect(await handleDataRequest({ type: 'storage.stats', recalculate: true }, { trusted: true })).toMatchObject({ ok: true, data: { annotationCount: 1 } });
+    expect(each).toHaveBeenCalled();
+  });
+  it('keeps incremental metadata and annotation totals equal to a requested full recalculation', async () => {
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
+    await handleDataRequest({ type: 'annotations.put', annotation: row('compare-one'), expectedRevision: 0 }, { trusted: true });
+    const existing = await db.annotations.get('compare-one');
+    if (!existing) throw new Error('missing fixture');
+    await handleDataRequest({ type: 'annotations.put', annotation: { ...existing, note: 'updated note', updatedAt: '2026-09-18T00:01:00.000Z' }, expectedRevision: existing.revision }, { trusted: true });
+    const incremental = await stats();
+    const recalculated = await handleDataRequest({ type: 'storage.stats', recalculate: true }, { trusted: true });
+    if (!recalculated.ok) throw new Error(recalculated.error);
+    expect(recalculated.data).toMatchObject({
+      annotationCount: incremental.annotationCount, textCount: incremental.textCount, imageCount: incremental.imageCount,
+      pdfTextCount: incremental.pdfTextCount, pdfAreaCount: incremental.pdfAreaCount, pageCount: incremental.pageCount,
+      logicalBytes: incremental.logicalBytes, backupBytes: incremental.backupBytes,
+    });
   });
 });

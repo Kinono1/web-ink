@@ -16,10 +16,10 @@ export function StoragePanel({ language }: { language: Language }) {
   const [loading, setLoading] = useState(true);
   const active = useRef(true);
   const generation = useRef(0);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (recalculate = false) => {
     const token = ++generation.current; setLoading(true);
     try {
-      const next = await request<StorageStats>({ type: 'storage.stats' });
+      const next = await request<StorageStats>({ type: 'storage.stats', ...(recalculate ? { recalculate: true } : {}) });
       if (active.current && token === generation.current) { setStats(next); setError(undefined); }
     } catch (cause) { if (active.current && token === generation.current) setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { if (active.current && token === generation.current) setLoading(false); }
@@ -38,12 +38,12 @@ export function StoragePanel({ language }: { language: Language }) {
   const nearBackupLimit = stats && (stats.backupBytes >= stats.backupLimitBytes * 0.75 || stats.annotationCount >= stats.backupRecordLimit * 0.8);
   const quotaNear = stats && stats.browserUsageBytes !== null && stats.browserQuotaBytes !== null && stats.browserQuotaBytes > 0 && stats.browserUsageBytes / stats.browserQuotaBytes >= 0.8;
   return <section className="storage-panel" aria-label={zh ? '本地存储' : 'Local storage'} aria-busy={loading}>
-    <div className="storage-header"><strong>{zh ? '本地存储' : 'Local storage'}</strong><button className="quiet" disabled={loading} onClick={() => void refresh()} aria-label={zh ? '刷新用量' : 'Refresh usage'}>{loading ? '…' : '↻'}</button></div>
+    <div className="storage-header"><strong>{zh ? '本地存储' : 'Local storage'}</strong><button className="quiet" disabled={loading} onClick={() => void refresh(true)} aria-label={zh ? '刷新用量' : 'Refresh usage'}>{loading ? '…' : '↻'}</button></div>
     {error ? <p className="storage-warning" role="status">{zh ? '暂时无法统计：' : 'Usage unavailable: '}{error}</p> : null}
     {stats ? <>
       <div className="storage-metrics"><span><b>{stats.annotationCount.toLocaleString()}</b>{zh ? ' 条标注' : ' annotations'}</span><span><b>{stats.pageCount.toLocaleString()}</b>{zh ? ' 个网页' : ' pages'}</span></div>
       <p>{zh ? '标注数据大小' : 'Annotation data size'} <strong>{formatBytes(stats.logicalBytes)}</strong> <span className="storage-muted">{zh ? '（估算）' : '(estimated)'}</span></p>
-      <p className="storage-muted">{zh ? `文字 ${stats.textCount} · 图片标记 ${stats.imageCount}` : `${stats.textCount} text · ${stats.imageCount} image marks`}</p>
+      <p className="storage-muted">{zh ? `文字 ${stats.textCount} · 图片 ${stats.imageCount} · PDF ${(stats.pdfTextCount ?? 0) + (stats.pdfAreaCount ?? 0)}` : `${stats.textCount} text · ${stats.imageCount} image · ${(stats.pdfTextCount ?? 0) + (stats.pdfAreaCount ?? 0)} PDF`}</p>
       <details><summary>{zh ? '占用详情' : 'Usage details'}</summary>
         <p>{zh ? '浏览器报告的存储占用：' : 'Browser-reported storage usage: '}{stats.browserUsageBytes === null ? (zh ? '不可用' : 'Unavailable') : `${formatBytes(stats.browserUsageBytes)} (${zh ? '估算' : 'estimated'})`}</p>
         <p>{zh ? 'JSON 备份大小：' : 'JSON backup size: '}{formatBytes(stats.backupBytes)}</p>

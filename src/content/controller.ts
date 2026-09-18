@@ -4,15 +4,20 @@ import { captureText, createTextResolver } from '../core/text-anchor';
 import { captureImage, resolveImage } from '../core/image-anchor';
 import { clientToImage, getImageGeometry, type ImageGeometry } from '../core/geometry';
 import { pageKey } from '../core/url';
-import { button, createView, renderShape, svgElement } from './view';
+import { button, createView, svgElement } from './view-lite';
+import { renderShape } from './render-shape';
 import { createNotifications } from './notifications';
-import { createPaletteToggle } from './palette-toggle';
+import { ICON_PATHS } from '../ui/icons';
 
-type InkWindow = Window & { __webInkActive?: boolean };
-export function startContent(): () => void {
-  if (window.top !== window || (window as InkWindow).__webInkActive) return () => undefined;
-  (window as InkWindow).__webInkActive = true;
-  const view = createView();
+export interface ContentEngine {
+  stop: () => void;
+  dispatch: (action: 'focus' | 'rebind' | 'draw' | 'refresh', id?: string) => void;
+  snapshot: () => { pageUrl: string; states: AnchorState[]; enabled: boolean };
+  canStop: () => boolean;
+}
+
+/** Heavy DOM work lives in engine.js. The runtime bootstrap owns the host and palette. */
+export function startEngine(view: ReturnType<typeof createView>): ContentEngine {
   const notifications = createNotifications(view.toast);
   const highlightStyle = document.createElement('style'); highlightStyle.dataset.webInk = 'true';
   document.documentElement.append(highlightStyle);
@@ -43,21 +48,24 @@ export function startContent(): () => void {
   let focusId: string | undefined;
   let passiveRetryCount = 0;
   let passiveRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  const resolveText = createTextResolver();
   const images = new Map<string, HTMLImageElement>();
   const textRanges = new Map<string, Range>();
   const highlightNames = new Set<string>();
+  const appliedRevisions = new Map<string, number>();
+  type SvgLayer = { group: SVGGElement; clip: SVGRectElement; shape?: SVGElement; shapeKey?: string };
+  const svgLayers = new Map<string, SvgLayer>();
+  const transientLayer = svgElement('g', { 'data-web-ink-transient': 'true' });
+  const recentColors: string[] = [];
   const undo: ImageAnnotation[] = [];
   const redo: ImageAnnotation[] = [];
   const observers = new AbortController();
   const signal = observers.signal;
   const zh = () => settings.language === 'zh-CN';
   const label = (cn: string, en: string) => zh() ? cn : en;
-  const palette = createPaletteToggle(view.root, () => { void changePageMode(!pageEnabled); });
-  const updatePalette = () => palette.update({
-    enabled: pageEnabled && !disabled && !stopped, busy: toggleBusy || pendingSave || !modeReady,
-    blocked: disabled || stopped, language: settings.language,
-  });
-  updatePalette();
+  // Bootstrap is deliberately the only persistent control. Keep this no-op for
+  // the engine's save/mode state transitions until the bootstrap next refreshes.
+  const updatePalette = () => undefined;
   const toast = (message: string, error = false, retry?: () => void) => {
     notifications.show(message, { kind: error ? 'error' : 'info', sticky: !!retry,
       dismissLabel: label('关闭提示', 'Dismiss'),
@@ -74,6 +82,18 @@ export function startContent(): () => void {
   const clearText = () => {
     if (typeof CSS !== 'undefined' && 'highlights' in CSS) for (const name of highlightNames) CSS.highlights.delete(name);
     highlightNames.clear(); textRanges.clear(); highlightStyle.textContent = '';
+  };
+  const applyTextStyles = () => {
+    if (typeof CSS === 'undefined' || !('highlights' in CSS) || typeof Highlight === 'undefined') return;
+    for (const name of highlightNames) CSS.highlights.delete(name); highlightNames.clear();
+    const groups = new Map<string, Range[]>();
+    for (const record of annotations) if (record.kind === 'text') {
+      const range = textRanges.get(record.id); if (!range) continue;
+      const group = groups.get(record.color) ?? []; group.push(range); groups.set(record.color, group);
+    }
+    const rules: string[] = [];
+    for (const [color, ranges] of groups) { const name = `web-ink-${color.slice(1)}`; CSS.highlights.set(name, new Highlight(...ranges)); highlightNames.add(name); rules.push(`::highlight(${name}) { background-color: ${color}99; color: inherit; }`); }
+    highlightStyle.textContent = rules.join('\n');
   };
   const hideSelection = () => { selectedRange = undefined; view.selection.style.display = 'none'; };
   const exitDrawing = () => {
@@ -111,18 +131,21 @@ export function startContent(): () => void {
     selectedRange = range.cloneRange();
     const rect = range.getBoundingClientRect();
     view.selection.replaceChildren();
-    for (const color of COLORS) {
+    const primary = [...new Set([...recentColors, currentColor, ...COLORS.slice(0, 3)])].slice(0, 4);
+    const addColor = (color: string) => {
       const b = button('', () => { void saveSelection(color); }, `${label('高亮', 'Highlight')} ${color}`);
       b.className = 'swatch'; b.style.backgroundColor = color;
       b.addEventListener('pointerdown', e => e.preventDefault());
       view.selection.append(b);
-    }
-    const custom = document.createElement('input'); custom.type = 'color'; custom.value = currentColor;
-    custom.title = label('自定义颜色', 'Custom color'); custom.setAttribute('aria-label', custom.title);
-    custom.addEventListener('input', () => { currentColor = custom.value; });
-    const apply = button(label('应用', 'Apply'), () => { void saveSelection(custom.value); });
-    apply.addEventListener('pointerdown', e => e.preventDefault());
-    view.selection.append(custom, apply);
+    };
+    primary.forEach(addColor);
+    const more = button('•••', () => {
+      more.remove(); for (const color of COLORS) if (!primary.includes(color)) addColor(color);
+      const custom = document.createElement('input'); custom.type = 'color'; custom.value = currentColor; custom.title = label('自定义颜色', 'Custom color'); custom.setAttribute('aria-label', custom.title);
+      custom.addEventListener('input', () => { currentColor = custom.value; });
+      const apply = button(label('应用', 'Apply'), () => { void saveSelection(custom.value); }); apply.addEventListener('pointerdown', event => event.preventDefault()); view.selection.append(custom, apply);
+    }, label('更多颜色', 'More colors'));
+    view.selection.append(more);
     view.selection.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 320))}px`;
     view.selection.style.top = `${Math.min(window.innerHeight - 60, Math.max(8, rect.bottom + 8))}px`;
     view.selection.style.display = 'flex';
@@ -140,6 +163,7 @@ export function startContent(): () => void {
     toast(label('正在保存…', 'Saving…'));
     try {
       const stored = await request<Annotation>({ type: 'annotations.put', annotation: record, expectedRevision: record.revision });
+      recentColors.splice(0, recentColors.length, stored.color, ...recentColors.filter(color => color !== stored.color).slice(0, 2));
       unsaved = undefined;
       if (track && stored.kind === 'image' && stored.pageUrl === pageKey(location.href)) { undo.push(stored); redo.length = 0; }
       rebinding = undefined;
@@ -168,21 +192,29 @@ export function startContent(): () => void {
   function drawingToolbar() {
     view.drawing.replaceChildren();
     const title = document.createElement('strong'); title.textContent = 'Web Ink'; view.drawing.append(title);
-    const kinds: Array<[ShapeKind, string, string]> = [
-      ['rectangle', '方框', 'Rectangle'], ['ellipse', '椭圆', 'Ellipse'], ['arrow', '箭头', 'Arrow'], ['pen', '画笔', 'Pen'],
+    if (mode === 'choose-image') {
+      const hint = document.createElement('span'); hint.className = 'hint'; hint.textContent = label('点击网页中的图片开始绘制', 'Click an image to start drawing');
+      view.drawing.append(hint, button(label('完成', 'Done'), exitDrawing)); view.drawing.style.display = 'flex'; return;
+    }
+    const iconButton = (title: string, path: string, run: () => void) => {
+      const control = button('', run, title); const icon = svgElement('svg', { viewBox:'0 0 24 24', 'aria-hidden':'true' });
+      icon.append(svgElement('path', { d:path, fill:'none', stroke:'currentColor', 'stroke-width':1.8, 'stroke-linecap':'round', 'stroke-linejoin':'round' })); control.append(icon); return control;
+    };
+    const kinds: Array<[ShapeKind, string, string, string]> = [
+      ['rectangle', '方框', 'Rectangle', 'M4 5h16v14H4z'], ['ellipse', '椭圆', 'Ellipse', 'M4 12a8 5.5 0 1 0 16 0 8 5.5 0 1 0-16 0'], ['arrow', '箭头', 'Arrow', 'M4 12h14m-5-5 5 5-5 5'], ['pen', '画笔', 'Pen', ICON_PATHS.draw],
     ];
-    for (const [kind, cn, en] of kinds) {
-      const b = button(label(cn, en), () => { shapeKind = kind; drawingToolbar(); });
+    for (const [kind, cn, en, path] of kinds) {
+      const b = iconButton(label(cn, en), path, () => { shapeKind = kind; drawingToolbar(); });
       b.setAttribute('aria-pressed', String(shapeKind === kind)); view.drawing.append(b);
     }
     const color = document.createElement('input'); color.type = 'color'; color.value = currentColor;
     color.setAttribute('aria-label', label('画笔颜色', 'Drawing color'));
     color.addEventListener('input', () => { currentColor = color.value; });
     view.drawing.append(color,
-      button(label('撤销', 'Undo'), () => { void undoDrawing(); }),
-      button(label('重做', 'Redo'), () => { void redoDrawing(); }),
-      button(label('换图片', 'Pick image'), () => { selectedImage = undefined; mode = 'choose-image'; view.svg.style.pointerEvents = 'none'; }),
-      button(label('完成', 'Done'), exitDrawing));
+      iconButton(label('撤销', 'Undo'), 'M8 7 4 11l4 4M5 11h8a5 5 0 1 1 0 10', () => { void undoDrawing(); }),
+      iconButton(label('重做', 'Redo'), 'm16 7 4 4-4 4m3-4h-8a5 5 0 1 0 0 10', () => { void redoDrawing(); }),
+      iconButton(label('换图片', 'Pick image'), ICON_PATHS.image, () => { selectedImage = undefined; mode = 'choose-image'; view.svg.style.pointerEvents = 'none'; drawingToolbar(); }),
+      iconButton(label('完成', 'Done'), 'm5 12 4 4L19 6', exitDrawing));
     view.drawing.style.display = 'flex';
   }
   function chooseImage(image: HTMLImageElement) {
@@ -236,30 +268,45 @@ export function startContent(): () => void {
   }
   function drawOne(record: ImageAnnotation, image: HTMLImageElement, suffix = '') {
     const geometry = clippedGeometry(image); if (!geometry) return;
-    const clipId = `clip-${record.id}${suffix}`;
-    const defs = svgElement('defs'), clip = svgElement('clipPath', { id: clipId });
-    clip.append(svgElement('rect', geometry.clipRect)); defs.append(clip);
-    const group = svgElement('g', { 'clip-path': `url(#${clipId})`, 'data-annotation-id': record.id });
-    const shape = renderShape(record.shape, geometry, record.color);
-    if (record.id === focusId) shape.setAttribute('opacity', '0.6');
-    group.append(shape); view.svg.append(defs, group);
+    const key = `${record.id}${suffix}`;
+    let layer = svgLayers.get(key);
+    if (!layer) {
+      const clipId = `clip-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+      const defs = svgElement('defs'), clipPath = svgElement('clipPath', { id: clipId }), clip = svgElement('rect'); clipPath.append(clip); defs.append(clipPath);
+      const group = svgElement('g', { 'clip-path': `url(#${clipId})`, 'data-annotation-id': record.id }); group.append(defs); view.svg.append(group);
+      layer = { group, clip }; svgLayers.set(key, layer);
+    }
+    const visible = geometry.clipRect.x < innerWidth && geometry.clipRect.y < innerHeight && geometry.clipRect.x + geometry.clipRect.width > 0 && geometry.clipRect.y + geometry.clipRect.height > 0;
+    layer.group.style.display = visible ? '' : 'none'; if (!visible) return;
+    const local = { imageRect: { x: 0, y: 0, width: geometry.imageRect.width, height: geometry.imageRect.height }, clipRect: { x: geometry.clipRect.x - geometry.imageRect.x, y: geometry.clipRect.y - geometry.imageRect.y, width: geometry.clipRect.width, height: geometry.clipRect.height } };
+    layer.group.setAttribute('transform', `translate(${geometry.imageRect.x} ${geometry.imageRect.y})`);
+    layer.clip.setAttribute('x', String(local.clipRect.x)); layer.clip.setAttribute('y', String(local.clipRect.y)); layer.clip.setAttribute('width', String(local.clipRect.width)); layer.clip.setAttribute('height', String(local.clipRect.height));
+    const shapeKey = `${record.revision}:${record.color}:${record.shape.kind}:${record.shape.width}:${JSON.stringify(record.shape.points)}:${local.imageRect.width}:${local.imageRect.height}`;
+    if (layer.shapeKey !== shapeKey) { layer.shape?.remove(); layer.shape = renderShape(record.shape, local, record.color); layer.group.append(layer.shape); layer.shapeKey = shapeKey; }
+    if (record.id === focusId) layer.shape?.setAttribute('opacity', '0.6'); else layer.shape?.removeAttribute('opacity');
   }
+  function dropImageLayers(id: string) { for (const [key, layer] of svgLayers) if (key === id || key.startsWith(`${id}-`)) { layer.group.remove(); svgLayers.delete(key); } }
   function paintImages() {
     renderFrame = 0; if (disposed) return;
-    view.svg.replaceChildren();
     if (!enabled()) return;
+    transientLayer.replaceChildren();
+    const validLayers = new Set<string>();
     for (const record of annotations) if (record.kind === 'image') {
+      validLayers.add(record.id);
       const image = images.get(record.id); if (image?.isConnected) drawOne(record, image);
     }
     if (selectedImage?.isConnected) {
       const geometry = clippedGeometry(selectedImage);
-      if (geometry) view.svg.append(svgElement('rect', { ...geometry.clipRect, fill: 'none', stroke: '#2563eb', 'stroke-width': 1, 'stroke-dasharray': '5 4' }));
-      if (previewShape && geometry) view.svg.append(renderShape(previewShape, geometry, currentColor));
+      if (geometry) transientLayer.append(svgElement('rect', { ...geometry.clipRect, fill: 'none', stroke: '#2563eb', 'stroke-width': 1, 'stroke-dasharray': '5 4' }));
+      if (previewShape && geometry) transientLayer.append(renderShape(previewShape, geometry, currentColor));
     }
     if (unsaved?.kind === 'image') {
+      validLayers.add(`${unsaved.id}-unsaved`);
       const match = resolveImage(unsaved.target);
       if (match.image) drawOne(unsaved, match.image, '-unsaved');
     }
+    for (const [key, layer] of svgLayers) if (!validLayers.has(key)) { layer.group.remove(); svgLayers.delete(key); }
+    view.svg.append(transientLayer);
   }
   function schedulePaint() { if (!renderFrame && !disposed) renderFrame = requestAnimationFrame(paintImages); }
 
@@ -271,7 +318,7 @@ export function startContent(): () => void {
       if (nextUrl !== currentUrl) {
         notifications.resetScope(); passiveRetryCount = 0;
         clearTimeout(passiveRetryTimer); passiveRetryTimer = undefined;
-        currentUrl = nextUrl; annotations = []; states = []; images.clear(); clearText(); exitDrawing();
+        currentUrl = nextUrl; annotations = []; states = []; images.clear(); clearText(); resolveText.invalidate(); exitDrawing();
         pageEnabled = false; modeReady = false; updatePalette();
         mutationObserver.disconnect(); resizeObserver.disconnect();
         undo.length = 0; redo.length = 0; rebinding = undefined; hideSelection();
@@ -286,21 +333,21 @@ export function startContent(): () => void {
       passiveRetryCount = 0; clearTimeout(passiveRetryTimer); passiveRetryTimer = undefined;
       if (settings.defaultColor !== newSettings.defaultColor || mode === 'idle') currentColor = newSettings.defaultColor;
       settings = newSettings;
+      view.applyPreferences(settings);
       disabled = settings.disabledOrigins.includes(location.origin);
       pageEnabled = pageMode.enabled; modeReady = true; updatePalette();
       if (!enabled()) {
         mutationObserver.disconnect(); resizeObserver.disconnect();
-        annotations = []; states = []; clearText(); images.clear(); exitDrawing(); hideSelection(); notifications.hide();
+        annotations = []; states = []; clearText(); images.clear(); for (const layer of svgLayers.values()) layer.group.remove(); svgLayers.clear(); transientLayer.replaceChildren(); exitDrawing(); hideSelection(); notifications.hide();
         publishStates(); return;
       }
       observeReadingPage();
       const records = await request<Annotation[]>({ type: 'annotations.list', pageUrl: requestedUrl });
       if (token !== generation || disposed) return;
       if (pageKey(location.href) !== requestedUrl) { queueRefresh(); return; }
-      annotations = records; clearText(); resizeObserver.disconnect(); images.clear(); states = [];
+      annotations = records; clearText(); resizeObserver.disconnect(); images.clear(); states = []; appliedRevisions.clear();
+      for (const layer of svgLayers.values()) layer.group.remove(); svgLayers.clear();
       if (!enabled()) { exitDrawing(); publishStates(); return; }
-      const groups = new Map<string, Range[]>();
-      const resolveText = createTextResolver();
       const supportsHighlight = 'highlights' in CSS && typeof Highlight !== 'undefined';
       for (let i = 0; i < records.length; i++) {
         const record = records[i]!;
@@ -311,10 +358,9 @@ export function startContent(): () => void {
             states.push({ id: record.id, status: match.status, reason: match.reason });
             if (match.range) {
               textRanges.set(record.id, match.range);
-              const group = groups.get(record.color) ?? []; group.push(match.range); groups.set(record.color, group);
             }
           }
-        } else {
+        } else if (record.kind === 'image') {
           const match = resolveImage(record.target);
           states.push({ id: record.id, status: match.status, reason: match.reason });
           if (match.image) { images.set(record.id, match.image); resizeObserver.observe(match.image); }
@@ -324,13 +370,7 @@ export function startContent(): () => void {
           if (pageKey(location.href) !== requestedUrl) { queueRefresh(); return; } }
       }
       if (token !== generation || disposed) return;
-      const rules: string[] = [];
-      for (const [color, ranges] of groups) {
-        const name = `web-ink-${color.slice(1)}`;
-        CSS.highlights.set(name, new Highlight(...ranges)); highlightNames.add(name);
-        rules.push(`::highlight(${name}) { background-color: ${color}99; color: inherit; }`);
-      }
-      highlightStyle.textContent = rules.join('\n');
+      applyTextStyles();
       publishStates(); schedulePaint();
     } catch (error) {
       if (disposed || token !== generation) return;
@@ -437,39 +477,72 @@ export function startContent(): () => void {
   const mutationObserver = new MutationObserver(mutations => {
     const relevant = mutations.filter(m => !view.host.contains(m.target) && m.target !== highlightStyle &&
       !(m.target instanceof Element && m.target.closest('[data-web-ink]')));
-    if (relevant.some(m => m.type !== 'attributes' || m.attributeName === 'src' || m.attributeName === 'srcset')) queueRefresh();
+    if (relevant.some(m => m.type !== 'attributes' || m.attributeName === 'src' || m.attributeName === 'srcset')) { resolveText.invalidate(); queueRefresh(); }
     if (relevant.length) schedulePaint();
   });
   function observeReadingPage() {
     mutationObserver.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'srcset', 'class', 'style'] });
   }
-  const onMessage = (message: { type?: string; action?: string; id?: string }, _sender: chrome.runtime.MessageSender, respond: (value: unknown) => void) => {
+  function applyAnnotationDelta(annotation?: Annotation, deletedId?: string, pageUrl?: string): boolean {
+    if (!enabled() || (pageUrl && pageUrl !== currentUrl)) return true;
+    if (!annotation && !deletedId) return false;
+    if (deletedId) {
+      annotations = annotations.filter(record => record.id !== deletedId); textRanges.delete(deletedId); images.delete(deletedId); appliedRevisions.delete(deletedId);
+      dropImageLayers(deletedId);
+      applyTextStyles(); publishStates(); schedulePaint(); return true;
+    }
+    if (!annotation || (annotation.kind !== 'text' && annotation.kind !== 'image') || annotation.pageUrl !== currentUrl) return true;
+    const known = appliedRevisions.get(annotation.id);
+    if (known !== undefined && known >= annotation.revision) return true;
+    const previous = annotations.find(record => record.id === annotation.id);
+    annotations = previous ? annotations.map(record => record.id === annotation!.id ? annotation! : record) : [...annotations, annotation];
+    appliedRevisions.set(annotation.id, annotation.revision);
+    if (annotation.kind === 'text') {
+      const targetChanged = previous?.kind !== 'text' || JSON.stringify(previous.target) !== JSON.stringify(annotation.target);
+      if (targetChanged) {
+        const match = resolveText(annotation.target); textRanges.delete(annotation.id);
+        states = states.filter(state => state.id !== annotation!.id); states.push({ id: annotation.id, status: match.status, reason: match.reason });
+        if (match.range) textRanges.set(annotation.id, match.range);
+      }
+      applyTextStyles();
+    } else {
+      const match = resolveImage(annotation.target); images.delete(annotation.id); dropImageLayers(annotation.id);
+      states = states.filter(state => state.id !== annotation!.id); states.push({ id: annotation.id, status: match.status, reason: match.reason });
+      if (match.image) { images.set(annotation.id, match.image); resizeObserver.observe(match.image); }
+    }
+    publishStates(); schedulePaint(); return true;
+  }
+  const dispatch = (action: 'focus' | 'rebind' | 'draw' | 'refresh', id?: string) => {
+    if (action === 'refresh') { void refresh(); return; }
+    if (action === 'focus') { void withPageEnabled(() => focusRecord(id)); return; }
+    if (action === 'draw') { rebinding = undefined; void withPageEnabled(startDrawing); return; }
+    const record = annotations.find(item => item.id === id);
+    if (!record || (record.kind !== 'text' && record.kind !== 'image')) return;
+    rebinding = record;
+    if (record.kind === 'image') startDrawing();
+    else { exitDrawing(); toast(label('重新选择原文，再点击高亮颜色以绑定。', 'Select the intended text and apply a color to rebind.')); }
+  };
+  const onMessage = (message: { type?: string; pageUrl?: string; annotation?: Annotation; deletedId?: string }, _sender: chrome.runtime.MessageSender, respond: (value: unknown) => void) => {
     if (message.type === 'page.snapshot') { respond({ pageUrl: currentUrl, states, enabled: enabled() }); return false; }
     if (message.type === 'permissions.revoked') { stopped = true; clearText(); exitDrawing(); view.svg.replaceChildren(); mutationObserver.disconnect(); notifications.hide(); updatePalette(); }
     if (message.type === 'permissions.restored') { stopped = false; void refresh(); }
-    if (message.type === 'annotations.changed' || message.type === 'settings.changed' || message.type === 'page.mode.changed') void refresh();
-    if (message.type === 'page.action.execute') {
-      if (message.action === 'refresh') void refresh();
-      if (message.action === 'focus') void withPageEnabled(() => focusRecord(message.id));
-      if (message.action === 'draw') { rebinding = undefined; void withPageEnabled(startDrawing); }
-      if (message.action === 'rebind') {
-        const record = annotations.find(a => a.id === message.id);
-        if (record) {
-          rebinding = record;
-          if (record.kind === 'image') startDrawing();
-          else { exitDrawing(); toast(label('重新选择原文，再点击高亮颜色以绑定。', 'Select the intended text and apply a color to rebind.')); }
-        }
-      }
-      respond(true);
-    }
+    if (message.type === 'annotations.changed') { if (!applyAnnotationDelta(message.annotation, message.deletedId, message.pageUrl)) void refresh(); }
+    if (message.type === 'settings.changed' || message.type === 'page.mode.changed') void refresh();
     return false;
   };
   chrome.runtime.onMessage.addListener(onMessage);
   void refresh();
-  return () => {
+  const stop = () => {
     disposed = true; generation++; observers.abort(); mutationObserver.disconnect(); resizeObserver.disconnect();
-    clearTimeout(refreshTimer); clearTimeout(passiveRetryTimer); cancelAnimationFrame(renderFrame); clearText(); notifications.dispose(); palette.dispose();
-    chrome.runtime.onMessage.removeListener(onMessage); view.host.remove(); highlightStyle.remove();
-    delete (window as InkWindow).__webInkActive;
+    clearTimeout(refreshTimer); clearTimeout(passiveRetryTimer); cancelAnimationFrame(renderFrame); clearText(); notifications.dispose();
+    chrome.runtime.onMessage.removeListener(onMessage); highlightStyle.remove();
   };
+  const canStop = () => {
+    if (!unsaved && !pendingSave) return true;
+    const record = unsaved;
+    toast(label('请先处理尚未保存的修改。', 'Resolve the unsaved change before turning annotations off.'), true,
+      record ? () => { void commit(record); } : undefined);
+    return false;
+  };
+  return { stop, dispatch, snapshot: () => ({ pageUrl: currentUrl, states, enabled: enabled() }), canStop };
 }

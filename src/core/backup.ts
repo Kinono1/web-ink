@@ -39,7 +39,8 @@ function markdownField(value: string): string {
 export function toMarkdown(annotations: Annotation[]): string {
   const lines = ['# Web Ink annotations', '', `Exported: ${new Date().toISOString()}`, ''];
   for (const annotation of [...annotations].sort((a, b) => a.pageUrl.localeCompare(b.pageUrl) || a.id.localeCompare(b.id))) {
-    lines.push(`## ${annotation.kind === 'text' ? 'Text' : 'Image'} annotation`);
+    const label = annotation.kind === 'text' ? 'Text' : annotation.kind === 'image' ? 'Image' : annotation.kind === 'pdf-text' ? 'PDF text' : 'PDF area';
+    lines.push(`## ${label} annotation`);
     lines.push(`- Page title: ${markdownField(annotation.pageTitle)}`);
     lines.push(`- URL: ${markdownField(annotation.pageUrl)}`);
     lines.push(`- Color: ${markdownField(annotation.color)}`);
@@ -47,7 +48,15 @@ export function toMarkdown(annotations: Annotation[]): string {
     if (annotation.kind === 'text') {
       lines.push('- Text quotation:');
       lines.push(markdownQuote(annotation.target.exact));
-    } else lines.push(`- Image source reference: ${markdownField(annotation.target.src)}`);
+    } else if (annotation.kind === 'image') lines.push(`- Image source reference: ${markdownField(annotation.target.src)}`);
+    else {
+      lines.push(`- PDF file: ${markdownField(annotation.target.fileName)}`);
+      lines.push(`- PDF page: ${annotation.target.pageNumber}`);
+      if (annotation.kind === 'pdf-text') {
+        lines.push('- Text quotation:');
+        lines.push(markdownQuote(annotation.target.exact));
+      }
+    }
     if (annotation.note) lines.push(`- Note: ${markdownField(annotation.note)}`);
     lines.push('');
   }

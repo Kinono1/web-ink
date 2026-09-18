@@ -1,0 +1,26 @@
+{
+  "browser": "Playwright Chromium 153.0.8010.12, pre-granted temporary manifest",
+  "reports": [
+    {
+      "site": "Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Web_annotation",
+      "checkedAt": "2026-09-18T16:00:34.531Z",
+      "result": "text-create-and-reload-pass",
+      "records": 1
+    },
+    {
+      "site": "MDN",
+      "url": "https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API",
+      "checkedAt": "2026-09-18T16:00:43.149Z",
+      "result": "text-create-and-reload-pass",
+      "records": 1
+    },
+    {
+      "site": "GitHub",
+      "url": "https://github.com/wxt-dev/wxt",
+      "checkedAt": "2026-09-18T16:00:45.714Z",
+      "result": "not-verified",
+      "error": "Navigation timed out after 25 seconds before DOMContentLoaded; extension behavior not verified."
+    }
+  ]
+}

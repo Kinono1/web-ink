@@ -28,6 +28,14 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Verify minimum PDF browser (Chrome 125)
+        shell: bash
+        run: |
+          curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/125.0.6422.141.json -o "$RUNNER_TEMP/chrome125.json"
+          PDF_BROWSER_URL=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(x["url"] for x in d["downloads"]["chrome"] if x["platform"] == "linux64"))' "$RUNNER_TEMP/chrome125.json")
+          curl -fL --retry 2 "$PDF_BROWSER_URL" -o "$RUNNER_TEMP/chrome125.zip"
+          unzip -q "$RUNNER_TEMP/chrome125.zip" -d "$RUNNER_TEMP/chrome125"
+          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts
       - run: npm run zip
       - run: node scripts/checksum.mjs
       - name: Verify release checksums

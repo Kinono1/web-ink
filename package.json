@@ -1,8 +1,8 @@
 {
   "name": "web-ink",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "private": true,
-  "description": "Local-first text and image annotations for the web",
+  "description": "Local-first webpage and PDF annotations",
   "license": "MIT",
   "type": "module",
   "engines": {
@@ -10,18 +10,20 @@
   },
   "scripts": {
     "dev": "wxt",
-    "prebuild": "node scripts/icons.mjs && node scripts/licenses.mjs",
+    "prebuild": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs",
     "build": "wxt build",
     "check": "wxt prepare && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "prezip": "node scripts/icons.mjs && node scripts/licenses.mjs",
+    "prezip": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs",
     "zip": "wxt zip",
     "release:local": "npm run check && npm run test && npm run build && npm run test:e2e && npm run zip && node scripts/checksum.mjs",
-    "postinstall": "wxt prepare"
+    "postinstall": "wxt prepare",
+    "benchmark": "node scripts/benchmark.mjs"
   },
   "dependencies": {
     "dexie": "4.4.6",
+    "pdfjs-dist": "6.3.289",
     "perfect-freehand": "1.2.3",
     "react": "19.3.0",
     "react-dom": "19.3.0"
