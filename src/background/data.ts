@@ -1,8 +1,5 @@
 import type {
   Annotation,
-  AnnotationCursor,
-  AnnotationPage,
-  AnnotationQuery,
   ImportPreview,
   PageMode,
   PageRecord,
@@ -19,6 +16,12 @@ import {
   validateSettings,
 } from "../core/validation";
 import { getDatabase } from "./database";
+import {
+  executeAnnotationQuery,
+  QueryTaskRegistry,
+  validateAnnotationQuery,
+  validQueryId,
+} from "./query";
 import { applyIncrementalStats, getStorageStats } from "./storage-stats";
 
 const SETTINGS_KEY = "settings";
@@ -29,6 +32,8 @@ export const IMPORT_SETTINGS_POLICY = "keep-local" as const;
 export interface DataRequestContext {
   trusted: boolean;
   pageUrl?: string;
+  /** Stable background-derived browser document identity for query cancellation. */
+  callerKey?: string;
 }
 
 type KnownMessage =
@@ -56,7 +61,7 @@ function fail(error: string, code?: string): Result<never> {
 function invalid(error: string): Result<never> {
   return fail(error, "INVALID_INPUT");
 }
-const cancelledQueryIds = new Set<string>();
+const queryTasks = new QueryTaskRegistry();
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" &&
@@ -536,233 +541,11 @@ async function importBackup(
   );
 }
 
-function validQueryId(value: unknown, name: string): string {
-  if (typeof value !== "string" || !/^[A-Za-z0-9._:-]{1,128}$/.test(value))
-    throw new ValidationError(`${name} is invalid`);
-  return value;
-}
-
-function validCursor(value: unknown): AnnotationCursor {
-  const cursor = record(value);
-  if (!cursor || !hasOnly(cursor, ["updatedAt", "id"]))
-    throw new ValidationError("query.cursor is invalid");
-  const updatedAt = cursor.updatedAt;
-  if (
-    typeof updatedAt !== "string" ||
-    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(updatedAt) ||
-    Number.isNaN(Date.parse(updatedAt))
-  )
-    throw new ValidationError("query.cursor.updatedAt is invalid");
-  return { updatedAt, id: validId(cursor.id) };
-}
-
-function validateQuery(value: unknown, trusted: boolean): AnnotationQuery {
-  const query = record(value);
-  if (
-    !query ||
-    !hasOnly(
-      query,
-      [],
-      [
-        "pageUrl",
-        "kind",
-        "color",
-        "tag",
-        "text",
-        "cursor",
-        "limit",
-        "requestId",
-      ],
-    )
-  )
-    throw new ValidationError("query is malformed");
-  const pageUrl =
-    query.pageUrl === undefined
-      ? undefined
-      : pageKeyForMode(query.pageUrl, "query.pageUrl", trusted);
-  const kind = query.kind;
-  if (
-    kind !== undefined &&
-    kind !== "text" &&
-    kind !== "image" &&
-    kind !== "pdf-text" &&
-    kind !== "pdf-area"
-  )
-    throw new ValidationError("query.kind is unsupported");
-  const color =
-    query.color === undefined ? undefined : String(query.color).toLowerCase();
-  if (color !== undefined && !/^#[0-9a-f]{6}$/.test(color))
-    throw new ValidationError("query.color is invalid");
-  const tag = query.tag === undefined ? undefined : query.tag;
-  if (
-    tag !== undefined &&
-    (typeof tag !== "string" ||
-      tag.length < 1 ||
-      tag.length > 64 ||
-      /[\u0000-\u001F\u007F]/.test(tag))
-  )
-    throw new ValidationError("query.tag is invalid");
-  const text = query.text === undefined ? undefined : query.text;
-  if (
-    text !== undefined &&
-    (typeof text !== "string" ||
-      text.length > 500 ||
-      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(text))
-  )
-    throw new ValidationError("query.text is invalid");
-  const limit = query.limit === undefined ? 25 : query.limit;
-  if (!Number.isSafeInteger(limit) || (limit as number) < 1)
-    throw new ValidationError("query.limit is invalid");
-  return {
-    ...(pageUrl === undefined ? {} : { pageUrl }),
-    ...(kind === undefined ? {} : { kind }),
-    ...(color === undefined ? {} : { color }),
-    ...(tag === undefined ? {} : { tag }),
-    ...(text === undefined ? {} : { text: text.toLocaleLowerCase() }),
-    ...(query.cursor === undefined
-      ? {}
-      : { cursor: validCursor(query.cursor) }),
-    limit: Math.min(limit as number, 50),
-    ...(query.requestId === undefined
-      ? {}
-      : { requestId: validQueryId(query.requestId, "query.requestId") }),
-  };
-}
-
-function annotationMatches(
-  annotation: Annotation,
-  query: AnnotationQuery,
-): boolean {
-  if (query.kind && annotation.kind !== query.kind) return false;
-  if (query.color && annotation.color !== query.color) return false;
-  if (query.tag && !annotation.tags.includes(query.tag)) return false;
-  if (query.text) {
-    const target =
-      annotation.kind === "text"
-        ? annotation.target.exact
-        : annotation.kind === "image"
-          ? `${annotation.target.alt} ${annotation.target.context} ${annotation.target.src}`
-          : `${annotation.target.fileName} ${annotation.target.sourceUrl ?? ""} ${annotation.target.exact}`;
-    if (
-      !`${annotation.pageTitle} ${annotation.pageUrl} ${annotation.note} ${annotation.tags.join(" ")} ${target}`
-        .toLocaleLowerCase()
-        .includes(query.text)
-    )
-      return false;
-  }
-  return true;
-}
-
-function querySource(query: AnnotationQuery, cursor?: AnnotationCursor) {
-  const db = getDatabase();
-  let source;
-  if (query.pageUrl) {
-    source = cursor
-      ? db.annotations
-          .where("[pageUrl+updatedAt+id]")
-          .between(
-            [query.pageUrl, "", ""],
-            [query.pageUrl, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[pageUrl+updatedAt+id]")
-          .between(
-            [query.pageUrl, "", ""],
-            [query.pageUrl, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
-  } else if (query.kind) {
-    source = cursor
-      ? db.annotations
-          .where("[kind+updatedAt+id]")
-          .between(
-            [query.kind, "", ""],
-            [query.kind, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[kind+updatedAt+id]")
-          .between(
-            [query.kind, "", ""],
-            [query.kind, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
-  } else if (query.color) {
-    source = cursor
-      ? db.annotations
-          .where("[color+updatedAt+id]")
-          .between(
-            [query.color, "", ""],
-            [query.color, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[color+updatedAt+id]")
-          .between(
-            [query.color, "", ""],
-            [query.color, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
-  } else {
-    source = cursor
-      ? db.annotations
-          .where("[updatedAt+id]")
-          .below([cursor.updatedAt, cursor.id])
-          .reverse()
-      : db.annotations.orderBy("[updatedAt+id]").reverse();
-  }
-  return source;
-}
-
-async function queryAnnotations(
-  query: AnnotationQuery,
-): Promise<AnnotationPage> {
-  const id = query.requestId;
-  if (id && cancelledQueryIds.delete(id)) return { items: [], cancelled: true };
-  const limit = query.limit ?? 25;
-  const items: Annotation[] = [];
-  let cursor = query.cursor;
-  let hasNext = false;
-  // A small cursor batch provides a cancellation boundary even for a broad
-  // text/tag query. We never materialize or scan a whole library in one call.
-  while (items.length <= limit) {
-    if (id && cancelledQueryIds.delete(id))
-      return { items: [], cancelled: true };
-    const rows = await querySource(query, cursor).limit(25).toArray();
-    if (id && cancelledQueryIds.delete(id))
-      return { items: [], cancelled: true };
-    if (!rows.length) break;
-    for (const annotation of rows) {
-      cursor = { updatedAt: annotation.updatedAt, id: annotation.id };
-      if (annotationMatches(annotation, query)) items.push(annotation);
-      if (items.length > limit) {
-        hasNext = true;
-        break;
-      }
-    }
-    if (hasNext || rows.length < 25) break;
-  }
-  const visibleItems = hasNext ? items.slice(0, limit) : items;
-  const last = visibleItems[visibleItems.length - 1];
-  return {
-    items: visibleItems,
-    ...(hasNext && last
-      ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } }
-      : {}),
-  };
+function queryOwner(context: DataRequestContext): string {
+  return (
+    context.callerKey ??
+    `${context.trusted ? "trusted" : "content"}:${context.pageUrl ?? ""}`
+  );
 }
 
 function requireTrusted(
@@ -838,7 +621,11 @@ export async function handleDataRequest(
           ownPage,
         );
       case "annotations.query": {
-        const query = validateQuery(request.query, context.trusted);
+        const query = validateAnnotationQuery(
+          request.query,
+          context.trusted,
+          pageKeyForMode,
+        );
         if (
           !context.trusted &&
           (!query.pageUrl ||
@@ -850,11 +637,13 @@ export async function handleDataRequest(
             "Content scripts may only query their own web page.",
             "FORBIDDEN",
           );
-        return ok(await queryAnnotations(query));
+        return ok(
+          await executeAnnotationQuery(query, queryOwner(context), queryTasks),
+        );
       }
       case "annotations.query.cancel": {
         const requestId = validQueryId(request.requestId, "requestId");
-        cancelledQueryIds.add(requestId);
+        queryTasks.cancel(queryOwner(context), requestId);
         return ok(true);
       }
       case "page.mode.get": {

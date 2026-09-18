@@ -141,6 +141,7 @@ export default defineBackground(() => {
           !trusted &&
           [
             "annotations.list",
+            "annotations.query",
             "annotations.put",
             "annotations.restore",
             "annotations.delete",
@@ -154,7 +155,9 @@ export default defineBackground(() => {
           const suppliedPage =
             (raw as { pageUrl?: unknown; annotation?: { pageUrl?: unknown } })
               .pageUrl ??
-            (raw as { annotation?: { pageUrl?: unknown } }).annotation?.pageUrl;
+            (raw as { annotation?: { pageUrl?: unknown } }).annotation
+              ?.pageUrl ??
+            (raw as { query?: { pageUrl?: unknown } }).query?.pageUrl;
           if (
             typeof suppliedPage === "string" &&
             pageKey(suppliedPage) !== contentPage
@@ -277,6 +280,7 @@ export default defineBackground(() => {
         const result = await handleDataRequest(raw, {
           trusted,
           pageUrl: contentPage,
+          callerKey: `${sender.id}:${sender.tab?.id ?? "extension"}:${sender.frameId ?? 0}:${sender.documentId ?? sender.url ?? ""}`,
         });
         if (
           result.ok &&

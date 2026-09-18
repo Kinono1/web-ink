@@ -1,3 +1,4 @@
+import { useAnnotationQuery } from "./management/useAnnotationQuery";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { toMarkdown } from "../core/backup";
@@ -20,10 +21,41 @@ import { StoragePanel } from "./StoragePanel";
 import { THEME_TOKENS } from "./theme";
 import "./management.css";
 
-import type { Mode, Screen, TabContext, Draft, AnnotationKind, FilterKind, NoticeMessage } from "./management/types";
+import type {
+  Mode,
+  Screen,
+  TabContext,
+  Draft,
+  AnnotationKind,
+  FilterKind,
+  NoticeMessage,
+} from "./management/types";
 import { COPY } from "./management/copy";
-import { tagText, parseTags, statusClass, annotationText, matchesQuery, isPdf, pdfReaderUrl, kindFamily, localDate, download, Icon } from "./management/helpers";
-import { Alert, Empty, PageHeader, FilterPopover, AnnotationBrowser, AnnotationRow, AnnotationDetail, Editor, ColorPicker, SettingsView } from "./management/components";
+import {
+  tagText,
+  parseTags,
+  statusClass,
+  annotationText,
+  matchesQuery,
+  isPdf,
+  pdfReaderUrl,
+  kindFamily,
+  localDate,
+  download,
+  Icon,
+} from "./management/helpers";
+import {
+  Alert,
+  Empty,
+  PageHeader,
+  FilterPopover,
+  AnnotationBrowser,
+  AnnotationRow,
+  AnnotationDetail,
+  Editor,
+  ColorPicker,
+  SettingsView,
+} from "./management/components";
 export { pdfReaderUrl } from "./management/helpers";
 export function mountManagementApp(root: HTMLElement, mode: Mode): void {
   createRoot(root).render(<ManagementApp mode={mode} />);
@@ -35,8 +67,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [hasPermission, setHasPermission] = useState(true);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
-  const [records, setRecords] = useState<Annotation[]>([]);
-  const [nextCursor, setNextCursor] = useState<AnnotationPage["nextCursor"]>();
   const [query, setQuery] = useState("");
   const [kind, setKind] = useState<FilterKind>("all");
   const [color, setColor] = useState("");
@@ -54,10 +84,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [preview, setPreview] = useState<ImportPreview>();
   const [overwrite, setOverwrite] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const queryRequest = useRef<string | undefined>(undefined);
   const contextRequest = useRef(0);
-  const listContext = useRef("");
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
   const settingsVersion = useRef(0);
@@ -68,15 +95,15 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const pageUrl = tab.url && isWebPage(tab.url) ? pageKey(tab.url) : undefined;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
-  const listKey = JSON.stringify({
-    mode,
-    pageUrl: mode === "sidepanel" ? pageUrl : undefined,
-    kind,
-    color,
-    tag,
-    query,
-  });
-  listContext.current = listKey;
+  const { records, setRecords, nextCursor, loading, loadRecords } =
+    useAnnotationQuery(
+      { mode, pageUrl, kind, color, tag, query },
+      setError,
+      (items) =>
+        setSelectedId((current) =>
+          items.some((item) => item.id === current) ? current : items[0]?.id,
+        ),
+    );
 
   const pageState = useCallback(
     async (tabId?: number, url?: string, expectedContext?: number) => {
@@ -111,74 +138,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     },
     [mode],
   );
-  const loadRecords = useCallback(
-    async (append = false, cursor?: AnnotationPage["nextCursor"]) => {
-      if (mode === "sidepanel" && !pageUrl) {
-        setRecords([]);
-        setNextCursor(undefined);
-        setLoading(false);
-        return;
-      }
-      const requestId = crypto.randomUUID(),
-        obsolete = queryRequest.current;
-      queryRequest.current = requestId;
-      if (obsolete)
-        void request({
-          type: "annotations.query.cancel",
-          requestId: obsolete,
-        }).catch(() => undefined);
-      setLoading(true);
-      const querySpec: AnnotationQuery = {
-        ...(mode === "sidepanel" && pageUrl ? { pageUrl } : {}),
-        ...(kind === "all" ? {} : { kind }),
-        ...(color ? { color } : {}),
-        ...(tag ? { tag } : {}),
-        ...(query.trim() ? { text: query.trim() } : {}),
-        ...(cursor ? { cursor } : {}),
-        limit: 50,
-        requestId,
-      };
-      const requestedListKey = listKey;
-      try {
-        const page = await request<AnnotationPage>({
-          type: "annotations.query",
-          query: querySpec,
-        });
-        if (
-          queryRequest.current !== requestId ||
-          listContext.current !== requestedListKey ||
-          page.cancelled
-        )
-          return;
-        setRecords((current) =>
-          append
-            ? [
-                ...current,
-                ...page.items.filter(
-                  (item) => !current.some((old) => old.id === item.id),
-                ),
-              ]
-            : page.items,
-        );
-        setNextCursor(page.nextCursor);
-        if (!append)
-          setSelectedId((current) =>
-            page.items.some((item) => item.id === current)
-              ? current
-              : page.items[0]?.id,
-          );
-      } catch (cause) {
-        if (
-          queryRequest.current === requestId &&
-          listContext.current === requestedListKey
-        )
-          setError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        if (queryRequest.current === requestId) setLoading(false);
-      }
-    },
-    [color, kind, mode, pageUrl, query, tag],
-  );
   const refreshContext = useCallback(async () => {
     const requestId = ++contextRequest.current;
     try {
@@ -211,25 +170,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   useEffect(() => {
     void refreshContext();
   }, [refreshContext]);
-  useEffect(() => {
-    const timer = setTimeout(
-      () => {
-        void loadRecords();
-      },
-      query ? 180 : 0,
-    );
-    return () => clearTimeout(timer);
-  }, [loadRecords, query]);
-  useEffect(
-    () => () => {
-      if (queryRequest.current)
-        void request({
-          type: "annotations.query.cancel",
-          requestId: queryRequest.current,
-        }).catch(() => undefined);
-    },
-    [],
-  );
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
       if (
@@ -870,4 +810,3 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     </main>
   );
 }
-
