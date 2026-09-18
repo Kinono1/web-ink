@@ -436,6 +436,10 @@ test('existing image marks can be removed directly after reload', async () => {
   const toggle=page.locator('.web-ink-palette-toggle');await toggle.click();await expect(page.locator('g[data-annotation-id]')).toHaveCount(0);
   expect((await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(1);
   await toggle.click();await expect(page.locator('g[data-annotation-id]')).toHaveCount(1);
+  await page.locator('#diagram').evaluate(img=>(img as HTMLElement).style.transform='scale(1.1)');
+  await expect(page.locator('g[data-annotation-id]')).toBeHidden();
+  await page.locator('#diagram').evaluate(img=>(img as HTMLElement).style.transform='');
+  await expect(page.locator('g[data-annotation-id]')).toBeVisible();
   const rect=await page.locator('g[data-annotation-id] > rect').boundingBox();await page.mouse.click(rect!.x+rect!.width/2,rect!.y+rect!.height/2);
   await page.getByRole('button',{name:'取消标注',exact:true}).click();await expect.poll(async()=>(await rpc<any[]>(manager,{type:'annotations.list'})).length).toBe(0);await expect(page.locator('g[data-annotation-id]')).toHaveCount(0);
   await page.reload();expect(await rpc(manager,{type:'annotations.list'})).toEqual([]);

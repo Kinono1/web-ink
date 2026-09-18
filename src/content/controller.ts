@@ -359,9 +359,10 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     return { imageRect: geometry.imageRect, clipRect: { x: left, y: top, width: right - left, height: bottom - top } };
   }
   function drawOne(record: ImageAnnotation, image: HTMLImageElement, suffix = '') {
-    const geometry = clippedGeometry(image); if (!geometry) return;
     const key = `${record.id}${suffix}`;
     let layer = svgLayers.get(key);
+    const geometry = clippedGeometry(image);
+    if (!geometry) { if (layer) layer.group.style.display = 'none'; return; }
     if (!layer) {
       const clipId = `clip-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
       const defs = svgElement('defs'), clipPath = svgElement('clipPath', { id: clipId }), clip = svgElement('rect'); clipPath.append(clip); defs.append(clipPath);
@@ -386,6 +387,7 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     for (const record of annotations) if (record.kind === 'image') {
       validLayers.add(record.id);
       const image = images.get(record.id); if (image?.isConnected) drawOne(record, image);
+      else { const layer = svgLayers.get(record.id); if (layer) layer.group.style.display = 'none'; }
     }
     if (selectedImage?.isConnected) {
       const geometry = clippedGeometry(selectedImage);
