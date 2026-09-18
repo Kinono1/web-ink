@@ -1,6 +1,6 @@
 {
   "name": "web-ink",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "Local-first webpage and PDF annotations",
   "license": "MIT",
@@ -19,7 +19,9 @@
     "zip": "wxt zip",
     "release:local": "npm run check && npm run test && npm run build && npm run test:e2e && npm run zip && node scripts/checksum.mjs",
     "postinstall": "wxt prepare",
-    "benchmark": "node scripts/benchmark.mjs"
+    "benchmark": "node scripts/benchmark.mjs",
+    "benchmark:v03": "node scripts/benchmark-v03.mjs",
+    "benchmark:pdf": "node scripts/benchmark-pdf-v03.mjs"
   },
   "dependencies": {
     "dexie": "4.4.6",

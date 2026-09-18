@@ -36,6 +36,15 @@ jobs:
           curl -fL --retry 2 "$PDF_BROWSER_URL" -o "$RUNNER_TEMP/chrome125.zip"
           unzip -q "$RUNNER_TEMP/chrome125.zip" -d "$RUNNER_TEMP/chrome125"
           WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts
+          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/extension.spec.ts -g "query"
+      - name: Verify minimum webpage browser (Chrome 120)
+        shell: bash
+        run: |
+          curl -fsSL https://googlechromelabs.github.io/chrome-for-testing/120.0.6099.109.json -o "$RUNNER_TEMP/chrome120.json"
+          WEB_BROWSER_URL=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(x["url"] for x in d["downloads"]["chrome"] if x["platform"] == "linux64"))' "$RUNNER_TEMP/chrome120.json")
+          curl -fL --retry 2 "$WEB_BROWSER_URL" -o "$RUNNER_TEMP/chrome120.zip"
+          unzip -q "$RUNNER_TEMP/chrome120.zip" -d "$RUNNER_TEMP/chrome120"
+          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome120/chrome-linux64/chrome" npx playwright test tests/e2e/extension.spec.ts -g "real text marking|existing image marks|query|palette is quiet"
       - run: npm run zip
       - run: node scripts/checksum.mjs
       - name: Verify release checksums
