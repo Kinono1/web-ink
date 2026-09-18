@@ -411,13 +411,11 @@ test("library editing, conflict preservation, JSON download and import work thro
   await manager
     .getByRole("button", { name: "设置与数据", exact: true })
     .click();
-  await manager
-    .locator("input[type=file]")
-    .setInputFiles({
-      name: "backup.json",
-      mimeType: "application/json",
-      buffer: Buffer.from(JSON.stringify(backup)),
-    });
+  await manager.locator("input[type=file]").setInputFiles({
+    name: "backup.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(JSON.stringify(backup)),
+  });
   await expect(manager.locator(".import-preview")).toContainText("新增 1");
   await manager.getByRole("button", { name: "导入备份", exact: true }).click();
   await manager.getByRole("button", { name: "资料库", exact: true }).click();
@@ -939,11 +937,19 @@ test("existing image marks can be removed directly after reload", async () => {
   await page
     .locator("#diagram")
     .evaluate((img) => ((img as HTMLElement).style.transform = "scale(1.1)"));
-  await expect(page.locator("g[data-annotation-id]")).toBeHidden();
+  // The SVG group's display property controls whether its marks are painted.
+  await expect(page.locator("g[data-annotation-id]")).toHaveCSS(
+    "display",
+    "none",
+  );
   await page
     .locator("#diagram")
     .evaluate((img) => ((img as HTMLElement).style.transform = ""));
-  await expect(page.locator("g[data-annotation-id]")).toBeVisible();
+  await expect(page.locator("g[data-annotation-id]")).not.toHaveCSS(
+    "display",
+    "none",
+  );
+  await expect(page.locator("g[data-annotation-id] > rect")).toBeVisible();
   const rect = await page.locator("g[data-annotation-id] > rect").boundingBox();
   await page.mouse.click(rect!.x + rect!.width / 2, rect!.y + rect!.height / 2);
   await page.getByRole("button", { name: "取消标注", exact: true }).click();
