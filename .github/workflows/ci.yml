@@ -37,6 +37,8 @@ jobs:
         with:
           name: web-ink-extension
           if-no-files-found: error
+          # Only these two explicit patterns are uploaded; other hidden files stay out.
+          include-hidden-files: true
           path: |
-            .output/*.zip
-            .output/*.zip.sha256
+            .output/web-ink-*-chrome.zip
+            .output/web-ink-*-chrome.zip.sha256
