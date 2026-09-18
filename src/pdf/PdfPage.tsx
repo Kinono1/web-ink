@@ -22,6 +22,7 @@ export function PdfPage({
   enabled,
   area,
   color,
+  measurementGeneration,
   onSelection,
   onPick,
   onArea,
@@ -36,10 +37,11 @@ export function PdfPage({
   enabled: boolean;
   area: boolean;
   color: string;
+  measurementGeneration: number;
   onSelection: (v: SelectionTarget | undefined) => void;
   onPick: (record: PdfAnnotation) => void;
   onArea: (v: SelectionTarget) => void;
-  onDimensions: (w: number, h: number) => void;
+  onDimensions: (generation: number, w: number, h: number) => void;
   onError: (e: string) => void;
 }) {
   const root = useRef<HTMLDivElement>(null),
@@ -56,6 +58,7 @@ export function PdfPage({
   const callbacks = useRef({ onDimensions, onError });
   callbacks.current = { onDimensions, onError };
   useEffect(() => {
+    const generation = measurementGeneration;
     let dead = false;
     let page: PDFPageProxy | undefined,
       render: RenderTask | undefined,
@@ -65,7 +68,10 @@ export function PdfPage({
     void (async () => {
       try {
         page = await opened.document.getPage(number);
-        if (dead) return;
+        const pageRoot = root.current,
+          c = canvas.current,
+          layerRoot = text.current;
+        if (dead || !pageRoot || !c || !layerRoot) return;
         const viewport = page.getViewport({
           scale: zoom,
           rotation: (page.rotate + rotation) % 360,
@@ -75,21 +81,20 @@ export function PdfPage({
           2,
           Math.sqrt(16777216 / (viewport.width * viewport.height)),
         );
-        const c = canvas.current!,
-          layerRoot = text.current!;
         c.width = Math.floor(viewport.width * ratio);
         c.height = Math.floor(viewport.height * ratio);
         c.style.width = `${viewport.width}px`;
         c.style.height = `${viewport.height}px`;
-        root.current!.style.setProperty(
+        pageRoot.style.setProperty(
           "--total-scale-factor",
           String(viewport.scale),
         );
-        root.current!.style.setProperty(
-          "--scale-factor",
-          String(viewport.scale),
+        pageRoot.style.setProperty("--scale-factor", String(viewport.scale));
+        callbacks.current.onDimensions(
+          generation,
+          viewport.width,
+          viewport.height,
         );
-        callbacks.current.onDimensions(viewport.width, viewport.height);
         setGeometry({ viewport, box: page.view });
         render = page.render({
           canvas: c,
@@ -105,7 +110,7 @@ export function PdfPage({
           viewport,
         });
         await layer.render();
-        if (!dead) root.current!.dataset.ready = "true";
+        if (!dead && pageRoot.isConnected) pageRoot.dataset.ready = "true";
       } catch (cause) {
         if (
           !dead &&
@@ -132,7 +137,7 @@ export function PdfPage({
         .catch(() => undefined)
         .finally(() => page?.cleanup());
     };
-  }, [opened, number, zoom, rotation]);
+  }, [opened, number, zoom, rotation, measurementGeneration]);
   function capture(event: React.MouseEvent<HTMLDivElement>) {
     if (!enabled || area || !geometry || !text.current || !root.current) return;
     const s = getSelection();

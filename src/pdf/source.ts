@@ -41,11 +41,60 @@ export async function readRemotePdf(
     throw Error("重定向网站尚未授权 / Redirected PDF site is not authorized.");
   if (!response.ok || !response.body)
     throw Error(`PDF 读取失败 / PDF request failed (${response.status}).`);
-  if (Number(response.headers.get("content-length")) > MAX_PDF_BYTES) {
+  const encoding = response.headers
+    .get("content-encoding")
+    ?.trim()
+    .toLowerCase();
+  const rawLength = response.headers.get("content-length")?.trim();
+  const contentLength =
+    rawLength && /^\d+$/.test(rawLength) ? Number(rawLength) : undefined;
+  // Fetch exposes decoded body chunks. A compressed Content-Length therefore is
+  // not a safe allocation size nor a proof of the decoded-size limit.
+  const identity = !encoding || encoding === "identity";
+  if (
+    identity &&
+    contentLength !== undefined &&
+    contentLength > MAX_PDF_BYTES
+  ) {
     await response.body.cancel();
     throw Error("PDF 超过 50 MiB / PDF exceeds 50 MiB.");
   }
-  const reader = response.body.getReader();
+  if (identity && contentLength !== undefined)
+    return verifyPdf(await readExact(response.body, contentLength));
+  return verifyPdf(await readBounded(response.body));
+}
+
+async function readExact(
+  body: ReadableStream<Uint8Array>,
+  length: number,
+): Promise<Uint8Array> {
+  const reader = body.getReader();
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (offset + value.length > length)
+        throw Error("PDF length does not match Content-Length.");
+      bytes.set(value, offset);
+      offset += value.length;
+    }
+    if (offset !== length)
+      throw Error("PDF length does not match Content-Length.");
+    return bytes;
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+async function readBounded(
+  body: ReadableStream<Uint8Array>,
+): Promise<Uint8Array> {
+  const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
   try {
@@ -69,7 +118,7 @@ export async function readRemotePdf(
     bytes.set(chunk, offset);
     offset += chunk.length;
   }
-  return verifyPdf(bytes);
+  return bytes;
 }
 export async function pdfHash(bytes: Uint8Array): Promise<string> {
   return Array.from(

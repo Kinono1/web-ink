@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { fromPdfRect, toPdfRect, type PdfViewport } from "../src/pdf/geometry";
-import { MAX_PDF_BYTES, pdfSourceUrl, verifyPdf } from "../src/pdf/source";
+import {
+  MAX_PDF_BYTES,
+  pdfSourceUrl,
+  readLocalPdf,
+  readRemotePdf,
+  verifyPdf,
+} from "../src/pdf/source";
+import { PageLayoutIndex } from "../src/pdf/layout";
+import { PdfSession } from "../src/pdf/session";
+import { fixturePdf } from "./pdf-fixture";
 function viewport(rotation: number, scale: number): PdfViewport {
   const transform = (x: number, y: number): number[] =>
     rotation === 0
@@ -83,5 +92,206 @@ describe("PDF source boundary", () => {
     expect(
       verifyPdf(new TextEncoder().encode("%PDF-1.7\nfixture")).length,
     ).toBeGreaterThan(0);
+  });
+  it("uses exact identity Content-Length storage and rejects truncated responses", async () => {
+    const bytes = new TextEncoder().encode("%PDF-1.7\nidentity");
+    Object.defineProperty(globalThis, "chrome", {
+      configurable: true,
+      value: { permissions: { contains: async () => true } },
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+        { status: 200, headers: { "content-length": String(bytes.length) } },
+      );
+    await expect(
+      readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
+    ).resolves.toSatisfy(
+      (value) => Array.from(value).join(",") === Array.from(bytes).join(","),
+    );
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-length": String(bytes.length + 1) },
+        },
+      );
+    await expect(
+      readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
+    ).rejects.toThrow("Content-Length");
+    globalThis.fetch = original;
+  });
+  it("does not trust compressed Content-Length as decoded allocation size", async () => {
+    const bytes = new TextEncoder().encode("%PDF-1.7\ncompressed-output");
+    Object.defineProperty(globalThis, "chrome", {
+      configurable: true,
+      value: { permissions: { contains: async () => true } },
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(bytes);
+            controller.close();
+          },
+        }),
+        {
+          status: 200,
+          headers: { "content-length": "1", "content-encoding": "gzip" },
+        },
+      );
+    await expect(
+      readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
+    ).resolves.toSatisfy(
+      (value) => Array.from(value).join(",") === Array.from(bytes).join(","),
+    );
+    globalThis.fetch = original;
+  });
+  it.each([20, 50])(
+    "accepts a real %i MiB identity PDF without chunk accumulation",
+    async (mib) => {
+      const base = fixturePdf();
+      const bytes = fixturePdf(
+        1,
+        "Web Ink PDF highlights survive a return visit.",
+        { paddingBytes: mib * 1024 * 1024 - base.length },
+      );
+      Object.defineProperty(globalThis, "chrome", {
+        configurable: true,
+        value: { permissions: { contains: async () => true } },
+      });
+      const original = globalThis.fetch;
+      globalThis.fetch = async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(bytes);
+              controller.close();
+            },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-length": String(bytes.length),
+              "content-encoding": "identity",
+            },
+          },
+        );
+      const result = await readRemotePdf(
+        "https://example.test/large.pdf",
+        new AbortController().signal,
+      );
+      expect(result.length).toBe(mib * 1024 * 1024);
+      globalThis.fetch = original;
+    },
+  );
+  it.each([20, 50])(
+    "accepts a real %i MiB local PDF as one ArrayBuffer view",
+    async (mib) => {
+      const base = fixturePdf();
+      const bytes = fixturePdf(
+        1,
+        "Web Ink PDF highlights survive a return visit.",
+        { paddingBytes: mib * 1024 * 1024 - base.length },
+      );
+      const content = new Uint8Array(bytes.length);
+      content.set(bytes);
+      const file = new File([content], "large.pdf", {
+        type: "application/pdf",
+      });
+      expect((await readLocalPdf(file)).length).toBe(mib * 1024 * 1024);
+    },
+  );
+  it("rejects 50 MiB plus one identity response before consuming its body", async () => {
+    Object.defineProperty(globalThis, "chrome", {
+      configurable: true,
+      value: { permissions: { contains: async () => true } },
+    });
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const original = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(body, {
+        status: 200,
+        headers: { "content-length": String(MAX_PDF_BYTES + 1) },
+      });
+    await expect(
+      readRemotePdf(
+        "https://example.test/large.pdf",
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("50 MiB");
+    expect(cancelled).toBe(true);
+    globalThis.fetch = original;
+  });
+});
+
+describe("incremental PDF layout", () => {
+  it("maps 1,000 mixed-height pages with local updates and stable offsets", () => {
+    const layout = new PageLayoutIndex();
+    layout.reset(1000, 800);
+    expect(layout.offsetBefore(501)).toBe(500 * 820);
+    layout.update(500, 1200);
+    layout.update(1000, 400);
+    expect(layout.offsetBefore(501)).toBe(499 * 820 + 1220);
+    expect(layout.pageAt(layout.offsetBefore(500) + 1)).toBe(500);
+    expect(layout.pageAt(layout.totalHeight() - 1)).toBe(1000);
+  });
+  it("keeps a mixed-size reading anchor at the same page-relative pixel after earlier measurements", () => {
+    const layout = new PageLayoutIndex();
+    layout.reset(500, 800);
+    const anchorPage = 250,
+      relative = 137;
+    const before = layout.offsetBefore(anchorPage) + relative;
+    const anchorBefore = layout.offsetBefore(anchorPage);
+    layout.update(4, 1200);
+    layout.update(120, 400);
+    layout.update(249, 1000);
+    const compensated = before + layout.offsetBefore(anchorPage) - anchorBefore;
+    expect(layout.pageAt(compensated)).toBe(anchorPage);
+    expect(compensated - layout.offsetBefore(anchorPage)).toBe(relative);
+  });
+});
+
+describe("PDF session ownership", () => {
+  it("invalidates A/B before C and destroys each replaced task once", async () => {
+    const session = new PdfSession();
+    const a = await session.begin();
+    let aDestroyed = 0,
+      bDestroyed = 0;
+    session.setTask(a.token, {
+      destroy: async () => {
+        aDestroyed++;
+      },
+    } as any);
+    const b = await session.begin();
+    session.setTask(b.token, {
+      destroy: async () => {
+        bDestroyed++;
+      },
+    } as any);
+    const c = await session.begin();
+    expect(session.isCurrent(a.token)).toBe(false);
+    expect(session.isCurrent(b.token)).toBe(false);
+    expect(session.isCurrent(c.token)).toBe(true);
+    expect(aDestroyed).toBe(1);
+    expect(bDestroyed).toBe(1);
   });
 });

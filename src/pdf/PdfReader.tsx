@@ -1,19 +1,19 @@
 import { PdfPage } from "./PdfPage";
-import { PdfNote } from "./PdfNote";
+import { PdfNote, type PdfNoteDraft } from "./PdfNote";
 import {
   errorText,
   type PdfAnnotation,
   type OpenDocument,
   type SelectionTarget,
 } from "./types";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type {
-  PDFDocumentProxy,
-  PDFDocumentLoadingTask,
-  PDFPageProxy,
-  RenderTask,
-} from "pdfjs-dist/types/src/display/api";
-import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { request, RequestError } from "../core/client";
 import {
   COLORS,
@@ -21,16 +21,14 @@ import {
   type Annotation,
   type AnnotationPage,
   type PageMode,
-  type PdfAreaAnnotation,
-  type PdfRect,
   type PdfTarget,
-  type PdfTextAnnotation,
   type Settings,
 } from "../core/model";
 import { THEME_TOKENS } from "../ui/theme";
 import { ICON_PATHS } from "../ui/icons";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
-import { fromPdfRect, toPdfRect } from "./geometry";
+import { PageLayoutIndex } from "./layout";
+import { PdfSession } from "./session";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "../ui/management.css";
 import "./pdf.css";
@@ -60,17 +58,52 @@ export function PdfReader() {
   const [error, setError] = useState(""),
     [notice, setNotice] = useState("");
   const [pageWindow, setPageWindow] = useState({ start: 0, end: 3 });
-  const [dimensions, setDimensions] = useState<
-    Record<number, { width: number; height: number }>
-  >({});
-  const container = useRef<HTMLDivElement>(null),
-    loadTask = useRef<PDFDocumentLoadingTask | undefined>(undefined);
-  const abort = useRef<AbortController | undefined>(undefined),
-    generation = useRef(0),
+  const [notesLimit, setNotesLimit] = useState(50);
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, PdfNoteDraft>>(
+    {},
+  );
+  const [documentSession, setDocumentSession] = useState(0);
+  const container = useRef<HTMLDivElement>(null);
+  const session = useRef(new PdfSession());
+  const documentSessionRef = useRef(0);
+  const layoutIndex = useRef(new PageLayoutIndex());
+  const measureFrame = useRef(0),
+    layoutGeneration = useRef(0),
+    pendingScrollAdjustment = useRef(0),
+    pendingMeasures = useRef(
+      new Map<number, { width: number; height: number }>(),
+    ),
+    dimensions = useRef(new Map<number, { width: number; height: number }>()),
     noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const [layoutEpoch, setLayoutEpoch] = useState(0);
+  const [measurementGeneration, setMeasurementGeneration] = useState(0);
   const zh = settings.language === "zh-CN";
   const t = (cn: string, en: string) => (zh ? cn : en);
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
+  const hasNoteDrafts = Object.values(noteDrafts).some(
+    (draft) => draft.editing,
+  );
+  const sortedNotes = useMemo(
+    () =>
+      records
+        .slice()
+        .sort(
+          (a, b) =>
+            a.target.pageNumber - b.target.pageNumber ||
+            a.createdAt.localeCompare(b.createdAt) ||
+            a.id.localeCompare(b.id),
+        ),
+    [records],
+  );
+  const recordsByPage = useMemo(() => {
+    const pages = new Map<number, PdfAnnotation[]>();
+    for (const record of records) {
+      const page = pages.get(record.target.pageNumber);
+      if (page) page.push(record);
+      else pages.set(record.target.pageNumber, [record]);
+    }
+    return pages;
+  }, [records]);
   const tell = (message: string) => {
     setNotice(message);
     clearTimeout(noticeTimer.current);
@@ -112,29 +145,36 @@ export function PdfReader() {
   }, [settings]);
   useEffect(
     () => () => {
-      generation.current++;
-      abort.current?.abort();
-      void loadTask.current?.destroy();
+      void session.current.dispose();
+      cancelAnimationFrame(measureFrame.current);
+      measureFrame.current = 0;
       clearTimeout(noticeTimer.current);
     },
     [],
   );
   const refresh = useCallback(async () => {
     if (!key) return;
-    const all = await request<Annotation[]>({
-      type: "annotations.list",
-      pageUrl: key,
-    });
-    setRecords(all.filter(isPdf));
-  }, [key]);
+    const active = documentSession;
+    try {
+      const all = await request<Annotation[]>({
+        type: "annotations.list",
+        pageUrl: key,
+      });
+      if (active === documentSessionRef.current) setRecords(all.filter(isPdf));
+    } catch (cause) {
+      if (active === documentSessionRef.current) setError(errorText(cause));
+    }
+  }, [key, documentSession]);
   useEffect(() => {
     if (!key) return;
+    const active = documentSession;
     const listener = (m: {
       type?: string;
       pageUrl?: string;
       annotation?: Annotation;
       deletedId?: string;
     }) => {
+      if (active !== documentSessionRef.current) return;
       if (
         m.type === "annotations.changed" &&
         (!m.pageUrl || m.pageUrl === key)
@@ -151,34 +191,92 @@ export function PdfReader() {
         else void refresh();
       }
       if (m.type === "page.mode.changed" && m.pageUrl === key)
-        void request<PageMode>({ type: "page.mode.get", pageUrl: key }).then(
-          (m) => setEnabled(m.enabled),
-        );
+        void request<PageMode>({ type: "page.mode.get", pageUrl: key })
+          .then((mode) => {
+            if (active === documentSessionRef.current) setEnabled(mode.enabled);
+          })
+          .catch((cause) => {
+            if (active === documentSessionRef.current)
+              setError(errorText(cause));
+          });
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
-  }, [key, refresh]);
-  const layout = useMemo(() => {
-    const offsets = [0];
+  }, [key, documentSession, refresh]);
+  useEffect(() => {
+    if (!opened) return;
+    const scroller = container.current;
+    const oldScroll = scroller?.scrollTop ?? 0;
+    const anchor = scroller ? layoutIndex.current.pageAt(oldScroll) : 1;
+    const relative = oldScroll - layoutIndex.current.offsetBefore(anchor);
+    cancelAnimationFrame(measureFrame.current);
+    measureFrame.current = 0;
+    pendingMeasures.current.clear();
+    pendingScrollAdjustment.current = 0;
+    layoutGeneration.current++;
+    setMeasurementGeneration(layoutGeneration.current);
     const fallback = (rotation % 180 ? 612 : 792) * zoom;
-    for (let n = 1; n <= (opened?.document.numPages ?? 0); n++) {
-      offsets.push(offsets[n - 1]! + (dimensions[n]?.height ?? fallback) + 20);
-    }
-    return offsets;
-  }, [opened, dimensions, zoom, rotation]);
+    layoutIndex.current.reset(opened.document.numPages, fallback);
+    pendingScrollAdjustment.current = scroller
+      ? layoutIndex.current.offsetBefore(anchor) + relative - oldScroll
+      : 0;
+    dimensions.current.clear();
+    setLayoutEpoch((value) => value + 1);
+  }, [documentSession, zoom, rotation]);
+  useEffect(() => {
+    setNotesLimit(50);
+  }, [documentSession]);
+  const onPageDimensions = useCallback(
+    (page: number, generation: number, width: number, height: number) => {
+      if (generation !== layoutGeneration.current) return;
+      pendingMeasures.current.set(page, { width, height });
+      if (measureFrame.current) return;
+      measureFrame.current = requestAnimationFrame(() => {
+        measureFrame.current = 0;
+        const scroller = container.current;
+        const anchor = scroller
+          ? layoutIndex.current.pageAt(scroller.scrollTop)
+          : 1;
+        const before = scroller ? layoutIndex.current.offsetBefore(anchor) : 0;
+        if (generation !== layoutGeneration.current) return;
+        const measurements = [...pendingMeasures.current];
+        let changed = false;
+        for (const [number, size] of measurements) {
+          if (layoutIndex.current.update(number, size.height)) changed = true;
+        }
+        pendingMeasures.current.clear();
+        if (scroller && changed)
+          pendingScrollAdjustment.current +=
+            layoutIndex.current.offsetBefore(anchor) - before;
+        let dimensionsChanged = false;
+        for (const [number, size] of measurements) {
+          const previous = dimensions.current.get(number);
+          if (
+            previous?.width !== size.width ||
+            previous?.height !== size.height
+          ) {
+            dimensions.current.set(number, size);
+            dimensionsChanged = true;
+          }
+        }
+        if (changed || dimensionsChanged) setLayoutEpoch((value) => value + 1);
+      });
+    },
+    [],
+  );
+  useLayoutEffect(() => {
+    const adjustment = pendingScrollAdjustment.current;
+    if (!adjustment) return;
+    const scroller = container.current;
+    if (scroller) scroller.scrollTop += adjustment;
+    pendingScrollAdjustment.current = 0;
+  }, [layoutEpoch]);
   useEffect(() => {
     const scroller = container.current;
     if (!opened || !scroller) return;
     let frame = 0;
     const findPage = (position: number) => {
-      let low = 0,
-        high = opened.document.numPages - 1;
-      while (low < high) {
-        const mid = Math.ceil((low + high) / 2);
-        if (layout[mid]! <= position) low = mid;
-        else high = mid - 1;
-      }
-      return low;
+      return layoutIndex.current.pageAt(position) - 1;
     };
     const update = () => {
       frame = 0;
@@ -203,13 +301,17 @@ export function PdfReader() {
       resize.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [opened, layout]);
+  }, [opened?.hash, layoutEpoch]);
   async function openPdf(file?: File) {
-    if (unsaved || saving || removing) {
+    if (unsaved || saving || removing || hasNoteDrafts) {
       setError(
         t(
-          "请先保存或放弃未保存标注。",
-          "Resolve the unsaved annotation first.",
+          hasNoteDrafts
+            ? "请先保存或放弃笔记草稿。"
+            : "请先保存或放弃未保存标注。",
+          hasNoteDrafts
+            ? "Resolve note drafts before opening another PDF."
+            : "Resolve the unsaved annotation first.",
         ),
       );
       return;
@@ -226,21 +328,26 @@ export function PdfReader() {
       );
       return;
     }
-    const token = ++generation.current;
-    abort.current?.abort();
-    abort.current = new AbortController();
-    const signal = abort.current.signal;
+    let token = 0,
+      signal: AbortSignal | undefined;
     setError("");
     setNotice("");
     setBusy(true);
+    // Invalidate every async callback from the currently displayed document
+    // before a new source read can complete.
+    documentSessionRef.current++;
     setOpened(undefined);
     setSelection(undefined);
     setPicked(undefined);
     setUndoRecord(undefined);
     setRecords([]);
-    setDimensions({});
+    setNoteDrafts({});
+    dimensions.current.clear();
     setPageWindow({ start: 0, end: 3 });
     try {
+      const active = await session.current.begin();
+      token = active.token;
+      signal = active.signal;
       let remote: string | undefined;
       if (!file) {
         const url = pdfSourceUrl(source.trim());
@@ -254,14 +361,12 @@ export function PdfReader() {
             t("未授予网站访问权限。", "Site permission was not granted."),
           );
       }
-      await loadTask.current?.destroy();
-      loadTask.current = undefined;
       const bytes = file
         ? await readLocalPdf(file)
         : await readRemotePdf(remote!, signal);
-      if (token !== generation.current) return;
+      if (!session.current.isCurrent(token)) return;
       const hash = await pdfHash(bytes);
-      if (token !== generation.current) return;
+      if (!session.current.isCurrent(token)) return;
       const api = await import("pdfjs-dist/legacy/build/pdf.mjs");
       api.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
         "/pdfjs/pdf.worker.min.mjs",
@@ -277,21 +382,19 @@ export function PdfReader() {
         maxImageSize: 16777216,
         canvasMaxAreaInBytes: 67108864,
       });
-      loadTask.current = task;
+      session.current.setTask(token, task);
       task.onPassword = () => {
+        if (!session.current.isCurrent(token)) return;
         setError(
           t(
             "加密 PDF 暂不支持，请先解锁文件。",
             "Encrypted PDFs are not supported; unlock the file first.",
           ),
         );
-        void task.destroy();
+        void session.current.disposeCurrent();
       };
       const doc = await task.promise;
-      if (token !== generation.current) {
-        await task.destroy();
-        return;
-      }
+      if (!session.current.isCurrent(token)) return;
       const fileName =
         file?.name ||
         decodeURIComponent(
@@ -302,7 +405,7 @@ export function PdfReader() {
         request<Annotation[]>({ type: "annotations.list", pageUrl }),
         request<PageMode>({ type: "page.mode.get", pageUrl }),
       ]);
-      if (token !== generation.current) return;
+      if (!session.current.isCurrent(token)) return;
       setOpened({
         document: doc,
         api,
@@ -310,6 +413,8 @@ export function PdfReader() {
         fileName,
         ...(remote ? { sourceUrl: remote } : {}),
       });
+      documentSessionRef.current++;
+      setDocumentSession(documentSessionRef.current);
       setRecords(all.filter(isPdf));
       setEnabled(mode.enabled);
       setArea(false);
@@ -330,7 +435,7 @@ export function PdfReader() {
             r.target.documentHash !== hash,
         );
       }
-      if (token === generation.current && changed)
+      if (session.current.isCurrent(token) && changed)
         setNotice(
           t(
             "文档版本已变化：旧标注已保留，没有套用到这份文件。",
@@ -338,29 +443,30 @@ export function PdfReader() {
           ),
         );
     } catch (cause) {
-      if (token === generation.current && !signal.aborted) {
+      if (token && session.current.isCurrent(token) && !signal?.aborted) {
         setError(errorText(cause));
-        await loadTask.current?.destroy().catch(() => undefined);
-        loadTask.current = undefined;
+        await session.current.disposeCurrent();
       }
     } finally {
-      if (token === generation.current) setBusy(false);
+      if (token && session.current.isCurrent(token)) setBusy(false);
     }
   }
   async function toggle() {
     if (!key || unsaved || saving || removing) return;
+    const active = documentSession;
     try {
       const mode = await request<PageMode>({
         type: "page.mode.put",
         pageUrl: key,
         enabled: !enabled,
       });
+      if (active !== documentSessionRef.current) return;
       setEnabled(mode.enabled);
       setSelection(undefined);
       setPicked(undefined);
       setArea(false);
     } catch (cause) {
-      setError(errorText(cause));
+      if (active === documentSessionRef.current) setError(errorText(cause));
     }
   }
   async function save(record: PdfAnnotation) {
@@ -368,41 +474,49 @@ export function PdfReader() {
     setSaving(true);
     setUnsaved(record);
     setError("");
+    const active = documentSession;
     try {
       const stored = await request<PdfAnnotation>({
         type: "annotations.put",
         annotation: record,
         expectedRevision: record.revision,
       });
+      if (active !== documentSessionRef.current) return;
       setRecords((old) => [...old.filter((r) => r.id !== stored.id), stored]);
       setUnsaved(undefined);
       setSelection(undefined);
       getSelection()?.removeAllRanges();
       tell(t("已保存到本机", "Saved on this device"));
     } catch (cause) {
-      setError(errorText(cause));
+      if (active === documentSessionRef.current) setError(errorText(cause));
     } finally {
-      setSaving(false);
+      if (active === documentSessionRef.current) setSaving(false);
     }
   }
   async function remove(record: PdfAnnotation) {
     if (removing || saving || unsaved || record.pageUrl !== key) return;
     setRemoving(true);
     setError("");
+    const active = documentSession;
     try {
       await request({
         type: "annotations.delete",
         id: record.id,
         expectedRevision: record.revision,
       });
+      if (active !== documentSessionRef.current) return;
       setRecords((old) => old.filter((item) => item.id !== record.id));
+      setNoteDrafts((current) => {
+        const { [record.id]: _removed, ...rest } = current;
+        return rest;
+      });
       setPicked((current) => (current?.id === record.id ? undefined : current));
       setUndoRecord(record);
       tell(t("已移除标注，可撤销。", "Annotation removed. Undo is available."));
     } catch (cause) {
-      setError(errorText(cause));
+      if (active === documentSessionRef.current) setError(errorText(cause));
     } finally {
-      setRemoving(false);
+      if (active === documentSessionRef.current) setRemoving(false);
     }
   }
   async function restoreRemoved() {
@@ -416,11 +530,13 @@ export function PdfReader() {
       return;
     setRemoving(true);
     setError("");
+    const active = documentSession;
     try {
       const restored = await request<PdfAnnotation>({
         type: "annotations.restore",
         annotation: { ...undoRecord, updatedAt: new Date().toISOString() },
       });
+      if (active !== documentSessionRef.current) return;
       setRecords((old) => [
         ...old.filter((item) => item.id !== restored.id),
         restored,
@@ -428,9 +544,9 @@ export function PdfReader() {
       setUndoRecord(undefined);
       tell(t("标注已恢复。", "Annotation restored."));
     } catch (cause) {
-      setError(errorText(cause));
+      if (active === documentSessionRef.current) setError(errorText(cause));
     } finally {
-      setRemoving(false);
+      if (active === documentSessionRef.current) setRemoving(false);
     }
   }
   function mark(
@@ -469,7 +585,7 @@ export function PdfReader() {
       end: Math.min(opened.document.numPages, page + 2),
     });
     container.current?.scrollTo({
-      top: layout[page - 1] ?? 0,
+      top: layoutIndex.current.offsetBefore(page),
       behavior: "instant",
     });
   }
@@ -540,6 +656,20 @@ export function PdfReader() {
                 {t("放弃本次修改", "Discard change")}
               </button>
             </>
+          ) : hasNoteDrafts ? (
+            <>
+              <button
+                onClick={() => {
+                  setNoteDrafts({});
+                  setError("");
+                }}
+              >
+                {t("放弃笔记草稿", "Discard note drafts")}
+              </button>
+              <button onClick={() => setError("")}>
+                {t("关闭", "Dismiss")}
+              </button>
+            </>
           ) : (
             <button onClick={() => setError("")}>{t("关闭", "Dismiss")}</button>
           )}
@@ -579,7 +709,7 @@ export function PdfReader() {
               disabled={zoom <= 0.5}
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});
+                dimensions.current.clear();
                 setZoom((z) => Math.max(0.5, z - 0.25));
               }}
             >
@@ -591,7 +721,7 @@ export function PdfReader() {
               disabled={zoom >= 3}
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});
+                dimensions.current.clear();
                 setZoom((z) => Math.min(3, z + 0.25));
               }}
             >
@@ -600,7 +730,7 @@ export function PdfReader() {
             <button
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});
+                dimensions.current.clear();
                 setRotation((r) => (r + 90) % 360);
               }}
             >
@@ -713,7 +843,11 @@ export function PdfReader() {
             >
               <div
                 aria-hidden="true"
-                style={{ height: layout[pageWindow.start] ?? 0 }}
+                style={{
+                  height: layoutIndex.current.offsetBefore(
+                    pageWindow.start + 1,
+                  ),
+                }}
               />
               {Array.from(
                 {
@@ -728,8 +862,8 @@ export function PdfReader() {
                   data-page={n}
                   key={`${opened.hash}-${n}`}
                   style={{
-                    width: dimensions[n]?.width || 612 * zoom,
-                    height: dimensions[n]?.height || 792 * zoom,
+                    width: dimensions.current.get(n)?.width || 612 * zoom,
+                    height: dimensions.current.get(n)?.height || 792 * zoom,
                   }}
                 >
                   {
@@ -738,28 +872,24 @@ export function PdfReader() {
                       number={n}
                       zoom={zoom}
                       rotation={rotation}
-                      records={
-                        enabled
-                          ? records.filter((r) => r.target.pageNumber === n)
-                          : []
-                      }
+                      records={enabled ? (recordsByPage.get(n) ?? []) : []}
                       enabled={enabled}
                       area={area}
                       color={color}
+                      measurementGeneration={measurementGeneration}
                       onSelection={setSelection}
                       onPick={(record) => {
                         setPicked(record);
                         setSelection(undefined);
                       }}
                       onArea={(target) => mark(target, "pdf-area")}
-                      onDimensions={(width, height) =>
-                        setDimensions((old) =>
-                          old[n]?.width === width && old[n]?.height === height
-                            ? old
-                            : { ...old, [n]: { width, height } },
-                        )
+                      onDimensions={(generation, width, height) =>
+                        onPageDimensions(n, generation, width, height)
                       }
-                      onError={setError}
+                      onError={(message) => {
+                        if (documentSession === documentSessionRef.current)
+                          setError(message);
+                      }}
                     />
                   }
                 </div>
@@ -769,10 +899,10 @@ export function PdfReader() {
                 style={{
                   height: Math.max(
                     0,
-                    (layout.at(-1) ?? 0) -
-                      (layout[
-                        Math.min(pageWindow.end, opened.document.numPages)
-                      ] ?? 0),
+                    layoutIndex.current.totalHeight() -
+                      layoutIndex.current.offsetBefore(
+                        Math.min(pageWindow.end, opened.document.numPages) + 1,
+                      ),
                   ),
                 }}
               />
@@ -789,24 +919,36 @@ export function PdfReader() {
                   )}
                 </p>
               )}
-              {records
-                .slice()
-                .sort(
-                  (a, b) =>
-                    a.target.pageNumber - b.target.pageNumber ||
-                    a.createdAt.localeCompare(b.createdAt),
-                )
-                .map((r) => (
-                  <PdfNote
-                    key={r.id}
-                    record={r}
-                    language={settings.language}
-                    onJump={() => jump(r.target.pageNumber)}
-                    onError={setError}
-                    onRemove={remove}
-                    removing={removing}
-                  />
-                ))}
+              {sortedNotes.slice(0, notesLimit).map((r) => (
+                <PdfNote
+                  key={r.id}
+                  record={r}
+                  language={settings.language}
+                  onJump={() => jump(r.target.pageNumber)}
+                  onError={(message) => {
+                    if (documentSession === documentSessionRef.current)
+                      setError(message);
+                  }}
+                  onRemove={remove}
+                  removing={removing}
+                  draft={noteDrafts[r.id]}
+                  onDraft={(draft) =>
+                    setNoteDrafts((current) => ({ ...current, [r.id]: draft }))
+                  }
+                  onClearDraft={() => {
+                    if (documentSession !== documentSessionRef.current) return;
+                    setNoteDrafts((current) => {
+                      const { [r.id]: _removed, ...rest } = current;
+                      return rest;
+                    });
+                  }}
+                />
+              ))}
+              {notesLimit < sortedNotes.length && (
+                <button onClick={() => setNotesLimit((limit) => limit + 50)}>
+                  {t("加载更多", "Load more")}
+                </button>
+              )}
             </aside>
           </div>
         </>
