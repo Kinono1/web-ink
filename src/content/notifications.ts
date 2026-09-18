@@ -1,4 +1,4 @@
-export type NotificationKind = 'info' | 'success' | 'error';
+export type NotificationKind = "info" | "success" | "error";
 
 export interface NotificationAction {
   label: string;
@@ -41,14 +41,17 @@ export function createNotifications(container: HTMLElement): Notifications {
   const seenPassive = new Set<string>();
 
   const clearTimer = () => {
-    if (timeout !== undefined) { clearTimeout(timeout); timeout = undefined; }
+    if (timeout !== undefined) {
+      clearTimeout(timeout);
+      timeout = undefined;
+    }
   };
   const hide = () => {
     clearTimer();
     active = undefined;
     container.replaceChildren();
-    container.classList.remove('error');
-    container.style.display = 'none';
+    container.classList.remove("error");
+    container.style.display = "none";
   };
   const dismiss = () => {
     if (active?.passive && active.key) dismissedPassive.add(active.key);
@@ -56,11 +59,12 @@ export function createNotifications(container: HTMLElement): Notifications {
   };
   const show = (message: string, options: NotificationOptions = {}) => {
     if (disposed) return;
-    const kind = options.kind ?? 'info';
+    const kind = options.kind ?? "info";
     const passive = options.passive === true;
     const sticky = options.sticky === true;
     const key = options.key;
-    if (passive && key && (dismissedPassive.has(key) || seenPassive.has(key))) return;
+    if (passive && key && (dismissedPassive.has(key) || seenPassive.has(key)))
+      return;
     // A background refresh must never replace the retry/discard affordance of a failed save.
     if (passive && active?.sticky) return;
     // Repeated status publication should not redraw or extend its own timer.
@@ -69,30 +73,42 @@ export function createNotifications(container: HTMLElement): Notifications {
     clearTimer();
     active = { ...(key === undefined ? {} : { key }), passive, sticky };
     container.replaceChildren();
-    container.classList.toggle('error', kind === 'error');
-    container.style.display = 'block';
+    container.classList.toggle("error", kind === "error");
+    container.style.display = "block";
     const text = document.createTextNode(message);
     container.append(text);
     for (const action of options.actions ?? []) {
-      const button = document.createElement('button');
-      button.type = 'button'; button.textContent = action.label;
-      button.addEventListener('click', action.run);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = action.label;
+      button.addEventListener("click", action.run);
       container.append(button);
     }
-    const close = document.createElement('button');
-    close.type = 'button'; close.textContent = '×'; close.setAttribute('aria-label', options.dismissLabel ?? 'Dismiss');
-    close.addEventListener('click', dismiss);
+    const close = document.createElement("button");
+    close.type = "button";
+    close.textContent = "×";
+    close.setAttribute("aria-label", options.dismissLabel ?? "Dismiss");
+    close.addEventListener("click", dismiss);
     container.append(close);
     // Record only after rendering: a passive event blocked by a sticky save failure
     // must remain eligible to appear once that user-facing failure is resolved.
     if (passive && key) seenPassive.add(key);
 
     if (!sticky) {
-      timeout = setTimeout(hide, kind === 'success' ? SUCCESS_MS : INFO_MS);
+      timeout = setTimeout(hide, kind === "success" ? SUCCESS_MS : INFO_MS);
     }
   };
-  const resetScope = () => { dismissedPassive.clear(); seenPassive.clear(); hide(); };
-  const dispose = () => { disposed = true; dismissedPassive.clear(); seenPassive.clear(); hide(); };
+  const resetScope = () => {
+    dismissedPassive.clear();
+    seenPassive.clear();
+    hide();
+  };
+  const dispose = () => {
+    disposed = true;
+    dismissedPassive.clear();
+    seenPassive.clear();
+    hide();
+  };
   hide();
   return { show, hide, resetScope, dispose };
 }

@@ -278,7 +278,10 @@ export default defineBackground(() => {
           trusted,
           pageUrl: contentPage,
         });
-        if (result.ok && (type === "annotations.put" || type === "annotations.restore")) {
+        if (
+          result.ok &&
+          (type === "annotations.put" || type === "annotations.restore")
+        ) {
           const annotation = result.data as Annotation;
           void broadcast(
             {

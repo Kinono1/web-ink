@@ -1,19 +1,30 @@
 /** Durable, versioned records. DOM nodes and viewport coordinates never enter storage. */
 export const SCHEMA_VERSION = 2 as const;
-export const COLORS = ['#facc15', '#4ade80', '#38bdf8', '#c084fc', '#fb7185', '#fb923c'] as const;
-export type Language = 'zh-CN' | 'en';
+export const COLORS = [
+  "#facc15",
+  "#4ade80",
+  "#38bdf8",
+  "#c084fc",
+  "#fb7185",
+  "#fb923c",
+] as const;
+export type Language = "zh-CN" | "en";
 export interface Settings {
   language: Language;
   defaultColor: string;
   disabledOrigins: string[];
   /** Optional for compatibility with v1 settings stored in chrome.storage.local. */
-  theme?: 'system' | 'light' | 'dark';
+  theme?: "system" | "light" | "dark";
   reduceMotion?: boolean;
   reduceTransparency?: boolean;
 }
 export const DEFAULT_SETTINGS: Settings = {
-  language: 'zh-CN', defaultColor: COLORS[0], disabledOrigins: [],
-  theme: 'system', reduceMotion: false, reduceTransparency: false,
+  language: "zh-CN",
+  defaultColor: COLORS[0],
+  disabledOrigins: [],
+  theme: "system",
+  reduceMotion: false,
+  reduceTransparency: false,
 };
 export interface TextTarget {
   exact: string;
@@ -37,8 +48,12 @@ export interface ImageTarget {
   /** Nearby caption/paragraph is a disambiguation hint, never an ordinal-only fallback. */
   context: string;
 }
-export interface Point { x: number; y: number; pressure?: number }
-export type ShapeKind = 'rectangle' | 'ellipse' | 'arrow' | 'pen';
+export interface Point {
+  x: number;
+  y: number;
+  pressure?: number;
+}
+export type ShapeKind = "rectangle" | "ellipse" | "arrow" | "pen";
 export interface ImageShape {
   kind: ShapeKind;
   /** Coordinates relative to intrinsic image content, constrained to [0,1]. */
@@ -57,10 +72,22 @@ export interface AnnotationBase {
   updatedAt: string;
   revision: number;
 }
-export interface TextAnnotation extends AnnotationBase { kind: 'text'; target: TextTarget }
-export interface ImageAnnotation extends AnnotationBase { kind: 'image'; target: ImageTarget; shape: ImageShape }
+export interface TextAnnotation extends AnnotationBase {
+  kind: "text";
+  target: TextTarget;
+}
+export interface ImageAnnotation extends AnnotationBase {
+  kind: "image";
+  target: ImageTarget;
+  shape: ImageShape;
+}
 /** Coordinates in the unrotated PDF page viewBox, normalized to [0,1]. */
-export interface PdfRect { x: number; y: number; width: number; height: number }
+export interface PdfRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
 export interface PdfTarget {
   /** SHA-256 hex of the exact PDF bytes; URL equality alone never identifies a document. */
   documentHash: string;
@@ -72,13 +99,30 @@ export interface PdfTarget {
   prefix: string;
   suffix: string;
 }
-export interface PdfTextAnnotation extends AnnotationBase { kind: 'pdf-text'; target: PdfTarget }
-export interface PdfAreaAnnotation extends AnnotationBase { kind: 'pdf-area'; target: PdfTarget }
-export type Annotation = TextAnnotation | ImageAnnotation | PdfTextAnnotation | PdfAreaAnnotation;
-export interface PageRecord { url: string; title: string; updatedAt: string; enabled?: boolean }
-export interface PageMode { enabled: boolean }
+export interface PdfTextAnnotation extends AnnotationBase {
+  kind: "pdf-text";
+  target: PdfTarget;
+}
+export interface PdfAreaAnnotation extends AnnotationBase {
+  kind: "pdf-area";
+  target: PdfTarget;
+}
+export type Annotation =
+  | TextAnnotation
+  | ImageAnnotation
+  | PdfTextAnnotation
+  | PdfAreaAnnotation;
+export interface PageRecord {
+  url: string;
+  title: string;
+  updatedAt: string;
+  enabled?: boolean;
+}
+export interface PageMode {
+  enabled: boolean;
+}
 export interface BackupEnvelope {
-  format: 'web-ink';
+  format: "web-ink";
   schemaVersion: typeof SCHEMA_VERSION;
   exportedAt: string;
   annotations: Annotation[];
@@ -86,19 +130,31 @@ export interface BackupEnvelope {
 }
 /** Read-only compatibility shape accepted at import; exports are always schema v2. */
 export interface BackupEnvelopeV1 {
-  format: 'web-ink';
+  format: "web-ink";
   schemaVersion: 1;
   exportedAt: string;
   annotations: Array<TextAnnotation | ImageAnnotation>;
   settings?: Settings;
 }
-export type AnchorStatus = 'located' | 'pending' | 'unresolved' | 'unsupported';
-export interface AnchorState { id: string; status: AnchorStatus; reason?: string }
-export interface ImportPreview { added: number; identical: number; conflicts: number; total: number }
-export interface AnnotationCursor { updatedAt: string; id: string }
+export type AnchorStatus = "located" | "pending" | "unresolved" | "unsupported";
+export interface AnchorState {
+  id: string;
+  status: AnchorStatus;
+  reason?: string;
+}
+export interface ImportPreview {
+  added: number;
+  identical: number;
+  conflicts: number;
+  total: number;
+}
+export interface AnnotationCursor {
+  updatedAt: string;
+  id: string;
+}
 export interface AnnotationQuery {
   pageUrl?: string;
-  kind?: Annotation['kind'];
+  kind?: Annotation["kind"];
   color?: string;
   tag?: string;
   text?: string;
@@ -108,7 +164,11 @@ export interface AnnotationQuery {
   /** UI-generated token. Use annotations.query.cancel to stop an obsolete scan. */
   requestId?: string;
 }
-export interface AnnotationPage { items: Annotation[]; nextCursor?: AnnotationCursor; cancelled?: boolean }
+export interface AnnotationPage {
+  items: Annotation[];
+  nextCursor?: AnnotationCursor;
+  cancelled?: boolean;
+}
 export interface StorageStats {
   annotationCount: number;
   textCount: number;
@@ -125,30 +185,50 @@ export interface StorageStats {
   backupRecordLimit: number;
   storageWarningBytes: number;
 }
-export type Result<T> = { ok: true; data: T } | { ok: false; error: string; code?: string };
+export type Result<T> =
+  | { ok: true; data: T }
+  | { ok: false; error: string; code?: string };
 export type Request =
-  | { type: 'annotations.list'; pageUrl?: string }
-  | { type: 'annotations.put'; annotation: Annotation; expectedRevision: number }
+  | { type: "annotations.list"; pageUrl?: string }
+  | {
+      type: "annotations.put";
+      annotation: Annotation;
+      expectedRevision: number;
+    }
   /** Restore a just-deleted identity through its tombstone; never use put(expectedRevision: 0). */
-  | { type: 'annotations.restore'; annotation: Annotation }
-  | { type: 'annotations.delete'; id: string; expectedRevision: number }
-  | { type: 'annotations.query'; query: AnnotationQuery }
-  | { type: 'annotations.query.cancel'; requestId: string }
-  | { type: 'engine.ensure'; pageUrl: string }
-  | { type: 'settings.get' }
-  | { type: 'settings.put'; settings: Settings }
-  | { type: 'page.mode.get'; pageUrl: string }
-  | { type: 'page.mode.put'; pageUrl: string; enabled: boolean }
-  | { type: 'storage.stats'; recalculate?: boolean }
-  | { type: 'backup.export' }
-  | { type: 'backup.preview'; backup: unknown }
-  | { type: 'backup.import'; backup: unknown; overwrite: boolean }
-  | { type: 'page.states'; states: AnchorState[]; pageUrl: string }
-  | { type: 'page.state.get'; tabId: number }
-  | { type: 'page.action'; tabId: number; action: 'focus' | 'rebind' | 'draw' | 'refresh'; id?: string }
-  | { type: 'permissions.enable' };
+  | { type: "annotations.restore"; annotation: Annotation }
+  | { type: "annotations.delete"; id: string; expectedRevision: number }
+  | { type: "annotations.query"; query: AnnotationQuery }
+  | { type: "annotations.query.cancel"; requestId: string }
+  | { type: "engine.ensure"; pageUrl: string }
+  | { type: "settings.get" }
+  | { type: "settings.put"; settings: Settings }
+  | { type: "page.mode.get"; pageUrl: string }
+  | { type: "page.mode.put"; pageUrl: string; enabled: boolean }
+  | { type: "storage.stats"; recalculate?: boolean }
+  | { type: "backup.export" }
+  | { type: "backup.preview"; backup: unknown }
+  | { type: "backup.import"; backup: unknown; overwrite: boolean }
+  | { type: "page.states"; states: AnchorState[]; pageUrl: string }
+  | { type: "page.state.get"; tabId: number }
+  | {
+      type: "page.action";
+      tabId: number;
+      action: "focus" | "rebind" | "draw" | "refresh";
+      id?: string;
+    }
+  | { type: "permissions.enable" };
 export type Notification =
-  | { type: 'annotations.changed'; pageUrl?: string; annotation?: Annotation; deletedId?: string }
-  | { type: 'settings.changed' }
-  | { type: 'page.mode.changed'; pageUrl: string }
-  | { type: 'page.action.execute'; action: 'focus' | 'rebind' | 'draw' | 'refresh'; id?: string };
+  | {
+      type: "annotations.changed";
+      pageUrl?: string;
+      annotation?: Annotation;
+      deletedId?: string;
+    }
+  | { type: "settings.changed" }
+  | { type: "page.mode.changed"; pageUrl: string }
+  | {
+      type: "page.action.execute";
+      action: "focus" | "rebind" | "draw" | "refresh";
+      id?: string;
+    };

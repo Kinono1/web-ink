@@ -1,9 +1,9 @@
-import { startBootstrap } from '../src/content/bootstrap';
+import { startBootstrap } from "../src/content/bootstrap";
 
 export default defineContentScript({
-  matches: ['http://*/*', 'https://*/*'],
-  registration: 'runtime',
-  runAt: 'document_idle',
+  matches: ["http://*/*", "https://*/*"],
+  registration: "runtime",
+  runAt: "document_idle",
   allFrames: false,
   main(ctx) {
     const dispose = startBootstrap();

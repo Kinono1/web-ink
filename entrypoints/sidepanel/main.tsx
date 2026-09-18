@@ -1,2 +1,2 @@
-import { mountManagementApp } from '../../src/ui/ManagementApp';
-mountManagementApp(document.getElementById('root')!, 'sidepanel');
+import { mountManagementApp } from "../../src/ui/ManagementApp";
+mountManagementApp(document.getElementById("root")!, "sidepanel");

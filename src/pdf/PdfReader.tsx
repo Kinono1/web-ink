@@ -1,3 +1,11 @@
+import { PdfPage } from "./PdfPage";
+import { PdfNote } from "./PdfNote";
+import {
+  errorText,
+  type PdfAnnotation,
+  type OpenDocument,
+  type SelectionTarget,
+} from "./types";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   PDFDocumentProxy,
@@ -27,27 +35,9 @@ import "pdfjs-dist/web/pdf_viewer.css";
 import "../ui/management.css";
 import "./pdf.css";
 
-type PdfAnnotation = PdfTextAnnotation | PdfAreaAnnotation;
-type PdfApi = typeof import("pdfjs-dist");
-type SelectionTarget = {
-  pageNumber: number;
-  rects: PdfRect[];
-  exact: string;
-  prefix: string;
-  suffix: string;
-};
-type OpenDocument = {
-  document: PDFDocumentProxy;
-  api: PdfApi;
-  hash: string;
-  fileName: string;
-  sourceUrl?: string;
-};
 const isPdf = (record: Annotation): record is PdfAnnotation =>
   record.kind === "pdf-text" || record.kind === "pdf-area";
 const initialParams = new URLSearchParams(location.search);
-const errorText = (cause: unknown) =>
-  cause instanceof Error ? cause.message : String(cause);
 
 export function PdfReader() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -181,10 +171,12 @@ export function PdfReader() {
     if (!opened || !scroller) return;
     let frame = 0;
     const findPage = (position: number) => {
-      let low = 0, high = opened.document.numPages - 1;
+      let low = 0,
+        high = opened.document.numPages - 1;
       while (low < high) {
         const mid = Math.ceil((low + high) / 2);
-        if (layout[mid]! <= position) low = mid; else high = mid - 1;
+        if (layout[mid]! <= position) low = mid;
+        else high = mid - 1;
       }
       return low;
     };
@@ -192,15 +184,25 @@ export function PdfReader() {
       frame = 0;
       const first = findPage(Math.max(0, scroller.scrollTop - 24));
       const last = findPage(scroller.scrollTop + scroller.clientHeight);
-      const start = Math.max(0, first - 1), end = Math.min(opened.document.numPages, last + 2);
-      setPageWindow(old => old.start === start && old.end === end ? old : { start, end });
+      const start = Math.max(0, first - 1),
+        end = Math.min(opened.document.numPages, last + 2);
+      setPageWindow((old) =>
+        old.start === start && old.end === end ? old : { start, end },
+      );
       setPageNumber(first + 1);
     };
-    const scroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    const scroll = () => {
+      if (!frame) frame = requestAnimationFrame(update);
+    };
     const resize = new ResizeObserver(scroll);
-    scroller.addEventListener('scroll', scroll, { passive: true });
-    resize.observe(scroller);update();
-    return () => { scroller.removeEventListener('scroll', scroll); resize.disconnect(); cancelAnimationFrame(frame); };
+    scroller.addEventListener("scroll", scroll, { passive: true });
+    resize.observe(scroller);
+    update();
+    return () => {
+      scroller.removeEventListener("scroll", scroll);
+      resize.disconnect();
+      cancelAnimationFrame(frame);
+    };
   }, [opened, layout]);
   async function openPdf(file?: File) {
     if (unsaved || saving || removing) {
@@ -388,9 +390,13 @@ export function PdfReader() {
     setRemoving(true);
     setError("");
     try {
-      await request({ type: "annotations.delete", id: record.id, expectedRevision: record.revision });
+      await request({
+        type: "annotations.delete",
+        id: record.id,
+        expectedRevision: record.revision,
+      });
       setRecords((old) => old.filter((item) => item.id !== record.id));
-      setPicked((current) => current?.id === record.id ? undefined : current);
+      setPicked((current) => (current?.id === record.id ? undefined : current));
       setUndoRecord(record);
       tell(t("已移除标注，可撤销。", "Annotation removed. Undo is available."));
     } catch (cause) {
@@ -400,7 +406,14 @@ export function PdfReader() {
     }
   }
   async function restoreRemoved() {
-    if (!undoRecord || removing || saving || unsaved || undoRecord.pageUrl !== key) return;
+    if (
+      !undoRecord ||
+      removing ||
+      saving ||
+      unsaved ||
+      undoRecord.pageUrl !== key
+    )
+      return;
     setRemoving(true);
     setError("");
     try {
@@ -408,7 +421,10 @@ export function PdfReader() {
         type: "annotations.restore",
         annotation: { ...undoRecord, updatedAt: new Date().toISOString() },
       });
-      setRecords((old) => [...old.filter((item) => item.id !== restored.id), restored]);
+      setRecords((old) => [
+        ...old.filter((item) => item.id !== restored.id),
+        restored,
+      ]);
       setUndoRecord(undefined);
       tell(t("标注已恢复。", "Annotation restored."));
     } catch (cause) {
@@ -448,8 +464,14 @@ export function PdfReader() {
     if (!opened) return;
     const page = Math.min(opened.document.numPages, Math.max(1, n));
     setPageNumber(page);
-    setPageWindow({start: Math.max(0, page - 2), end: Math.min(opened.document.numPages, page + 2)});
-    container.current?.scrollTo({top: layout[page - 1] ?? 0, behavior: 'instant'});
+    setPageWindow({
+      start: Math.max(0, page - 2),
+      end: Math.min(opened.document.numPages, page + 2),
+    });
+    container.current?.scrollTo({
+      top: layout[page - 1] ?? 0,
+      behavior: "instant",
+    });
   }
   return (
     <main className="pdf-app">
@@ -557,7 +579,8 @@ export function PdfReader() {
               disabled={zoom <= 0.5}
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});setZoom((z) => Math.max(0.5, z - 0.25));
+                setDimensions({});
+                setZoom((z) => Math.max(0.5, z - 0.25));
               }}
             >
               −
@@ -568,7 +591,8 @@ export function PdfReader() {
               disabled={zoom >= 3}
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});setZoom((z) => Math.min(3, z + 0.25));
+                setDimensions({});
+                setZoom((z) => Math.min(3, z + 0.25));
               }}
             >
               +
@@ -576,7 +600,8 @@ export function PdfReader() {
             <button
               onClick={() => {
                 setSelection(undefined);
-                setDimensions({});setRotation((r) => (r + 90) % 360);
+                setDimensions({});
+                setRotation((r) => (r + 90) % 360);
               }}
             >
               {t("旋转", "Rotate")}
@@ -634,23 +659,43 @@ export function PdfReader() {
               >
                 {t("应用当前颜色", "Use current color")}
               </button>
-              <button onClick={() => { setSelection(undefined); getSelection()?.removeAllRanges(); }}>
+              <button
+                onClick={() => {
+                  setSelection(undefined);
+                  getSelection()?.removeAllRanges();
+                }}
+              >
                 {t("取消", "Cancel")}
               </button>
             </div>
           )}
           {picked && enabled && (
             <div className="pdf-mark-menu" role="status">
-              <span>{picked.kind === "pdf-text" ? t("文字标注", "Text annotation") : t("区域标注", "Area annotation")}</span>
-              <button disabled={removing} onClick={() => void remove(picked)}>{t("取消标注", "Remove annotation")}</button>
-              <button disabled={removing} onClick={() => setPicked(undefined)}>{t("关闭", "Close")}</button>
+              <span>
+                {picked.kind === "pdf-text"
+                  ? t("文字标注", "Text annotation")
+                  : t("区域标注", "Area annotation")}
+              </span>
+              <button disabled={removing} onClick={() => void remove(picked)}>
+                {t("取消标注", "Remove annotation")}
+              </button>
+              <button disabled={removing} onClick={() => setPicked(undefined)}>
+                {t("关闭", "Close")}
+              </button>
             </div>
           )}
           {undoRecord && (
             <div className="pdf-undo" role="status">
               <span>{t("标注已移除。", "Annotation removed.")}</span>
-              <button disabled={removing} onClick={() => void restoreRemoved()}>{t("撤销移除", "Undo remove")}</button>
-              <button disabled={removing} onClick={() => setUndoRecord(undefined)}>{t("关闭", "Close")}</button>
+              <button disabled={removing} onClick={() => void restoreRemoved()}>
+                {t("撤销移除", "Undo remove")}
+              </button>
+              <button
+                disabled={removing}
+                onClick={() => setUndoRecord(undefined)}
+              >
+                {t("关闭", "Close")}
+              </button>
             </div>
           )}
           <div className="pdf-workspace">
@@ -666,9 +711,16 @@ export function PdfReader() {
                 }
               }}
             >
-              <div aria-hidden="true" style={{height:layout[pageWindow.start] ?? 0}} />
+              <div
+                aria-hidden="true"
+                style={{ height: layout[pageWindow.start] ?? 0 }}
+              />
               {Array.from(
-                { length: Math.min(pageWindow.end, opened.document.numPages) - pageWindow.start },
+                {
+                  length:
+                    Math.min(pageWindow.end, opened.document.numPages) -
+                    pageWindow.start,
+                },
                 (_, i) => i + pageWindow.start + 1,
               ).map((n) => (
                 <div
@@ -680,7 +732,7 @@ export function PdfReader() {
                     height: dimensions[n]?.height || 792 * zoom,
                   }}
                 >
-                  {(
+                  {
                     <PdfPage
                       opened={opened}
                       number={n}
@@ -695,7 +747,10 @@ export function PdfReader() {
                       area={area}
                       color={color}
                       onSelection={setSelection}
-                      onPick={(record) => { setPicked(record); setSelection(undefined); }}
+                      onPick={(record) => {
+                        setPicked(record);
+                        setSelection(undefined);
+                      }}
                       onArea={(target) => mark(target, "pdf-area")}
                       onDimensions={(width, height) =>
                         setDimensions((old) =>
@@ -706,10 +761,21 @@ export function PdfReader() {
                       }
                       onError={setError}
                     />
-                  )}
+                  }
                 </div>
               ))}
-              <div aria-hidden="true" style={{height:Math.max(0, (layout.at(-1) ?? 0) - (layout[Math.min(pageWindow.end, opened.document.numPages)] ?? 0))}} />
+              <div
+                aria-hidden="true"
+                style={{
+                  height: Math.max(
+                    0,
+                    (layout.at(-1) ?? 0) -
+                      (layout[
+                        Math.min(pageWindow.end, opened.document.numPages)
+                      ] ?? 0),
+                  ),
+                }}
+              />
             </div>
             <aside className="pdf-notes">
               <h2>
@@ -773,412 +839,5 @@ export function PdfReader() {
         </section>
       )}
     </main>
-  );
-}
-
-function PdfPage({
-  opened,
-  number,
-  zoom,
-  rotation,
-  records,
-  enabled,
-  area,
-  color,
-  onSelection,
-  onPick,
-  onArea,
-  onDimensions,
-  onError,
-}: {
-  opened: OpenDocument;
-  number: number;
-  zoom: number;
-  rotation: number;
-  records: PdfAnnotation[];
-  enabled: boolean;
-  area: boolean;
-  color: string;
-  onSelection: (v: SelectionTarget | undefined) => void;
-  onPick: (record: PdfAnnotation) => void;
-  onArea: (v: SelectionTarget) => void;
-  onDimensions: (w: number, h: number) => void;
-  onError: (e: string) => void;
-}) {
-  const root = useRef<HTMLDivElement>(null),
-    canvas = useRef<HTMLCanvasElement>(null),
-    text = useRef<HTMLDivElement>(null),
-    drag = useRef<{ x: number; y: number; pointer: number } | undefined>(
-      undefined,
-    );
-  const [geometry, setGeometry] = useState<{
-      viewport: PageViewport;
-      box: number[];
-    }>(),
-    [preview, setPreview] = useState<PdfRect>();
-  const callbacks = useRef({ onDimensions, onError });
-  callbacks.current = { onDimensions, onError };
-  useEffect(() => {
-    let dead = false;
-    let page: PDFPageProxy | undefined,
-      render: RenderTask | undefined,
-      layer: InstanceType<PdfApi["TextLayer"]> | undefined;
-    setGeometry(undefined);
-    if (root.current) root.current.dataset.ready = "false";
-    void (async () => {
-      try {
-        page = await opened.document.getPage(number);
-        if (dead) return;
-        const viewport = page.getViewport({
-          scale: zoom,
-          rotation: (page.rotate + rotation) % 360,
-        });
-        const ratio = Math.min(
-          devicePixelRatio || 1,
-          2,
-          Math.sqrt(16777216 / (viewport.width * viewport.height)),
-        );
-        const c = canvas.current!,
-          layerRoot = text.current!;
-        c.width = Math.floor(viewport.width * ratio);
-        c.height = Math.floor(viewport.height * ratio);
-        c.style.width = `${viewport.width}px`;
-        c.style.height = `${viewport.height}px`;
-        root.current!.style.setProperty(
-          "--total-scale-factor",
-          String(viewport.scale),
-        );
-        root.current!.style.setProperty(
-          "--scale-factor",
-          String(viewport.scale),
-        );
-        callbacks.current.onDimensions(viewport.width, viewport.height);
-        setGeometry({ viewport, box: page.view });
-        render = page.render({
-          canvas: c,
-          viewport,
-          transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
-        });
-        await render.promise;
-        if (dead) return;
-        layerRoot.replaceChildren();
-        layer = new opened.api.TextLayer({
-          textContentSource: page.streamTextContent(),
-          container: layerRoot,
-          viewport,
-        });
-        await layer.render();
-        if (!dead) root.current!.dataset.ready = "true";
-      } catch (cause) {
-        if (
-          !dead &&
-          !(
-            cause instanceof Error &&
-            cause.name === "RenderingCancelledException"
-          )
-        )
-          callbacks.current.onError(errorText(cause));
-      } finally {
-        if (dead) page?.cleanup();
-      }
-    })();
-    return () => {
-      dead = true;
-      render?.cancel();
-      layer?.cancel();
-      if (canvas.current) {
-        canvas.current.width = 0;
-        canvas.current.height = 0;
-      }
-      text.current?.replaceChildren();
-      void Promise.resolve(render?.promise)
-        .catch(() => undefined)
-        .finally(() => page?.cleanup());
-    };
-  }, [opened, number, zoom, rotation]);
-  function capture(event: React.MouseEvent<HTMLDivElement>) {
-    if (!enabled || area || !geometry || !text.current || !root.current) return;
-    const s = getSelection();
-    if (!s || s.isCollapsed || !s.rangeCount) {
-      const page = root.current.getBoundingClientRect();
-      const x = event.clientX - page.left, y = event.clientY - page.top;
-      const picked = [...records].reverse().find((record) => record.target.rects.some((rect) => {
-        const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
-        return x >= bounds.x && x <= bounds.x + bounds.width && y >= bounds.y && y <= bounds.y + bounds.height;
-      }));
-      if (picked) onPick(picked); else onSelection(undefined);
-      return;
-    }
-    const range = s.getRangeAt(0);
-    if (
-      !text.current.contains(range.startContainer) ||
-      !text.current.contains(range.endContainer)
-    ) {
-      onSelection(undefined);
-      return;
-    }
-    const exact = s.toString().trim();
-    if (!exact || exact.length > 20000) return;
-    const box = root.current.getBoundingClientRect();
-    const rects: PdfRect[] = [];
-    const seen = new Set<string>();
-    for (const rect of range.getClientRects()) {
-      const normalized = toPdfRect(
-        {
-          left: rect.left - box.left,
-          top: rect.top - box.top,
-          right: rect.right - box.left,
-          bottom: rect.bottom - box.top,
-        },
-        geometry.viewport,
-        geometry.box,
-      );
-      if (normalized) {
-        const key = Object.values(normalized)
-          .map((v) => v.toFixed(5))
-          .join(",");
-        if (!seen.has(key)) {
-          seen.add(key);
-          rects.push(normalized);
-        }
-      }
-    }
-    if (!rects.length || rects.length > 1000) return;
-    const before = range.cloneRange();
-    before.selectNodeContents(text.current);
-    before.setEnd(range.startContainer, range.startOffset);
-    const after = range.cloneRange();
-    after.selectNodeContents(text.current);
-    after.setStart(range.endContainer, range.endOffset);
-    onSelection({
-      pageNumber: number,
-      rects,
-      exact,
-      prefix: before.toString().slice(-64),
-      suffix: after.toString().slice(0, 64),
-    });
-  }
-  function position(e: React.PointerEvent) {
-    const r = root.current!.getBoundingClientRect();
-    return {
-      x: Math.max(0, Math.min(r.width, e.clientX - r.left)),
-      y: Math.max(0, Math.min(r.height, e.clientY - r.top)),
-    };
-  }
-  return (
-    <div
-      className="pdf-page"
-      ref={root}
-      onMouseUp={capture}
-      onClick={capture}
-      style={{
-        width: geometry?.viewport.width,
-        height: geometry?.viewport.height,
-      }}
-    >
-      <canvas ref={canvas} aria-label={`PDF ${number}`} />
-      <div className="textLayer" ref={text} />
-      {geometry && (
-        <svg
-          className="pdf-marks"
-          width={geometry.viewport.width}
-          height={geometry.viewport.height}
-          aria-hidden="true"
-        >
-          {records.flatMap((r) =>
-            r.target.rects.map((rect, i) => (
-              <rect
-                key={`${r.id}-${i}`}
-                data-pdf-annotation={r.id}
-                {...fromPdfRect(rect, geometry.viewport, geometry.box)}
-                fill={r.kind === "pdf-text" ? r.color : "none"}
-                fillOpacity=".32"
-                stroke={r.kind === "pdf-area" ? r.color : "none"}
-                strokeWidth="2"
-              />
-            )),
-          )}
-          {preview && (
-            <rect
-              {...fromPdfRect(preview, geometry.viewport, geometry.box)}
-              fill="none"
-              stroke={color}
-              strokeWidth="2"
-            />
-          )}
-        </svg>
-      )}
-      {enabled && area && geometry && (
-        <div
-          className="pdf-area-capture"
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
-            e.currentTarget.setPointerCapture(e.pointerId);
-            drag.current = { ...position(e), pointer: e.pointerId };
-            onSelection(undefined);
-          }}
-          onPointerMove={(e) => {
-            const a = drag.current;
-            if (!a || a.pointer !== e.pointerId) return;
-            const b = position(e);
-            setPreview(
-              toPdfRect(
-                {
-                  left: Math.min(a.x, b.x),
-                  top: Math.min(a.y, b.y),
-                  right: Math.max(a.x, b.x),
-                  bottom: Math.max(a.y, b.y),
-                },
-                geometry.viewport,
-                geometry.box,
-              ),
-            );
-          }}
-          onPointerUp={(e) => {
-            if (drag.current?.pointer !== e.pointerId) return;
-            drag.current = undefined;
-            if (e.currentTarget.hasPointerCapture(e.pointerId))
-              e.currentTarget.releasePointerCapture(e.pointerId);
-            if (preview)
-              onArea({
-                pageNumber: number,
-                rects: [preview],
-                exact: "",
-                prefix: "",
-                suffix: "",
-              });
-            setPreview(undefined);
-          }}
-          onPointerCancel={() => {
-            drag.current = undefined;
-            setPreview(undefined);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-function PdfNote({
-  record,
-  language,
-  onJump,
-  onError,
-  onRemove,
-  removing,
-}: {
-  record: PdfAnnotation;
-  language: Settings["language"];
-  onJump: () => void;
-  onError: (e: string) => void;
-  onRemove: (record: PdfAnnotation) => void;
-  removing: boolean;
-}) {
-  const [editing, setEditing] = useState(false),
-    [note, setNote] = useState(record.note),
-    [tags, setTags] = useState(record.tags.join(", ")),
-    [color, setColor] = useState(record.color),
-    [base, setBase] = useState(record),
-    [conflict, setConflict] = useState(false),
-    [saving, setSaving] = useState(false);
-  const zh = language === "zh-CN";
-  const t = (cn: string, en: string) => (zh ? cn : en);
-  const edit = () => {
-    setBase(record);
-    setNote(record.note);
-    setTags(record.tags.join(", "));
-    setColor(record.color);
-    setConflict(false);
-    setEditing(true);
-  };
-  const save = async () => {
-    setSaving(true);
-    try {
-      await request({
-        type: "annotations.put",
-        annotation: {
-          ...base,
-          note,
-          tags: [
-            ...new Set(
-              tags
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-            ),
-          ],
-          color,
-          updatedAt: new Date().toISOString(),
-        },
-        expectedRevision: base.revision,
-      });
-      setEditing(false);
-      setConflict(false);
-    } catch (cause) {
-      if (cause instanceof RequestError && cause.code === "CONFLICT")
-        setConflict(true);
-      onError(errorText(cause));
-    } finally {
-      setSaving(false);
-    }
-  };
-  return (
-    <article className="pdf-note" style={{ borderLeftColor: record.color }}>
-      <button className="pdf-note-source" onClick={onJump}>
-        {t("第", "Page ")}
-        {record.target.pageNumber}
-        {zh ? "页" : ""} ·{" "}
-        {record.kind === "pdf-text"
-          ? record.target.exact
-          : t("区域标注", "Area annotation")}
-      </button>
-      {record.note && <p>{record.note}</p>}
-      {record.tags.length > 0 && <small>{record.tags.join(" · ")}</small>}
-      {editing ? (
-        <div className="pdf-note-editor">
-          <label>
-            {t("笔记", "Note")}
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} />
-          </label>
-          <label>
-            {t("标签", "Tags")}
-            <input value={tags} onChange={(e) => setTags(e.target.value)} />
-          </label>
-          <input
-            type="color"
-            aria-label={t("颜色", "Color")}
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-          />
-          {conflict && (
-            <p role="alert">
-              {t(
-                "其他窗口已修改。草稿保留，请载入最新版本后再保存。",
-                "Changed elsewhere. Your draft is preserved; load the latest revision before saving.",
-              )}
-              <button
-                onClick={() => {
-                  setBase(record);
-                  setConflict(false);
-                }}
-              >
-                {t("载入最新版本", "Load latest")}
-              </button>
-            </p>
-          )}
-          <button disabled={saving || conflict} onClick={() => void save()}>
-            {t("保存", "Save")}
-          </button>
-          <button disabled={saving} onClick={() => setEditing(false)}>
-            {t("取消", "Cancel")}
-          </button>
-        </div>
-      ) : (
-        <div className="pdf-note-actions">
-          <button onClick={edit}>{t("编辑", "Edit")}</button>
-          <button disabled={removing} onClick={() => onRemove(record)}>{t("取消标注", "Remove annotation")}</button>
-        </div>
-      )}
-    </article>
   );
 }

@@ -201,9 +201,14 @@
   background: var(--ink-surface);
   box-shadow: var(--ink-shadow);
 }
-.pdf-undo { bottom: 70px; }
+.pdf-undo {
+  bottom: 70px;
+}
 .pdf-mark-menu span,
-.pdf-undo span { font-size: 12px; white-space: nowrap; }
+.pdf-undo span {
+  font-size: 12px;
+  white-space: nowrap;
+}
 .pdf-notes {
   width: 300px;
   flex-shrink: 0;
