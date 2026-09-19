@@ -531,3 +531,22 @@ test("PDF entry reuses a reader and keeps its current document", async () => {
   await expect(page.locator(".pdf-name")).toHaveText("reading.pdf");
   await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
 });
+
+test("a reader that switches files is not reused for its previous source", async () => {
+  const source = 'https://papers.example.test/first.pdf';
+  await context.route(source, route => route.fulfill({ contentType: 'application/pdf', body: fixturePdf(1, 'First source') }));
+  await page.goto(`chrome-extension://${id}/pdf.html?open=1&source=${encodeURIComponent(source)}`);
+  await expect(page.locator('.pdf-name')).toHaveText('first.pdf');
+  await open(fixturePdf(1, 'Second local file'), 'second.pdf');
+  expect(new URL(page.url()).searchParams.has('source')).toBe(false);
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel.html`);
+  await panel.evaluate(async source => {
+    // The same production handoff route must create a reader for the original
+    // source now that the previous tab represents a different local document.
+    const tabs = await chrome.runtime.getContexts({ contextTypes: ['TAB'] });
+    const matches = tabs.filter(t => t.documentUrl && new URL(t.documentUrl).searchParams.get('source') === source);
+    if (matches.length) throw Error('Stale source identity remains');
+  }, source);
+  await expect(page.locator('.pdf-name')).toHaveText('second.pdf');
+});

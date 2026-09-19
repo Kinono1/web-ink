@@ -419,6 +419,14 @@ export function PdfReader() {
         request<PageMode>({ type: "page.mode.get", pageUrl }),
       ]);
       if (!session.current.isCurrent(token)) return;
+      // Keep the reader URL aligned with the successfully loaded document so
+      // a later library/source handoff cannot reuse a tab showing another PDF.
+      const readerLocation = new URL(location.href);
+      readerLocation.searchParams.set("document", hash);
+      readerLocation.searchParams.delete("open");
+      if (remote) readerLocation.searchParams.set("source", remote);
+      else readerLocation.searchParams.delete("source");
+      history.replaceState(null, "", readerLocation.href);
       setOpened({
         document: doc,
         api,

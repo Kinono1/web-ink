@@ -22,3 +22,13 @@ it('a generic entry returns to an existing reader without navigating its documen
   await openPdfTab(base);
   expect(c.update).toHaveBeenCalledWith(2, { active: true }); expect(c.create).not.toHaveBeenCalled();
 });
+it('matches a source-only request to its loaded identity and normalizes page fragments', async () => {
+  const c = browser([{ id: 2, url: `${base}?source=https%3A%2F%2Fexample.test%2Fa.pdf&document=loaded` }]);
+  await openPdfTab(`${base}?source=${encodeURIComponent('https://example.test/a.pdf#page=3')}&open=1`);
+  expect(c.update).toHaveBeenCalledWith(2, { active: true }); expect(c.create).not.toHaveBeenCalled();
+});
+it('opens a requested saved PDF in a new tab after another file replaced the old source', async () => {
+  const c = browser([{ id: 2, url: `${base}?document=different-local-file` }]);
+  await openPdfTab(`${base}?source=https%3A%2F%2Fexample.test%2Fa.pdf&document=original`);
+  expect(c.create).toHaveBeenCalledOnce(); expect(c.update).not.toHaveBeenCalled();
+});
