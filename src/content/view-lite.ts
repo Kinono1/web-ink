@@ -1,6 +1,67 @@
 import type { Settings } from "../core/model";
 import { CONTENT_THEME_CSS } from "../ui/theme";
 
+
+const TOAST_CSS = `
+.toast {
+  display:none; position:fixed; bottom:28px; left:50%;
+  transform:translateX(-50%); width:max-content;
+  max-width:min(560px,calc(100vw - 24px)); padding:8px 10px;
+  border:1px solid var(--ink-separator); border-radius:22px;
+  background:var(--ink-surface); color:var(--ink-text);
+  box-shadow:var(--ink-shadow); backdrop-filter:blur(18px);
+  pointer-events:auto; animation:toast-enter 140ms ease-out;
+}
+.toast-content {
+  display:grid; grid-template-columns:18px minmax(0,1fr) 24px;
+  align-items:center; column-gap:9px; row-gap:7px; min-height:24px;
+}
+.toast-content:has(.toast-actions) {
+  grid-template-columns:18px minmax(0,1fr) auto 24px;
+}
+.toast-icon {
+  grid-column:1; grid-row:1; width:18px; height:18px;
+  align-self:start; margin-top:3px; color:var(--ink-secondary);
+}
+.toast-message {
+  grid-column:2; grid-row:1; min-width:0; font-size:13px;
+  font-weight:500; line-height:20px; overflow-wrap:anywhere;
+}
+.toast-actions {
+  grid-column:3; grid-row:1; display:flex; align-items:center;
+  gap:4px; flex-wrap:wrap; padding-left:8px; min-width:0;
+  border-left:1px solid var(--ink-separator);
+}
+.toast-action {
+  min-height:26px; max-width:100%; border:0; background:transparent;
+  color:var(--ink-accent); padding:3px 6px; border-radius:7px;
+  font-size:13px; line-height:20px; font-weight:500;
+  white-space:normal; overflow-wrap:anywhere;
+}
+.toast-dismiss {
+  grid-column:-2 / -1; grid-row:1; display:grid; place-items:center;
+  align-self:start; width:24px; height:24px; min-height:24px;
+  border:0; background:transparent; color:var(--ink-secondary);
+  padding:0; border-radius:50%;
+}
+.toast-action:hover,.toast-dismiss:hover { background:var(--ink-fill); }
+.toast-dismiss:hover { color:var(--ink-text); }
+.toast button:focus-visible { outline:2px solid var(--ink-accent); outline-offset:2px; }
+.toast.error { border-color:color-mix(in srgb,var(--ink-danger) 24%,var(--ink-separator)); }
+.toast.success .toast-icon { color:var(--ink-success); }
+.toast.error .toast-icon { color:var(--ink-danger); }
+@media (max-width:480px) {
+  .toast { bottom:76px; }
+  .toast:has(.toast-actions) { border-radius:16px; }
+  .toast-content:has(.toast-actions) { grid-template-columns:18px minmax(0,1fr) 24px; }
+  .toast-actions { grid-column:2 / -1; grid-row:2; border-left:0; padding-left:0; }
+}
+@keyframes toast-enter {
+  from { opacity:0; transform:translate(-50%,5px); }
+  to { opacity:1; transform:translate(-50%,0); }
+}
+`;
+
 const NS = "http://www.w3.org/2000/svg";
 export function svgElement<K extends keyof SVGElementTagNameMap>(
   tag: K,
@@ -23,7 +84,7 @@ export function createView() {
   });
   const root = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
-  style.textContent = `${CONTENT_THEME_CSS}:host { all:initial; font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif; color:var(--ink-text) } *{box-sizing:border-box} button,input{font:inherit} button{cursor:pointer} button:focus-visible,input:focus-visible{outline:3px solid var(--ink-accent);outline-offset:2px}.bar{position:fixed;display:flex;align-items:center;gap:6px;padding:8px;background:var(--ink-surface);border:1px solid var(--ink-separator);border-radius:var(--ink-radius);box-shadow:var(--ink-shadow);backdrop-filter:blur(18px);pointer-events:auto}.selection{display:none}.drawing{top:14px;left:50%;transform:translateX(-50%);display:none;flex-wrap:wrap;max-width:calc(100vw - 24px)}button{border:1px solid var(--ink-separator);background:var(--ink-fill);color:var(--ink-text);padding:5px 9px;border-radius:8px;min-height:30px}.swatch{width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;border:2px solid var(--ink-surface-solid);box-shadow:0 0 0 1px var(--ink-separator)}input[type=color]{width:30px;height:30px;padding:0;border:0;background:transparent}.toast{display:none;position:fixed;bottom:22px;left:50%;transform:translateX(-50%);max-width:min(560px,90vw);border:1px solid var(--ink-separator);background:var(--ink-surface);color:var(--ink-text);border-radius:var(--ink-radius);padding:10px 14px;box-shadow:var(--ink-shadow);backdrop-filter:blur(18px);pointer-events:auto}.toast.error{border-color:var(--ink-danger);color:var(--ink-danger)}svg.layer{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none}:host([data-web-ink-reduce-transparency=true]) .bar,:host([data-web-ink-reduce-transparency=true]) .toast{background:var(--ink-surface-solid);backdrop-filter:none}@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}:host([data-web-ink-reduce-motion=true]) *{transition:none!important;animation:none!important}`;
+  style.textContent = `${CONTENT_THEME_CSS}:host { all:initial; font:13px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif; color:var(--ink-text) } *{box-sizing:border-box} button,input{font:inherit} button{cursor:pointer} button:focus-visible,input:focus-visible{outline:3px solid var(--ink-accent);outline-offset:2px}.bar{position:fixed;display:flex;align-items:center;gap:6px;padding:8px;background:var(--ink-surface);border:1px solid var(--ink-separator);border-radius:var(--ink-radius);box-shadow:var(--ink-shadow);backdrop-filter:blur(18px);pointer-events:auto}.selection{display:none}.drawing{top:14px;left:50%;transform:translateX(-50%);display:none;flex-wrap:wrap;max-width:calc(100vw - 24px)}button{border:1px solid var(--ink-separator);background:var(--ink-fill);color:var(--ink-text);padding:5px 9px;border-radius:8px;min-height:30px}.swatch{width:26px;height:26px;min-height:26px;padding:0;border-radius:50%;border:2px solid var(--ink-surface-solid);box-shadow:0 0 0 1px var(--ink-separator)}input[type=color]{width:30px;height:30px;padding:0;border:0;background:transparent}${TOAST_CSS}svg.layer{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none}:host([data-web-ink-reduce-transparency=true]) .bar,:host([data-web-ink-reduce-transparency=true]) .toast{background:var(--ink-surface-solid);backdrop-filter:none}@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}:host([data-web-ink-reduce-motion=true]) *{transition:none!important;animation:none!important}`;
   const svg = svgElement("svg", { class: "layer", "aria-hidden": "true" });
   const selection = document.createElement("div");
   selection.className = "bar selection";
