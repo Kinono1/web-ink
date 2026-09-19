@@ -1,82 +1,61 @@
 # Web Ink
 
-Web Ink 是本地优先的 Chrome 标注工具：网页文字、图片绘制，以及PDF 文字和区域标注。数据留在浏览器本机；没有账号、云同步或遥测。
+**在 Chrome 本机为网页和 PDF 划重点、写笔记、圈画图片。无需账号，标注不上传。**
 
-[English](README.en.md) · [隐私说明](PRIVACY.md) · [第三方许可](THIRD_PARTY_NOTICES.md) · [发布流程](docs/RELEASING.md)
+[下载预览版](https://github.com/Kinono1/web-ink/releases) · [English](README.en.md) · [使用说明与支持范围](docs/USAGE.zh-CN.md) · [隐私说明](PRIVACY.md)
 
-> v0.3.0 为预览版本。支持范围与测试边界见 [验证记录](docs/VALIDATION.md)，性能数据见 [测量报告](docs/PERFORMANCE.md)。
+![Web Ink PDF 入口](docs/images/v031-pdf-entry.png)
 
-## v0.3 的优化
+## 安装：第一次使用
 
-- 文字选区和恢复共用当前页面的文字索引；保存后更新新增记录，正文变动时重新验证定位。
-- 资料库每页最多 50 条，搜索保持完整子串匹配；输入变化立即取消旧任务，再防抖发起新查询。
-- 已知长度 PDF 直接填入一个目标缓冲区；长文档只挂载可见页及相邻页，缩放和页面尺寸更新保留阅读位置。
-- PDF 标注列表每次显示 50 条，可加载更多；编辑中的笔记跨列表重排保留，换文件前先保存或明确放弃。
-- 不新增运行时依赖，数据库仍为 v3、备份仍为 schema v2，无本轮数据迁移。
+1. 从 Releases 下载 `web-ink-<版本>-chrome.zip`，解压到一个固定文件夹。
+2. 打开 `chrome://extensions`，开启开发者模式，点击 **加载已解压的扩展程序**，选择包含 `manifest.json` 的文件夹。
+3. 打开普通网页，点击 Chrome 工具栏的 Web Ink，按提示授权网页访问；点击网页右下角的开关，再选中文字进行高亮。
 
-## 取消标注
+Chrome 120 起支持网页标注，PDF 阅读器要求 Chrome 125 或更高。当前为预览版；源码、本机开发构建和公开下载包可能不同，请在 **资料库 → 设置与数据** 查看版本与构建标识。每个发布包的实际验收范围见 Release 说明。
 
-- 网页：点击已有文字高亮或图片标记，在浮层选择 **取消标注**；重新选中已高亮文字也会出现该按钮。重叠标注按条选择，不会一次删除其它记录。
-- PDF：点击已有高亮或区域标记，选择 **取消标注**。
-- 网页和 PDF 取消后可在当前会话中撤销，原笔记、标签和颜色一起恢复。
-- 资料库：打开记录，点击 **删除 → 确认删除**；确认在界面内完成，不依赖浏览器弹窗。
-- 右下角总开关只控制显示与工具启用，不删除数据。
+## 更新：保留原来的安装目录
 
-## 网页标注
+1. 在 Web Ink 的 **资料库 → 设置与数据 → 下载 JSON** 备份标注。
+2. 解压新版本，用其运行文件替换原安装目录的文件。
+3. 在 `chrome://extensions` 找到 Web Ink，点击该扩展的 **重新加载**，刷新原网页并重新打开侧栏。
 
-- 右下角 40px 调色盘是当前网页的总开关：关闭时保持安静，不扫描正文、不绑定网页滚动/选区/MutationObserver，也不建立文本阅读索引。
-- 每个 canonical URL 独立记忆开关；关闭只隐藏网页工具与标记，不删除记录。暂停的网站优先于页面开关。
-- 开启后按需注入网页 engine。文字恢复使用 exact text、上下文、根/稳定容器验证；无法唯一确认时保持“未定位”，不猜测性绑定。
-- 文字工具条先显示最近颜色、当前颜色和三个常用颜色；“更多”才展开全部颜色与自定义色。
-- 图片选取阶段只显示提示；选中后才显示矩形、椭圆、箭头、画笔、颜色、撤销、重做和完成。图片与祖先的非恒等 CSS transform 会被拒绝。
-- 侧栏与资料库使用同一 macOS 风格主题，可选系统/浅色/深色，并支持降低动效和降低透明度。
+**不要卸载旧扩展：卸载会删除本地数据。** 保持同一个浏览器 profile 和安装目录；不要把源码目录当作扩展安装目录。
 
-普通网页要求 Chrome 120 或更高版本。iframe、网页自身 Shadow DOM、浏览器内部页、file URL 与 canvas 内容不在网页标注范围内。
+本项目开发者更新已存在的 `Web-Ink-Chrome` 目录，可运行 `npm run update:local`。它会备份旧构建、检查扩展身份、同步并核对全部文件；复制失败会回滚。首次安装仍由上面的步骤明确选择目录。
 
-## PDF
+## 日常使用
 
-PDF 支持基础文字标注与区域标注，坐标保存为未旋转页面坐标中的归一化值。PDF 页面需要 Chrome 125 或更高版本；最低版本由专门的 Chrome 125 CI 用例验证。
+- **网页高亮与笔记：** 选中文字后选择颜色；点击已有标注可查看笔记、删除，删除后可撤销。
+- **图片圈画：** 从侧栏进入图片绘制，使用矩形、椭圆、箭头或画笔。
+- **PDF：** 点击侧栏顶部的 **PDF**。识别到当前文件时，选择 **用 Web Ink 打开当前 PDF**；地址不可读或需要登录时，下载后选择本地文件。不会替换你的默认阅读器。
+- **找回与导出：** 资料库可搜索和筛选记录，导出 JSON 备份或 Markdown。网页变动无法定位时，原笔记仍保留，可重新绑定。
 
-- 可从本地文件选择 PDF，或从明确授权的 HTTPS PDF 读者页面读取。
-- 单个 PDF 输入上限为 **50 MiB**；该限制保护本地渲染和浏览器内存，不表示会存储文件内容。
-- HTTPS 读取使用精确站点授权，并以 `credentials: 'omit'`、`cache: 'no-store'`、`redirect: 'error'` 获取。重定向在 MVP 中被拒绝；请使用最终直接 PDF 地址，或下载后选择本地文件。
-- 只保存 PDF 的 SHA-256、文件名、可选来源 URL、页码、文字锚点和区域几何；**不保存 PDF bytes**。
-- 要恢复本地 PDF 标注，请重新选择内容相同的文件。哈希变化表示不同文档，不做跨文件迁移。
-- 不提供 OCR、认证页面抓取、cookie/凭据转发或写回/修改 PDF 文件。加密或受保护文档可能无法读取。
+数据仅保存在当前浏览器。重新选择原来的本地 PDF 可恢复标注，PDF 原文件不会存入资料库。没有跨设备同步；清理浏览器数据或更换设备前请先导出。
 
-PDF renderer 使用 PDF.js `6.3.289` legacy build、同版本 worker 和随包资源。详见 [第三方许可](THIRD_PARTY_NOTICES.md)。
+## 支持边界
 
-## 存储、备份与升级
+支持普通网页文字、图片，以及基础 PDF 文字和区域标注。iframe、网页自身 Shadow DOM、canvas、浏览器内部页不属于网页标注范围。PDF 单文件上限 50 MiB；不支持 OCR、凭据转发或修改 PDF 原文件。在线 PDF 必须是已授权、可直接读取的公开 HTTPS 地址；登录、跳转或加密文档请参考[详细说明](docs/USAGE.zh-CN.md)。
 
-网页/PDF 标注保存在扩展拥有的 IndexedDB；设置保存在 `chrome.storage.local`。资料库可按关键词、类型、颜色和标签筛选，并显示逻辑记录大小与浏览器占用估算。
+## 开发与验证
 
-- 备份 schema v2 兼容导入 schema v1；导入前验证，按 ID 合并，冲突默认保留本地记录。
-- 网页和 PDF 元数据都进入 JSON 备份；PDF 原始 bytes 从不进入备份。
-- 备份与输入容量由界面和验证层限制；以实际发布版本的提示为准，不能把逻辑大小当作物理磁盘占用。
-- 升级请保留稳定的解压安装目录，在 `chrome://extensions` 使用 **Reload**，不要卸载。manifest 的稳定 public extension ID 使 Reload 可保留扩展本地存储；卸载会删除本地数据。
-- 更新、清理浏览器数据、切换 profile 前先导出 JSON 备份。
-
-## 开发
-
-Node/npm 工作流保持不变，使用提交的 `package-lock.json`：
+使用 Node 24.15 或兼容版本及提交的锁文件：
 
 ```sh
 npm ci
 npm run check
 npm test
+npm run test:bulk
+npm run test:release
 npm run build
 npm run test:e2e
 npm run zip
 ```
 
-性能复现：`npm run benchmark:v03` 与 `npm run benchmark:pdf`。这两组测量使用人工样例和临时浏览器 profile；测量环境、原始样本和限制见 [性能报告](docs/PERFORMANCE.md)。
+`npm run zip` 只归档已构建的运行文件，并验证压缩包内容和 SHA-256，不会再次构建。发布必须来自干净、已验收的提交；构建信息中的时间是可复现构建基准时间。
+
+[验证记录](docs/VALIDATION.md) · [性能及测量边界](docs/PERFORMANCE.md) · [发布流程](docs/RELEASING.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
 ## 许可
 
-本项目采用 [MIT License](LICENSE)。依赖与 PDF.js 资源的完整说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-## 界面预览
-
-![Web Ink library on an artificial fixture](docs/images/v02-library.png)
-
-![Web Ink PDF reader on an artificial fixture](docs/images/v02-pdf.png)
+[MIT](LICENSE)。

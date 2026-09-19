@@ -9,7 +9,7 @@ import { mkdtemp, rm, cp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const extensionPath = path.resolve(".output/chrome-mv3");
+const extensionPath = path.resolve(process.env.WEB_INK_BUILD || ".output/chrome-mv3");
 const origins = ["http://*/*", "https://*/*"];
 let context: BrowserContext;
 let profile: string;
@@ -1246,4 +1246,21 @@ test("sidepanel dark theme retains its dock and pause can be resumed", async () 
   await expect(manager.locator(".sidepanel-dock")).toHaveCount(0);
   await manager.getByRole("button", { name: "恢复此网站", exact: true }).click();
   await expect(manager.locator(".sidepanel-dock")).toBeVisible();
+});
+
+test("settings identify the build and explain local backup ownership", async () => {
+  await enable();
+  await manager.getByRole("button", { name: "设置与数据", exact: true }).click();
+  await expect(manager.getByText("数据仅保存在当前浏览器。", { exact: false })).toBeVisible();
+  const info = JSON.parse(await readFile(path.join(extensionPath, "build-info.json"), "utf8"));
+  await expect(manager.locator(".build-info")).toContainText(`v${info.version}`);
+  await expect(manager.locator(".build-info")).toContainText(info.commit.slice(0, 7));
+});
+
+test("production permission PDF handoff waits for authorization and still allows a local file", async () => {
+  await manager.goto(`chrome-extension://${extensionId}/pdf.html?open=1&source=${encodeURIComponent('https://papers.example.test/sample.pdf')}`);
+  await expect(manager.getByText('链接已带入。点击「打开网址」授权并读取，或选择本地 PDF。', { exact: true })).toBeVisible();
+  expect(await manager.evaluate(() => chrome.permissions.contains({ origins: ['https://papers.example.test/*'] }))).toBe(false);
+  await expect(manager.getByRole('button', { name: '打开网址', exact: true })).toBeEnabled();
+  await expect(manager.getByLabel('选择本地 PDF', { exact: true })).toBeEnabled();
 });

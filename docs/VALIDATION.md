@@ -1,5 +1,13 @@
 # Validation — Web Ink
 
+## 0.3.1 candidate — acceptance gates
+
+The candidate separates ordinary unit tests from single-worker 10k/50k correctness tests (60-second ceiling). Installer tests verify extension identity, unknown-file/symlink refusal, file hashes, backups and rollback after partial-copy failures. Packaging verifies every extracted ZIP entry against the existing tested runtime rather than rebuilding.
+
+New browser cases cover PDF source handoff, local-file fallback, failed online reads, reader reuse, build identity, permission-preserving automatic open, and a same-profile upgrade from the checksum-verified v0.3.0 public archive. Tests can target the extracted ZIP with `WEB_INK_BUILD`; the upgrade requires `WEB_INK_OLD_BUILD`. Counts and results must come from the exact candidate run, not older entries below.
+
+The v0.3.1 release gate additionally requires two complete CI attempts on the same commit, native Chrome permission/side-panel acceptance, real public-page/PDF checks, and a scoped Web Highlights offline comparison. Until the exact-commit acceptance receipt is attached to a published release, these are requirements rather than a claim of completion. Historical benchmark numbers below and in PERFORMANCE.md do not measure the new candidate.
+
 ## 0.3.0 performance preview — 2026-09-19
 
 Local TypeScript/build, **124 unit tests across 16 files and all 27 Chromium browser tests passed**. The final webpage runtime/benchmark source is `69bdd60`; the unchanged PDF source was measured at `0326026`. The matching release commit must also pass the dedicated Chrome 125 PDF/query and Chrome 120 webpage CI gates before publication. The release notes link that exact run.

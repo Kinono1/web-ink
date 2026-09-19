@@ -179,14 +179,6 @@ describe('settings and backup import boundary', () => {
     setDatabaseForTesting(db);
   });
 
-  it('imports and lists 10,000 validated records', async () => {
-    const annotations = Array.from({ length: 10_000 }, (_, index) => textAnnotation(`bulk-${index}`));
-    const backup = { format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T03:00:00.000Z', annotations };
-    const imported = await handleDataRequest({ type: 'backup.import', backup, overwrite: false }, { trusted: true });
-    expect(imported).toEqual({ ok: true, data: { added: 10_000, identical: 0, conflicts: 0, total: 10_000 } });
-    const listed = await handleDataRequest({ type: 'annotations.list', pageUrl }, { trusted: false, pageUrl });
-    expect(listed.ok && Array.isArray(listed.data) ? listed.data.length : -1).toBe(10_000);
-  }, 10_000);
 });
 
 describe('tombstone restore generations', () => {

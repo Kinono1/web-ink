@@ -28,3 +28,14 @@ Before declaring PDF support accepted, test at least local-file open, same-hash 
 ## Publish
 
 Tag the exact verified commit, create the release/prerelease deliberately, upload ZIP and checksum assets, and verify the release URL, tag target, prerelease flag, and digests. CI may build artifacts but does not replace release acceptance or publish authorization.
+
+## v0.3.1 candidate workflow
+
+1. Run `npm run check`, `npm test`, `npm run test:bulk`, and `npm run test:release`. Large-data correctness has a separate single-worker 60-second ceiling; its timings are evidence, not a claim of improved performance.
+2. Commit the candidate source before the release build. Run `npm run build`; require `build-info.json.dirty` to be false and its commit to equal HEAD. The clean build epoch defaults to the commit timestamp for reproducibility.
+3. Run all browser tests and both minimum-browser CI gates. The same candidate commit must pass two complete CI attempts.
+4. Run `npm run zip`. It packages the existing runtime, decompresses and compares every filename/content hash, and emits its SHA-256 file; it never triggers another build.
+5. Extract that ZIP into a new acceptance directory with `node scripts/extract-runtime.mjs ZIP NEW_DIRECTORY`. Run tests against it with `WEB_INK_BUILD=NEW_DIRECTORY`. For the upgrade test, set `WEB_INK_OLD_BUILD` to a checksum-verified extracted v0.3.0 archive. The upgrade profile is artificial and disposable.
+6. Verify ordinary-Chrome native permissions/side panel, public webpage/PDF recovery, reader coexistence, and the agreed competitor tasks separately. Pre-granted test profiles cannot close native acceptance. Save acceptance and comparison receipts with exact build identities; if any required gate is blocked, retain a candidate instead of publishing.
+7. Install the exact accepted runtime with `node scripts/update-local.mjs --skip-build` only when `.output/chrome-mv3` matches the accepted ZIP. This fixed-directory updater records hashes in `.output/install-receipt.json`, keeps backups in `.output/install-backups`, and refuses unknown or changed installs. Do not remove its safety receipt to bypass a mismatch; investigate first.
+8. After all gates pass, publish `v0.3.1` as a prerelease from that exact commit, attach ZIP, checksum and acceptance receipts, then download and verify the public asset. Do not overwrite the v0.3.0 archive.

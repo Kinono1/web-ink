@@ -1,6 +1,6 @@
 {
   "name": "web-ink",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "description": "Local-first webpage and PDF annotations",
   "license": "MIT",
@@ -10,18 +10,20 @@
   },
   "scripts": {
     "dev": "wxt",
-    "prebuild": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs",
+    "prebuild": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs && node scripts/build-info.mjs",
     "build": "wxt build",
     "check": "wxt prepare && tsc --noEmit",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "prezip": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs",
-    "zip": "wxt zip",
-    "release:local": "npm run check && npm run test && npm run build && npm run test:e2e && npm run zip && node scripts/checksum.mjs",
+    "zip": "node scripts/package-release.mjs",
+    "release:local": "npm run check && npm test && npm run test:bulk && npm run test:release && npm run build && npm run test:e2e && npm run zip -- --release",
     "postinstall": "wxt prepare",
     "benchmark": "node scripts/benchmark.mjs",
     "benchmark:v03": "node scripts/benchmark-v03.mjs",
-    "benchmark:pdf": "node scripts/benchmark-pdf-v03.mjs"
+    "benchmark:pdf": "node scripts/benchmark-pdf-v03.mjs",
+    "test:release": "node --test tests/release-tools.test.mjs",
+    "update:local": "node scripts/update-local.mjs",
+    "test:bulk": "vitest run --config vitest.bulk.config.ts"
   },
   "dependencies": {
     "dexie": "4.4.6",
@@ -43,6 +45,7 @@
     "jsdom": "30.1.0",
     "typescript": "7.0.2",
     "vitest": "5.0.1",
-    "wxt": "0.21.4"
+    "wxt": "0.21.4",
+    "@aklinker1/zero-zip": "1.0.1"
   }
 }

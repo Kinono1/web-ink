@@ -14,7 +14,7 @@ const sites = [
   ['GitHub', 'https://github.com/wxt-dev/wxt', 'article.markdown-body p'],
 ];
 try {
-  await cp(path.resolve('.output/chrome-mv3'), build, { recursive: true });
+  await cp(path.resolve(process.env.WEB_INK_BUILD || '.output/chrome-mv3'), build, { recursive: true });
   const manifest = JSON.parse(await readFile(path.join(build, 'manifest.json'), 'utf8'));
   manifest.host_permissions = ['http://*/*', 'https://*/*'];
   await writeFile(path.join(build, 'manifest.json'), JSON.stringify(manifest));
@@ -59,5 +59,5 @@ try {
   await rm(build, { recursive: true, force: true });
   await rm(profile, { recursive: true, force: true });
   await mkdir('test-results', { recursive: true });
-  await writeFile('test-results/real-sites.json', JSON.stringify({ browser: 'Playwright Chromium (pre-granted test manifest)', reports }, null, 2));
+  await writeFile('test-results/real-sites.json', JSON.stringify({ browser: 'Playwright Chromium (pre-granted test manifest)', build: process.env.WEB_INK_BUILD || '.output/chrome-mv3', reports }, null, 2));
 }

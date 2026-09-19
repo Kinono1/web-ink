@@ -4,6 +4,7 @@ import type { FilterKind, Draft } from "./types";
 import { COPY } from "./copy";
 import { tagText, parseTags, statusClass, annotationText, matchesQuery, isPdf, pdfReaderUrl, kindFamily, localDate, download, Icon } from "./helpers";
 import { StoragePanel } from "../StoragePanel";
+import { BuildInfo } from "../BuildInfo";
 import type { IconName } from "../icons";
 export function Alert({
   kind,
@@ -396,6 +397,7 @@ export function AnnotationDetail({
           </span>
         ) : null}
       </div>
+      {state?.status === "unresolved" ? <p className="hint" role="status">{t.restoreExplanation}{record.kind === "text" ? t.rebindTextHint : t.rebindImageHint}</p> : null}
       {editing && draft ? (
         <Editor
           draft={draft}
@@ -666,6 +668,7 @@ export function SettingsView({
       <StoragePanel language={language} />
       <section className="settings-group">
         <h2>{t.backup}</h2>
+        <p className="hint">{t.localDataNotice}</p>
         <div className="detail-actions">
           <button className="quiet" onClick={exportJson}>
             {t.downloadJson}
@@ -704,6 +707,7 @@ export function SettingsView({
         ) : null}
         <p className="hint">{t.importSettings}</p>
       </section>
+      <BuildInfo language={language} />
     </section>
   );
 }

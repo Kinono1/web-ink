@@ -1,0 +1,13 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { installRuntime } from './lib/runtime.mjs';
+const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+if (process.argv.slice(2).some(arg => arg !== '--skip-build')) throw Error('Only --skip-build is supported; the install directory is fixed');
+if (!process.argv.includes('--skip-build')) execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', ['run', 'build'], { cwd: repo, stdio: 'inherit' });
+const config = await readFile(path.join(repo, 'wxt.config.ts'), 'utf8');
+const key = config.match(/key:\s*'([^']+)'/)?.[1];
+if (!key) throw Error('Missing stable extension key');
+console.log(JSON.stringify(await installRuntime(repo, { name: 'Web Ink', key }), null, 2));
+console.log('Reload Web Ink in chrome://extensions, then refresh open webpages. Do not uninstall.');

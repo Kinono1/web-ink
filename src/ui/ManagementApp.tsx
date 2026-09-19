@@ -17,6 +17,7 @@ import {
   type Settings,
 } from "../core/model";
 import { isWebPage, pageKey } from "../core/url";
+import { getPdfContext, buildPdfOpenUrl } from "../pdf/context";
 import { ICON_PATHS, type IconName } from "./icons";
 import { StoragePanel } from "./StoragePanel";
 import { THEME_TOKENS } from "./theme";
@@ -33,6 +34,7 @@ import type {
   NoticeMessage,
 } from "./management/types";
 import { COPY } from "./management/copy";
+import { openPdfTab } from "./management/openPdf";
 import {
   tagText,
   parseTags,
@@ -86,6 +88,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [preview, setPreview] = useState<ImportPreview>();
   const [overwrite, setOverwrite] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
+  const [openingPdf, setOpeningPdf] = useState(false);
+  const pdfOpenPending = useRef(false);
   const contextRequest = useRef(0);
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
@@ -94,7 +98,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   settingsRef.current = settings;
   const language = settings.language;
   const t = COPY[language];
-  const pageUrl = tab.url && isWebPage(tab.url) ? pageKey(tab.url) : undefined;
+  const pdfContext = getPdfContext(tab.url);
+  const pageUrl = !pdfContext && tab.url && isWebPage(tab.url) ? pageKey(tab.url) : undefined;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
   const { records, setRecords, nextCursor, loading, loadRecords } =
@@ -165,7 +170,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       settingsRef.current = nextSettings;
       setSettings(nextSettings);
       const nextUrl =
-        context.url && isWebPage(context.url)
+        !getPdfContext(context.url) && context.url && isWebPage(context.url)
           ? pageKey(context.url)
           : undefined;
       await pageState(context.id, nextUrl, requestId);
@@ -505,8 +510,19 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       setBusyImport(false);
     }
   };
+  const showPdf = async (url: string) => {
+    if (pdfOpenPending.current) return;
+    pdfOpenPending.current = true;
+    setOpeningPdf(true);
+    try { await openPdfTab(url); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { pdfOpenPending.current = false; setOpeningPdf(false); }
+  };
+  const openCurrentPdf = () => {
+    void showPdf(buildPdfOpenUrl(chrome.runtime.getURL("/pdf.html"), pdfContext));
+  };
   const openPdf = (record?: Annotation) => {
-    window.open(pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record));
+    void showPdf(pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record));
   };
   const filterCount =
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
@@ -539,6 +555,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         </div>
         <div className="header-actions">
           {mode === "sidepanel" ? (
+            <>
+            <button className="quiet pdf-shortcut" disabled={openingPdf} onClick={openCurrentPdf}
+              title={t.openPdf} aria-label={t.openPdf}>
+              <Icon name="pdf" /><span>PDF</span>
+            </button>
             <button
               className="quiet icon-button"
               aria-label={t.openLibrary}
@@ -547,6 +568,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             >
               <Icon name="library" />
             </button>
+            </>
           ) : (
             <>
               <button
@@ -604,7 +626,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           closeLabel={t.close}
         />
       ) : null}
-      {!hasPermission ? (
+      {!hasPermission && !(mode === "sidepanel" && (!pageUrl || pdfContext)) ? (
         <Empty
           title={t.permission}
           text={t.permissionText}
@@ -618,19 +640,29 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           }
         />
       ) : null}
-      {hasPermission && mode === "sidepanel" ? (
+      {mode === "sidepanel" && (hasPermission || !pageUrl) ? (
         <>
-          <PageHeader
+          {pageUrl ? <PageHeader
             title={pageUrl ? tab.title || new URL(pageUrl).host : t.unknownPage}
             host={pageUrl ? new URL(pageUrl).host : undefined}
             enabled={pageEnabled}
             onToggle={toggleCurrentPage}
             toggleLabel={t.showAnnotations}
             disabled={!pageUrl || paused}
-          />
+          /> : null}
           <div className="sidepanel-content">
           {!pageUrl ? (
-            <Empty title={t.unsupported} text={t.unsupportedText} icon="library" />
+            <section className="pdf-handoff">
+              <span className="pdf-handoff-icon" aria-hidden="true"><Icon name="pdf" /></span>
+              <h2>{pdfContext ? t.currentPdfTitle : t.pdfWelcomeTitle}</h2>
+              <p>{pdfContext?.kind === "remote" ? t.currentPdfText : t.pdfFallbackText}</p>
+              {pdfContext && tab.title ? <span className="pdf-document-name" title={tab.title}>{tab.title}</span> : null}
+              <button className="primary pdf-open-current" disabled={openingPdf} onClick={openCurrentPdf}>
+                <Icon name="pdf" />{openingPdf ? t.openingPdf : pdfContext?.kind === "remote" ? t.openCurrentPdf : t.openPdf}
+              </button>
+              {pdfContext?.kind === "remote" ? <button className="quiet pdf-local-link" onClick={() => openPdf()}>{t.chooseLocalPdf}</button> : null}
+              <small>{t.pdfLocalNote}</small>
+            </section>
           ) : paused ? (
             <section className="notice-card warning">
               <strong>{t.paused}</strong>

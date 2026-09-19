@@ -46,3 +46,6 @@ web-ink-annotations*.md
 
 # User source documents are never release source
 *.pdf
+
+# Generated reproducible build identity
+/public/build-info.json

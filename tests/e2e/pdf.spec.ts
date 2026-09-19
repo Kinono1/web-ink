@@ -19,7 +19,7 @@ const rpc = async (message: object) =>
 test.beforeEach(async () => {
   folder = await mkdtemp(path.join(tmpdir(), "web-ink-pdf-"));
   const extension = path.join(folder, "extension");
-  await cp(path.resolve(".output/chrome-mv3"), extension, { recursive: true });
+  await cp(path.resolve(process.env.WEB_INK_BUILD || ".output/chrome-mv3"), extension, { recursive: true });
   const manifest = JSON.parse(
     await readFile(path.join(extension, "manifest.json"), "utf8"),
   );
@@ -465,4 +465,69 @@ test("Chinese multicolumn text uses packaged CMaps and remains separate from are
     path: "test-results/pdf-chinese.png",
     fullPage: true,
   });
+});
+
+test("sidepanel PDF handoff opens the current source and renders it automatically", async () => {
+  const source = "https://papers.example.test/current.pdf?download=1";
+  await context.route(source, (route) => route.fulfill(
+    route.request().resourceType() === "document"
+      ? { contentType: "text/html", body: "<title>Current research paper</title><p>Viewer fixture</p>" }
+      : { contentType: "application/pdf", body: fixturePdf() },
+  ));
+  const original = await context.newPage();
+  await original.goto(source);
+  await page.goto(`chrome-extension://${id}/sidepanel.html`);
+  await page.evaluate(async (url) => {
+    const tab = (await chrome.tabs.query({})).find((tab) => tab.url === url);
+    await chrome.tabs.update(tab!.id!, { active: true });
+  }, source);
+  const button = page.getByRole("button", { name: "用 Web Ink 打开当前 PDF", exact: true });
+  await expect(button).toBeVisible();
+  await expect(page.getByRole("switch")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "图片绘制" })).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 640 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: "test-results/pdf-handoff-light.png" });
+  const settings = await rpc({ type: "settings.get" });
+  await rpc({ type: "settings.put", settings: { ...settings, theme: "dark" } });
+  await expect(page.locator(".ink-app")).toHaveAttribute("data-theme", "dark");
+  await page.screenshot({ path: "test-results/pdf-handoff-dark.png" });
+  const newPage = context.waitForEvent("page");
+  await button.click();
+  const reader = await newPage;
+  await expect(reader.getByLabel("公开 PDF 网址")).toHaveValue(source);
+  await expect(reader.locator(".pdf-page[data-ready=true]")).toBeVisible();
+  await expect(reader.locator(".pdf-name")).toHaveText("current.pdf");
+  await expect(original).toHaveURL(source);
+});
+
+test("sidepanel offers a manual PDF entry when the current page is inaccessible", async () => {
+  await page.goto(`chrome-extension://${id}/sidepanel.html`);
+  await expect(page.getByRole("heading", { name: "在 Web Ink 中读 PDF" })).toBeVisible();
+  const newPage = context.waitForEvent("page");
+  await page.locator(".pdf-open-current").click();
+  const reader = await newPage;
+  await expect(reader.getByLabel("公开 PDF 网址")).toHaveValue("");
+  await reader.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({ name: "local.pdf", mimeType: "application/pdf", buffer: fixturePdf() });
+  await expect(reader.locator(".pdf-page[data-ready=true]")).toBeVisible();
+});
+
+test("PDF handoff failure explains the local file fallback", async () => {
+  const source = "https://papers.example.test/login.pdf";
+  await page.route(source, (route) => route.fulfill({ contentType: "text/html", body: "Sign in required" }));
+  await page.goto(`chrome-extension://${id}/pdf.html?open=1&source=${encodeURIComponent(source)}`);
+  await expect(page.getByRole("alert")).toContainText("不是有效 PDF");
+  await expect(page.getByRole("alert")).toContainText("选择本地 PDF");
+  await open();
+});
+
+test("PDF entry reuses a reader and keeps its current document", async () => {
+  await open();
+  const panel = await context.newPage();
+  await panel.goto(`chrome-extension://${id}/sidepanel.html`);
+  const before = context.pages().length;
+  await panel.getByRole("button", { name: "打开 PDF", exact: true }).first().click();
+  await expect.poll(() => context.pages().length).toBe(before);
+  await expect(page.locator(".pdf-name")).toHaveText("reading.pdf");
+  await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
 });

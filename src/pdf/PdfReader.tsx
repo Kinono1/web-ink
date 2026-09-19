@@ -39,6 +39,8 @@ const initialParams = new URLSearchParams(location.search);
 
 export function PdfReader() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
+  const autoOpenAttempted = useRef(false);
   const [source, setSource] = useState(initialParams.get("source") || "");
   const [opened, setOpened] = useState<OpenDocument>();
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
@@ -113,6 +115,7 @@ export function PdfReader() {
     void request<Settings>({ type: "settings.get" }).then((next) => {
       setSettings(next);
       setColor(next.defaultColor);
+      setSettingsReady(true);
     });
     const listener = (m: { type?: string }) => {
       if (m.type === "settings.changed")
@@ -302,7 +305,16 @@ export function PdfReader() {
       cancelAnimationFrame(frame);
     };
   }, [opened?.hash, layoutEpoch]);
-  async function openPdf(file?: File) {
+  useEffect(() => {
+    if (!settingsReady || autoOpenAttempted.current) return;
+    autoOpenAttempted.current = true;
+    if (initialParams.get("open") === "1" && initialParams.get("source")) {
+      // A side-panel click starts this handoff. Never request site access from
+      // an effect: if needed, the reader's Open URL button supplies the gesture.
+      void openPdf(undefined, true);
+    }
+  }, [settingsReady]);
+  async function openPdf(file?: File, automatic = false) {
     if (unsaved || saving || removing || hasNoteDrafts) {
       setError(
         t(
@@ -353,13 +365,14 @@ export function PdfReader() {
         const url = pdfSourceUrl(source.trim());
         remote = url.href;
         const origins = [`${url.origin}/*`];
-        if (
-          !(await chrome.permissions.contains({ origins })) &&
-          !(await chrome.permissions.request({ origins }))
-        )
-          throw Error(
-            t("未授予网站访问权限。", "Site permission was not granted."),
-          );
+        if (!(await chrome.permissions.contains({ origins }))) {
+          if (automatic) {
+            setNotice(t("链接已带入。点击「打开网址」授权并读取，或选择本地 PDF。", "Link ready. Click Open URL to grant access, or choose a local PDF."));
+            return;
+          }
+          if (!(await chrome.permissions.request({ origins })))
+            throw Error(t("未授予网站访问权限。", "Site permission was not granted."));
+        }
       }
       const bytes = file
         ? await readLocalPdf(file)
@@ -641,6 +654,7 @@ export function PdfReader() {
       {error && (
         <div className="pdf-message error" role="alert">
           <span>{error}</span>
+          {!opened ? <p>{t("无法直接读取？下载 PDF 后，点击「选择本地 PDF」继续。", "Can't open the link? Download the PDF, then choose the local file.")}</p> : null}
           {unsaved ? (
             <>
               <button disabled={saving} onClick={() => void save(unsaved)}>
@@ -953,11 +967,11 @@ export function PdfReader() {
           </div>
         </>
       ) : (
-        <section className="pdf-welcome">
+        <section className="pdf-welcome" aria-busy={busy}>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d={ICON_PATHS.pdf} />
           </svg>
-          <h1>{t("读论文，留下重点", "Read. Mark. Return.")}</h1>
+          <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : t("读论文，留下重点", "Read. Mark. Return.")}</h1>
           <p>
             {t(
               "选择一份 PDF，或打开公开网址。标注保存在本机，原文件不会存入资料库。",
@@ -973,8 +987,8 @@ export function PdfReader() {
           {initialParams.has("document") && (
             <p role="status">
               {t(
-                "请重新选择同一 PDF，核对文件内容后恢复标注。",
-                "Choose the same PDF again to verify its content and restore annotations.",
+                "重新选择原来的 PDF，即可恢复标注。",
+                "Choose the original PDF again to restore your annotations.",
               )}
             </p>
           )}
