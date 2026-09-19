@@ -4,6 +4,7 @@ import type { FilterKind, Draft } from "./types";
 import { COPY } from "./copy";
 import { tagText, parseTags, statusClass, annotationText, matchesQuery, isPdf, pdfReaderUrl, kindFamily, localDate, download, Icon } from "./helpers";
 import { StoragePanel } from "../StoragePanel";
+import type { IconName } from "../icons";
 export function Alert({
   kind,
   text,
@@ -28,13 +29,16 @@ export function Empty({
   title,
   text,
   action,
+  icon,
 }: {
   title: string;
   text: string;
   action?: React.ReactNode;
+  icon?: IconName;
 }) {
   return (
     <section className="empty">
+      {icon ? <span className="empty-icon" aria-hidden="true"><Icon name={icon} /></span> : null}
       <h2>{title}</h2>
       {text ? <p>{text}</p> : null}
       {action ? <div>{action}</div> : null}
@@ -47,28 +51,31 @@ export function PageHeader({
   enabled,
   onToggle,
   toggleLabel,
+  disabled = false,
 }: {
   title: string;
   host?: string;
   enabled: boolean;
   onToggle: () => void;
   toggleLabel: string;
+  disabled?: boolean;
 }) {
   return (
     <section className="page-header">
-      <div>
-        <p className="eyebrow">CURRENT PAGE</p>
-        <strong title={title}>{title}</strong>
+      <strong title={title}>{title}</strong>
+      <div className="page-context">
         {host ? <span>{host}</span> : null}
-      </div>
       <button
         className={enabled ? "page-switch on" : "page-switch"}
-        aria-pressed={enabled}
+        role="switch"
+        aria-checked={enabled}
+        disabled={disabled}
         onClick={onToggle}
       >
         <span aria-hidden="true" />
         {toggleLabel}
       </button>
+      </div>
     </section>
   );
 }

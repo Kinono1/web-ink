@@ -3,6 +3,12 @@ export const COPY = {
   "zh-CN": {
     title: "Web Ink",
     current: "当前页面",
+    pageAnnotations: "本页标注",
+    showAnnotations: "显示标注",
+    pageEmptyTitle: "留下值得记住的内容",
+    pageEmptyText: "选中网页文字，开始第一条标注。",
+    annotationHint: "选中文字即可高亮，笔记随标注保存。",
+    moreActions: "更多操作",
     library: "资料库",
     settings: "设置与数据",
     openLibrary: "打开资料库",
@@ -83,6 +89,12 @@ export const COPY = {
   en: {
     title: "Web Ink",
     current: "Current page",
+    pageAnnotations: "Page annotations",
+    showAnnotations: "Show annotations",
+    pageEmptyTitle: "Keep what matters",
+    pageEmptyText: "Select text on the page to make your first highlight.",
+    annotationHint: "Highlight text, then add a note to keep your thoughts.",
+    moreActions: "More actions",
     library: "Library",
     settings: "Settings & data",
     openLibrary: "Open library",
@@ -163,4 +175,3 @@ export const COPY = {
     clearFilters: "Clear filters",
   },
 } as const;
-

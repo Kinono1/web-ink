@@ -120,6 +120,44 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
 
+async function openSidepanel(activePage: Page) {
+  await manager.goto(`chrome-extension://${extensionId}/sidepanel.html`);
+  await expect(
+    manager.getByRole("heading", { name: "本页标注", exact: true }),
+  ).toBeVisible();
+  // Directly opening the extension page makes it the active tab. Restore the
+  // fixture tab so sidepanel context matches Chrome's native side-panel model.
+  const activeUrl = activePage.url();
+  await manager.evaluate(async (url) => {
+    const tab = (await chrome.tabs.query({})).find((item) => item.url === url);
+    if (tab?.id === undefined) throw new Error(`Fixture tab not found: ${url}`);
+    await chrome.tabs.update(tab.id, { active: true });
+  }, activeUrl);
+  await expect
+    .poll(() =>
+      manager.evaluate(async () =>
+        (await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.url,
+      ),
+    )
+    .toBe(activeUrl);
+  await expect(manager.locator(".page-header strong")).toHaveText(
+    "Web Ink · Reading fixture",
+  );
+}
+
+async function expectSidepanelFitsViewport(height: number) {
+  await expect
+    .poll(() =>
+      manager.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+  const dock = await manager.locator(".sidepanel-dock").boundingBox();
+  expect(dock).not.toBeNull();
+  expect(dock!.y + dock!.height).toBeLessThanOrEqual(height);
+}
+
 test("production permission is optional, onboarding is reachable, and pages are untouched before grant", async () => {
   const manifest = JSON.parse(
     await readFile(path.join(extensionPath, "manifest.json"), "utf8"),
@@ -1125,6 +1163,87 @@ test("query paging and cancellation preserve complete substring results in the b
         type: "annotations.query",
         query: { limit: 50 },
       })
-    ).items,
+  ).items,
   ).toHaveLength(50);
+});
+
+test("sidepanel empty state keeps the compact dock visible in a narrow viewport", async () => {
+  await enable();
+  const page = await article();
+  await openSidepanel(page);
+  const switchControl = manager.getByRole("switch", {
+    name: "显示标注",
+    exact: true,
+  });
+  await expect(switchControl).toHaveAttribute("aria-checked", "true");
+  await expect(manager.locator(".page-header")).toContainText("127.0.0.1:4173");
+  await expect(
+    manager.getByRole("heading", {
+      name: "留下值得记住的内容",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(manager.getByText("选中网页文字，开始第一条标注。", { exact: true })).toBeVisible();
+  await expect(
+    manager.getByRole("button", { name: "图片绘制", exact: true }),
+  ).toBeVisible();
+  await manager.setViewportSize({ width: 320, height: 640 });
+  await expectSidepanelFitsViewport(640);
+  await manager.setViewportSize({ width: 390, height: 844 });
+  await manager.screenshot({ path: "test-results/sidepanel-empty.png" });
+});
+
+test("sidepanel preserves per-annotation notes and its display switch controls page highlights", async () => {
+  await enable();
+  const page = await article();
+  await selectAndMark(page);
+  await openSidepanel(page);
+  await expect(manager.locator(".annotation-row")).toHaveCount(1);
+  const detail = manager.locator(".annotation-detail");
+  await expect(detail).toContainText("Precise highlights survive a return visit.");
+  await detail.getByRole("button", { name: "笔记", exact: true }).click();
+  await detail
+    .getByRole("textbox", { name: "笔记", exact: true })
+    .fill("从侧栏保存的笔记");
+  await detail.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(detail.locator(".note")).toHaveText("从侧栏保存的笔记");
+  expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].note).toBe(
+    "从侧栏保存的笔记",
+  );
+  const switchControl = manager.getByRole("switch", {
+    name: "显示标注",
+    exact: true,
+  });
+  await switchControl.click();
+  await expect(switchControl).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
+  await switchControl.click();
+  await expect(switchControl).toHaveAttribute("aria-checked", "true");
+  await expect
+    .poll(() => page.evaluate(() => CSS.highlights.size))
+    .toBeGreaterThan(0);
+  await manager.setViewportSize({ width: 390, height: 844 });
+  await manager.screenshot({ path: "test-results/sidepanel-populated.png" });
+});
+
+test("sidepanel dark theme retains its dock and pause can be resumed", async () => {
+  await enable();
+  const page = await article();
+  await openSidepanel(page);
+  const settings = await rpc<any>(manager, { type: "settings.get" });
+  await rpc(manager, {
+    type: "settings.put",
+    settings: { ...settings, theme: "dark" },
+  });
+  const app = manager.locator(".ink-app.sidepanel");
+  await expect(app).toHaveAttribute("data-theme", "dark");
+  await manager.setViewportSize({ width: 390, height: 844 });
+  await expect(manager.locator(".sidepanel-dock")).toBeVisible();
+  await manager.screenshot({ path: "test-results/sidepanel-dark.png" });
+  await manager.locator("summary[aria-label='更多操作']").click();
+  await manager.getByRole("button", { name: "暂停此网站", exact: true }).click();
+  await expect(manager.getByText("此网站已暂停，现有标注不会显示。", { exact: true })).toBeVisible();
+  await expect(manager.locator(".sidepanel-dock")).toHaveCount(0);
+  await manager.getByRole("button", { name: "恢复此网站", exact: true }).click();
+  await expect(manager.locator(".sidepanel-dock")).toBeVisible();
 });

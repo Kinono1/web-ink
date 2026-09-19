@@ -13,6 +13,7 @@ import {
   type BackupEnvelope,
   type ImportPreview,
   type Language,
+  type PageMode,
   type Settings,
 } from "../core/model";
 import { isWebPage, pageKey } from "../core/url";
@@ -20,6 +21,7 @@ import { ICON_PATHS, type IconName } from "./icons";
 import { StoragePanel } from "./StoragePanel";
 import { THEME_TOKENS } from "./theme";
 import "./management.css";
+import "./sidepanel.css";
 
 import type {
   Mode,
@@ -113,11 +115,14 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         return;
       }
       try {
-        const result = await request<{
-          pageUrl?: string;
-          states: AnchorState[];
-          enabled?: boolean;
-        }>({ type: "page.state.get", tabId });
+        const [result, pageMode] = await Promise.all([
+          request<{
+            pageUrl?: string;
+            states: AnchorState[];
+            enabled?: boolean;
+          }>({ type: "page.state.get", tabId }),
+          request<PageMode>({ type: "page.mode.get", pageUrl: url }),
+        ]);
         if (
           (expectedContext !== undefined &&
             expectedContext !== contextRequest.current) ||
@@ -127,7 +132,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         const next: Record<string, AnchorState> = {};
         for (const state of result.states) next[state.id] = state;
         setStates(next);
-        setPageEnabled(result.enabled === true);
+        // Content snapshots may precede the asynchronous mode broadcast.
+        // Read the persisted preference so the switch does not revert visually.
+        setPageEnabled(pageMode.enabled === true);
       } catch (cause) {
         if (
           expectedContext === undefined ||
@@ -509,7 +516,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       : undefined;
   return (
     <main
-      className="ink-app"
+      className={mode === "sidepanel" ? "ink-app sidepanel" : "ink-app"}
       style={
         explicitTheme
           ? (THEME_TOKENS[explicitTheme] as React.CSSProperties)
@@ -521,10 +528,10 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     >
       <header className="topbar">
         <div className="app-title">
-          <p className="eyebrow">LOCAL WEB NOTES</p>
+          {mode === "library" ? <p className="eyebrow">LOCAL WEB NOTES</p> : null}
           <h1>
             {mode === "sidepanel"
-              ? t.current
+              ? t.pageAnnotations
               : screen === "settings"
                 ? t.settings
                 : t.library}
@@ -533,11 +540,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         <div className="header-actions">
           {mode === "sidepanel" ? (
             <button
-              className="quiet"
+              className="quiet icon-button"
+              aria-label={t.openLibrary}
+              title={t.openLibrary}
               onClick={() => window.open(chrome.runtime.getURL("library.html"))}
             >
               <Icon name="library" />
-              {t.openLibrary}
             </button>
           ) : (
             <>
@@ -617,10 +625,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             host={pageUrl ? new URL(pageUrl).host : undefined}
             enabled={pageEnabled}
             onToggle={toggleCurrentPage}
-            toggleLabel={pageEnabled ? t.disable : t.enable}
+            toggleLabel={t.showAnnotations}
+            disabled={!pageUrl || paused}
           />
+          <div className="sidepanel-content">
           {!pageUrl ? (
-            <Empty title={t.unsupported} text={t.unsupportedText} />
+            <Empty title={t.unsupported} text={t.unsupportedText} icon="library" />
           ) : paused ? (
             <section className="notice-card warning">
               <strong>{t.paused}</strong>
@@ -637,35 +647,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                 {t.resume}
               </button>
             </section>
-          ) : (
-            <div className="page-actions">
-              <button
-                className="primary"
-                onClick={() => void pageAction("draw")}
-              >
-                <Icon name="draw" />
-                {t.drawImage}
-              </button>
-              <details className="menu">
-                <summary aria-label={t.settings}>
-                  <Icon name="more" />
-                </summary>
-                <button
-                  className="danger"
-                  onClick={() =>
-                    saveSettings({
-                      disabledOrigins: origin
-                        ? [...settingsRef.current.disabledOrigins, origin]
-                        : settingsRef.current.disabledOrigins,
-                    })
-                  }
-                >
-                  {t.pause}
-                </button>
-              </details>
-            </div>
-          )}
-          {pageUrl && !paused ? (
+          ) : null}
+          {pageUrl && !paused && records.length > 0 ? (
             <AnnotationBrowser
               compact
               records={records}
@@ -698,7 +681,42 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             </button>
           ) : null}
           {pageUrl && !records.length && !loading && !paused ? (
-            <Empty title={t.empty} text={t.emptyText} />
+            <Empty title={t.pageEmptyTitle} text={t.pageEmptyText} icon="draw" />
+          ) : null}
+          {loading && pageUrl && !paused ? (
+            <p className="loading" role="status">{t.loading}</p>
+          ) : null}
+          </div>
+          {pageUrl && !paused ? (
+            <footer className="sidepanel-dock" aria-label={t.pageAnnotations}>
+              <p className="dock-hint">{t.annotationHint}</p>
+              <div className="page-actions">
+                <button
+                  className="dock-draw"
+                  onClick={() => void pageAction("draw")}
+                >
+                  <Icon name="draw" />
+                  {t.drawImage}
+                </button>
+                <details className="menu">
+                  <summary aria-label={t.moreActions} title={t.moreActions}>
+                    <Icon name="more" />
+                  </summary>
+                  <button
+                    className="danger"
+                    onClick={() =>
+                      saveSettings({
+                        disabledOrigins: origin
+                          ? [...settingsRef.current.disabledOrigins, origin]
+                          : settingsRef.current.disabledOrigins,
+                      })
+                    }
+                  >
+                    {t.pause}
+                  </button>
+                </details>
+              </div>
+            </footer>
           ) : null}
         </>
       ) : null}
