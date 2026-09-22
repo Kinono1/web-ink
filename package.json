@@ -23,7 +23,8 @@
     "benchmark:pdf": "node scripts/benchmark-pdf-v03.mjs",
     "test:release": "node --test tests/release-tools.test.mjs",
     "update:local": "node scripts/update-local.mjs",
-    "test:bulk": "vitest run --config vitest.bulk.config.ts"
+    "test:bulk": "vitest run --config vitest.bulk.config.ts",
+    "postbuild": "node scripts/seal-runtime.mjs"
   },
   "dependencies": {
     "dexie": "4.4.6",

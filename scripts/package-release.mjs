@@ -1,9 +1,9 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
-import { runtimeFiles, digest } from './lib/runtime.mjs';
+import { runtimeFiles, digest, validateRuntimeIntegrity } from './lib/runtime.mjs';
 import { packFiles, verifyArchive } from './lib/archive.mjs';
 const files = await runtimeFiles('.output/chrome-mv3');
-const manifest = JSON.parse(files['manifest.json'].toString());
+const manifest = validateRuntimeIntegrity(files);
 const info = JSON.parse(files['build-info.json'].toString());
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
 const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
@@ -15,5 +15,5 @@ verifyArchive(bytes, files);
 const name = `web-ink-${pkg.version}-chrome.zip`;
 await writeFile(`.output/${name}`, bytes);
 await writeFile(`.output/${name}.sha256`, `${digest(bytes)}  ${name}\n`);
-console.log(`${name}: ${Object.keys(files).length} tested files verified, sha256 ${digest(bytes)}`);
+console.log(`${name}: ${Object.keys(files).length} runtime files verified, sha256 ${digest(bytes)}`);
 if (info.dirty) console.log('Working-tree build: local preview only. Rebuild a clean commit before publishing.');

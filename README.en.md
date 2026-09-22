@@ -46,6 +46,6 @@ npm run test:e2e
 npm run zip
 ```
 
-Use Node 24.15+ within the package engine range and the committed lockfile. `zip` verifies and packages the existing tested build without rebuilding. Clean builds use the commit timestamp as their reproducible build epoch.
+Use Node 24.15+ within the package engine range and the committed lockfile. `build` checks entry points, static resource references and prepared PDF assets, then writes `runtime-integrity.json`. Installation and packaging reject missing, modified or unlisted runtime files. Complete legacy installs can still be upgraded. `zip` verifies and packages the existing build without rebuilding. Clean builds use the commit timestamp as their reproducible build epoch.
 
 [Validation](docs/VALIDATION.md) · [Performance evidence](docs/PERFORMANCE.md) · [Release process](docs/RELEASING.md) · [Third-party licenses](THIRD_PARTY_NOTICES.md) · [MIT license](LICENSE)

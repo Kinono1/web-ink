@@ -2,9 +2,11 @@ import { lstat, readdir, readFile, mkdir, cp, rm, writeFile, mkdtemp } from 'nod
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { validateRuntimeIntegrity } from './integrity.mjs';
+export { createRuntimeIntegrity, validateRuntimeIntegrity } from './integrity.mjs';
 
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const roots = new Set(['manifest.json', 'background.js', 'engine.js', 'library.html', 'pdf.html', 'sidepanel.html', 'build-info.json']);
+const roots = new Set(['manifest.json', 'background.js', 'engine.js', 'library.html', 'pdf.html', 'sidepanel.html', 'build-info.json', 'runtime-integrity.json']);
 const folders = new Set(['assets', 'chunks', 'content-scripts', 'icon', 'licenses', 'pdfjs']);
 
 export async function runtimeFiles(root) {
@@ -45,9 +47,11 @@ export async function installRuntime(repo, identity, { copyFile = cp } = {}) {
     if ((await lstat(dir)).isSymbolicLink()) throw Error(`Refusing symbolic link: ${dir}`);
   const incoming = await runtimeFiles(source);
   validateIdentity(incoming, identity);
+  validateRuntimeIntegrity(incoming);
   // Intentionally refuse a missing install: first installation remains explicit.
   const previous = await runtimeFiles(target);
   validateIdentity(previous, identity);
+  validateRuntimeIntegrity(previous, { requireIntegrity: false });
   const receiptPath = path.join(repo, '.output/install-receipt.json');
   try {
     const receipt = JSON.parse(await readFile(receiptPath, 'utf8'));

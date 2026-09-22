@@ -39,3 +39,12 @@ Tag the exact verified commit, create the release/prerelease deliberately, uploa
 6. Verify ordinary-Chrome native permissions/side panel, public webpage/PDF recovery, reader coexistence, and the agreed competitor tasks separately. Pre-granted test profiles cannot close native acceptance. Save acceptance and comparison receipts with exact build identities; if any required gate is blocked, retain a candidate instead of publishing.
 7. Install the exact accepted runtime with `node scripts/update-local.mjs --skip-build` only when `.output/chrome-mv3` matches the accepted ZIP. This fixed-directory updater records hashes in `.output/install-receipt.json`, keeps backups in `.output/install-backups`, and refuses unknown or changed installs. Do not remove its safety receipt to bypass a mismatch; investigate first.
 8. After all gates pass, publish `v0.3.1` as a prerelease from that exact commit, attach ZIP, checksum and acceptance receipts, then download and verify the public asset. Do not overwrite the v0.3.0 archive.
+
+
+## Runtime integrity before packaging or local installation
+
+`npm run build` runs a post-build check: required entry points, manifest/HTML references, literal generated module imports/preload references, and every prepared public asset must exist. It then creates `runtime-integrity.json` with SHA-256 hashes of all runtime files except itself. PDF workers, CMaps, fonts, decoders and licenses are included in that inventory, even when their names are computed at runtime.
+
+Both packaging and local installation require this inventory and compare the exact filename set and contents before writing. Missing `engine.js`, direct or transitive chunks, a PDF worker, a manifest icon, a missing inventory, modified bytes or unlisted files fail closed. Re-running the sealing step cannot bless missing static references or missing prepared public assets. Build using `npm run build`; running `wxt build` alone does not produce a sealed candidate.
+
+For an existing install created before this change, an absent inventory is accepted only on the destination side after structural and identity checks. If an inventory exists there, it is always validated. Incoming builds never use this legacy allowance. The inventory is an accidental-corruption/completeness check, not a publisher signature or proof that browser acceptance has run. Required release tests and manual acceptance remain separate gates.

@@ -52,7 +52,9 @@ npm run test:e2e
 npm run zip
 ```
 
-`npm run zip` 只归档已构建的运行文件，并验证压缩包内容和 SHA-256，不会再次构建。发布必须来自干净、已验收的提交；构建信息中的时间是可复现构建基准时间。
+`npm run build` 会检查运行入口、静态资源引用及 PDF 资源，并生成 `runtime-integrity.json`。安装和打包前会逐项核对文件清单与哈希，缺失、修改或多出的文件都会被拒绝。旧版完整安装目录仍可升级。
+
+`npm run zip` 只归档已构建且通过完整性检查的运行文件，并验证压缩包内容和 SHA-256，不会再次构建。发布必须来自干净、已验收的提交；构建信息中的时间是可复现构建基准时间。
 
 [验证记录](docs/VALIDATION.md) · [性能及测量边界](docs/PERFORMANCE.md) · [发布流程](docs/RELEASING.md) · [第三方许可](THIRD_PARTY_NOTICES.md)
 
