@@ -62,6 +62,33 @@ export function pdfReaderUrl(readerBase: string, record?: Annotation): string {
 export function kindFamily(kind: AnnotationKind): "text" | "image" | "pdf" {
   return kind === "text" ? "text" : kind === "image" ? "image" : "pdf";
 }
+/** The words a row shows for an annotation: the quote, image label, or PDF text. */
+export function excerptText(record: Annotation): string {
+  return record.kind === "text"
+    ? record.target.exact
+    : record.kind === "image"
+      ? record.target.alt || record.target.context || record.target.src
+      : record.target.exact || record.target.fileName;
+}
+/** Where an annotation came from: page title, PDF file name, or host. */
+export function sourceName(record: Annotation): string {
+  return (
+    record.pageTitle ||
+    (isPdf(record) ? record.target.fileName : new URL(record.pageUrl).host)
+  );
+}
+/** Mail-style dates: time today, month and day this year, full date otherwise. */
+export function shortDate(value: string, language: Language, now = new Date()): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.valueOf())) return value;
+  const options: Intl.DateTimeFormatOptions =
+    date.toDateString() === now.toDateString()
+      ? { timeStyle: "short" }
+      : date.getFullYear() === now.getFullYear()
+        ? { month: "short", day: "numeric" }
+        : { dateStyle: "medium" };
+  return new Intl.DateTimeFormat(language === "zh-CN" ? "zh-CN" : "en", options).format(date);
+}
 export function localDate(value: string, language: Language): string {
   const date = new Date(value);
   return Number.isNaN(date.valueOf())
