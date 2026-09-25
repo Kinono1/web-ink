@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-const packages = ['react', 'react-dom', 'scheduler', 'dexie', 'perfect-freehand', 'pdfjs-dist', 'wxt'];
+const packages = ['react', 'react-dom', 'scheduler', 'dexie', 'perfect-freehand', 'pdfjs-dist', 'wxt', '@wxt-dev/browser'];
 const sections = [];
 for (const name of packages) {
   const folder = path.join('node_modules', name);

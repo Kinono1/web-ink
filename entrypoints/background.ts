@@ -47,17 +47,25 @@ export default defineBackground(() => {
         await chrome.scripting.unregisterContentScripts({ ids: [CONTENT_ID] });
       return false;
     }
-    if (!existing.length)
-      await chrome.scripting.registerContentScripts([
-        {
-          id: CONTENT_ID,
-          matches: ORIGINS,
-          js: ["content-scripts/content.js"],
-          runAt: "document_idle",
-          allFrames: false,
-          persistAcrossSessions: true,
-        },
-      ]);
+    if (!existing.length) {
+      try {
+        await chrome.scripting.registerContentScripts([
+          {
+            id: CONTENT_ID,
+            matches: ORIGINS,
+            js: ["content-scripts/content.js"],
+            runAt: "document_idle",
+            allFrames: false,
+            persistAcrossSessions: true,
+          },
+        ]);
+      } catch (error) {
+        // While Chrome restores the persisted registration after a browser start
+        // or extension reload, the ID is taken but not yet reported, and it
+        // cannot be updated. It is this same definition, so it is already done.
+        if (!String(error).includes("Duplicate script ID")) throw error;
+      }
+    }
     // Inject into already-open pages too; the content controller guards against duplicates.
     const tabs = await chrome.tabs.query({});
     await Promise.allSettled(
