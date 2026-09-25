@@ -1,7 +1,9 @@
-/* Keep the compact side panel independent of the library's shared layout. */
+/*
+ * Side panel: a fixed page context, one scrolling column, and a slim toolbar.
+ * Annotations open in place; nothing repeats what the header already says.
+ */
 .ink-app.sidepanel {
-  --panel-rule: color-mix(in srgb, var(--ink-text) 9%, transparent);
-  --panel-fill: color-mix(in srgb, var(--ink-text) 4%, transparent);
+  --item-fill: color-mix(in srgb, var(--ink-text) 5%, transparent);
   display: flex;
   flex-direction: column;
   gap: 0;
@@ -9,9 +11,9 @@
   height: 100dvh;
   min-height: 0;
   max-width: none;
-  padding: 12px 16px;
+  padding: 0;
   overflow: hidden;
-  background: var(--ink-surface-solid);
+  background: var(--ink-panel);
 }
 .sidepanel > * {
   flex-shrink: 0;
@@ -20,274 +22,291 @@
 .sidepanel .topbar {
   flex-direction: row;
   align-items: center;
-  gap: 12px;
-  min-height: 36px;
+  gap: 8px;
+  min-height: 0;
+  padding: 12px 12px 0 16px;
+}
+.sidepanel .app-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 .sidepanel .topbar h1 {
-  font-size: 16px;
-  font-weight: 600;
-  line-height: 1.4;
-  letter-spacing: -0.02em;
-  white-space: normal;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-body);
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 28px;
+}
+.sidepanel .app-title .count {
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 .sidepanel .header-actions {
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 2px;
 }
-.sidepanel .header-actions .icon-button {
-  width: 34px;
-  min-height: 34px;
-  border-color: transparent;
-  border-radius: 10px;
-  color: var(--ink-secondary);
-  background: transparent;
+.sidepanel > .alert {
+  margin: 8px 16px 0;
 }
-.sidepanel .header-actions .icon-button:hover {
-  color: var(--ink-text);
-  background: var(--panel-fill);
-}
+
+/* Page context */
 .sidepanel .page-header {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 8px;
-  padding: 16px 0 14px;
-  border-color: var(--panel-rule);
+  display: grid;
+  gap: 2px;
+  padding: 2px 16px 10px;
+  border-bottom: 1px solid var(--ink-separator);
 }
 .sidepanel .page-header strong {
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.5;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: var(--ink-size-title);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
 }
-.sidepanel .page-header .page-context {
+.sidepanel .page-context {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 4px 12px;
+  gap: 12px;
+  min-height: 28px;
 }
 .sidepanel .page-context > span {
-  flex: 1 1 90px;
   min-width: 0;
-  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
 }
 .sidepanel .page-switch {
-  gap: 6px;
-  min-height: 28px;
-  max-width: none;
   margin-left: auto;
-  padding: 2px 0 2px 4px;
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--ink-secondary);
-  white-space: nowrap;
 }
-.sidepanel .page-switch > span {
-  flex: none;
-}
-.sidepanel .page-switch.on > span {
-  background: var(--ink-text);
-}
-.sidepanel .page-switch.on > span::after {
-  background: var(--ink-surface-solid);
-}
-.sidepanel .page-switch:disabled {
-  cursor: not-allowed;
-}
+
+/* Scrolling column */
 .sidepanel > .sidepanel-content {
   flex: 1 1 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
+  gap: 8px;
+  padding: 8px 8px 16px;
   overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 12px 2px;
   scrollbar-width: thin;
 }
 .sidepanel-content > * {
   flex-shrink: 0;
 }
-.sidepanel .empty {
-  flex: 1;
-  min-height: 180px;
-  align-content: center;
-  justify-items: center;
-  gap: 9px;
-  padding: 28px 12px 48px;
-  text-align: center;
-}
-.sidepanel .empty-icon {
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 10px;
-  border: 1px solid var(--panel-rule);
-  border-radius: 20px;
-  color: var(--ink-tertiary);
-  background: var(--panel-fill);
-}
-.sidepanel .empty-icon .icon {
-  width: 30px;
-  height: 30px;
-  stroke-width: 1.35;
-}
-.sidepanel .empty h2 {
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.5;
-}
-.sidepanel .empty p {
-  max-width: 240px;
-  font-size: 12px;
-  line-height: 1.7;
-}
-.sidepanel .sidepanel-dock {
-  position: relative;
-  margin-top: 8px;
-  padding: 14px 12px 10px;
-  border: 1px solid var(--panel-rule);
-  border-radius: 20px;
-  background: var(--ink-surface-solid);
-  box-shadow: 0 3px 16px rgb(0 0 0 / 4%);
-}
-.sidepanel .dock-hint {
-  margin: 0 3px 14px;
-  color: var(--ink-secondary);
-  font-size: 12px;
-  line-height: 1.6;
-}
-.sidepanel .dock-draw {
-  min-height: 36px;
-  padding: 7px 12px;
-  border-color: transparent;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-surface-solid);
-  background: var(--ink-text);
-}
-.sidepanel .dock-draw:hover {
-  opacity: 0.85;
-}
-.sidepanel .menu summary {
-  width: 36px;
-  height: 36px;
-  border-color: transparent;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--ink-secondary);
-}
-.sidepanel .menu summary:hover,
-.sidepanel .menu[open] summary {
-  background: var(--panel-fill);
-}
-.sidepanel .menu > button {
-  top: auto;
-  bottom: calc(100% + 8px);
-  max-width: calc(100vw - 64px);
-  padding: 10px 14px;
-  border: 1px solid var(--panel-rule);
-  border-radius: 12px;
-}
-.sidepanel .annotation-browser.compact {
-  overflow: visible;
-  gap: 16px;
-}
-.sidepanel .annotation-list {
-  gap: 4px;
-  overflow: visible;
-}
-.sidepanel .annotation-row {
-  min-height: 64px;
-  padding: 10px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-}
-.sidepanel .annotation-row:hover {
-  background: var(--panel-fill);
-}
-.sidepanel .annotation-row.selected {
-  border-color: var(--panel-rule);
-  background: var(--panel-fill);
-}
-.sidepanel .row-copy strong {
-  font-weight: 500;
-}
-.sidepanel .annotation-detail.compact {
-  padding: 16px 4px 4px;
-  border-color: var(--panel-rule);
-}
-.sidepanel .detail-heading h2 {
-  font-size: 13px;
-  font-weight: 500;
-}
-.sidepanel .detail-excerpt {
-  padding: 12px;
-  background: var(--panel-fill);
-  line-height: 1.65;
-}
-.sidepanel .detail-actions button {
-  min-height: 32px;
-  border-radius: 8px;
-  font-weight: 500;
-}
-.sidepanel .alert {
-  margin-top: 10px;
+.sidepanel .notice-card {
+  align-items: center;
+  margin: 0 8px;
 }
 .sidepanel .loading {
-  padding: 20px 0;
+  padding: 16px 0;
 }
 .sidepanel .load-more {
   align-self: center;
 }
-@media (max-width: 340px) {
-  .ink-app.sidepanel {
-    padding-right: 12px;
-    padding-left: 12px;
-  }
+
+/* Annotations: a colour rule, the quote, the note, one quiet line of facts. */
+.sidepanel .annotation-list {
+  display: grid;
+  gap: 2px;
+}
+.sidepanel .annotation-item {
+  border-radius: var(--ink-radius);
+}
+.sidepanel .annotation-item.open {
+  background: var(--item-fill);
+}
+.sidepanel .annotation-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px 10px 24px;
+  border-radius: var(--ink-radius);
+  color: var(--ink-text);
+  background: transparent;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+}
+.sidepanel .annotation-row::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  bottom: 13px;
+  left: 12px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--record-color);
+}
+.sidepanel .annotation-row:hover {
+  background: var(--item-fill);
+}
+.sidepanel .annotation-item.open .annotation-row {
+  cursor: default;
+}
+.sidepanel .annotation-item.open .annotation-row:hover {
+  background: transparent;
+}
+.sidepanel .row-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  font-size: var(--ink-size-title);
+  line-height: 1.45;
+}
+.sidepanel .annotation-row .note {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  color: var(--ink-secondary);
+}
+.sidepanel .annotation-item.open .row-quote,
+.sidepanel .annotation-item.open .note {
+  display: block;
+}
+.sidepanel .annotation-item.open .note {
+  color: var(--ink-text);
+}
+.sidepanel .row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  color: var(--ink-tertiary);
+  font-size: var(--ink-size-meta);
+}
+.sidepanel .row-meta > * + *::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--ink-tertiary);
+}
+.sidepanel .item-body {
+  display: grid;
+  gap: 8px;
+  padding: 0 12px 10px 24px;
+}
+.sidepanel .item-body > .detail-actions {
+  margin-left: -8px;
+}
+.sidepanel .detail-actions .quiet {
+  padding: 4px 8px;
+  color: var(--ink-secondary);
+}
+.sidepanel .detail-actions .quiet:hover {
+  color: var(--ink-text);
+  background: var(--ink-fill);
+}
+.sidepanel .detail-actions .delete:hover {
+  color: var(--ink-danger);
+  background: color-mix(in srgb, var(--ink-danger) 10%, transparent);
+}
+.sidepanel .editor {
+  padding-top: 4px;
 }
 
-.sidepanel .pdf-shortcut {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 34px;
-  padding: 5px 9px;
-  border-color: transparent;
-  border-radius: 10px;
-  color: var(--ink-secondary);
-  background: var(--panel-fill);
-  font-size: 12px;
-}
+/* Empty and PDF hand-off: one glyph, one line, one action. */
+.sidepanel .empty,
 .sidepanel .pdf-handoff {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 6px;
+  min-height: 200px;
+  padding: 32px 16px 48px;
   text-align: center;
-  padding: 32px 8px;
-  gap: 14px;
 }
+.sidepanel .empty-icon,
 .sidepanel .pdf-handoff-icon {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
-  border: 1px solid var(--panel-rule);
-  border-radius: 20px;
-  background: var(--panel-fill);
-  color: var(--ink-secondary);
-  margin-bottom: 10px;
+  margin-bottom: 8px;
+  color: var(--ink-tertiary);
 }
-.sidepanel .pdf-handoff-icon .icon { width: 28px; height: 28px; }
-.sidepanel .pdf-handoff h2 { margin: 0; font-size: 19px; font-weight: 600; line-height: 1.5; }
-.sidepanel .pdf-handoff p { margin: 0; max-width: 260px; color: var(--ink-secondary); font-size: 13px; line-height: 1.8; }
-.sidepanel .pdf-document-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--ink-tertiary); }
-.sidepanel .pdf-open-current { color: var(--ink-surface-solid); background: var(--ink-text); border-color: transparent; width: 100%; max-width: 290px; min-height: 44px; border-radius: 14px; margin-top: 10px; font-size: 13px; }
-.sidepanel .pdf-local-link { border: none; background: transparent; font-size: 12px; color: var(--ink-secondary); }
-.sidepanel .pdf-handoff small { margin-top: 8px; color: var(--ink-tertiary); font-size: 11px; }
+.sidepanel .empty-icon .icon,
+.sidepanel .pdf-handoff-icon .icon {
+  width: 28px;
+  height: 28px;
+  stroke-width: 1.4;
+}
+.sidepanel .empty h2 {
+  font-weight: 500;
+}
+.sidepanel .empty p,
+.sidepanel .pdf-handoff p {
+  max-width: 260px;
+  color: var(--ink-secondary);
+  line-height: 1.6;
+}
+.sidepanel .empty p {
+  font-size: var(--ink-size-meta);
+}
+.sidepanel .empty .primary {
+  margin-top: 8px;
+}
+.sidepanel .pdf-document-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-tertiary);
+  font-size: var(--ink-size-meta);
+}
+.sidepanel .pdf-open-current {
+  margin-top: 12px;
+  padding: 6px 16px;
+}
+.sidepanel .pdf-local-link {
+  color: var(--ink-secondary);
+}
+.sidepanel .pdf-handoff small {
+  margin-top: 8px;
+  color: var(--ink-tertiary);
+  font-size: var(--ink-size-meta);
+}
 
-.sidepanel .pdf-open-current:hover { background: var(--ink-text); opacity: 0.88; }
+/* Toolbar */
+.sidepanel .sidepanel-dock {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--ink-separator);
+  background: var(--ink-panel);
+}
+.sidepanel .dock-draw {
+  padding: 4px 10px 4px 8px;
+}
+.sidepanel .menu > button {
+  top: auto;
+  bottom: calc(100% + 6px);
+  max-width: calc(100vw - 48px);
+}
+
+@media (max-width: 340px) {
+  .sidepanel .topbar {
+    padding-left: 12px;
+  }
+  .sidepanel .page-header {
+    padding-right: 12px;
+    padding-left: 12px;
+  }
+  .sidepanel > .sidepanel-content {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+}

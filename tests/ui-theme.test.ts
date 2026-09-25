@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { Annotation } from '../src/core/model';
 import { ICON_PATHS } from '../src/ui/icons';
 import { ManagementApp, pdfReaderUrl } from '../src/ui/ManagementApp';
-import { CONTENT_THEME_CSS, THEME_TOKENS } from '../src/ui/theme';
+import { CONTENT_THEME_CSS, PAGE_THEME_CSS, SCALE_TOKENS, THEME_TOKENS } from '../src/ui/theme';
+import { shortDate } from '../src/ui/management/helpers';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
@@ -25,6 +26,19 @@ describe('shared UI presentation contract', () => {
       expect(THEME_TOKENS.light[key]).toBeTruthy(); expect(THEME_TOKENS.dark[key]).toBeTruthy();
       expect(CONTENT_THEME_CSS).toContain(`${key}:`);
     }
+  });
+  it('derives extension-page tokens from the same source, including the type scale', () => {
+    for (const [key, value] of Object.entries(THEME_TOKENS.dark)) expect(PAGE_THEME_CSS).toContain(`${key}:${value};`);
+    for (const key of Object.keys(SCALE_TOKENS)) expect(PAGE_THEME_CSS).toContain(`${key}:`);
+    expect(PAGE_THEME_CSS).toContain(':root[data-theme="dark"]');
+  });
+  it('dates rows like mail: time today, day this year, full date before', () => {
+    const now = new Date(2026, 8, 25, 18, 0);
+    expect(shortDate(new Date(2026, 8, 25, 14, 52).toISOString(), 'zh-CN', now)).toBe('14:52');
+    expect(shortDate(new Date(2026, 8, 3, 9, 0).toISOString(), 'zh-CN', now)).toBe('9月3日');
+    expect(shortDate(new Date(2025, 11, 31, 9, 0).toISOString(), 'zh-CN', now)).toBe('2025年12月31日');
+    expect(shortDate(new Date(2026, 8, 3, 9, 0).toISOString(), 'en', now)).toBe('Sep 3');
+    expect(shortDate('not a date', 'en', now)).toBe('not a date');
   });
   it('ships only vector path data in the shared icon map', () => {
     expect(ICON_PATHS.pdf).toMatch(/^M/); expect(ICON_PATHS.library).toMatch(/^M/);

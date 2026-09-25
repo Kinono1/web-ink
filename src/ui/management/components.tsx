@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { COLORS, type Annotation, type AnchorState, type Language, type Settings, type ImportPreview } from "../../core/model";
 import type { FilterKind, Draft } from "./types";
 import { COPY } from "./copy";
-import { tagText, parseTags, statusClass, annotationText, matchesQuery, isPdf, pdfReaderUrl, kindFamily, localDate, download, Icon } from "./helpers";
+import { statusClass, isPdf, kindFamily, localDate, shortDate, excerptText, sourceName, Icon } from "./helpers";
 import { StoragePanel } from "../StoragePanel";
 import { BuildInfo } from "../BuildInfo";
 import type { IconName } from "../icons";
@@ -212,9 +212,48 @@ export function AnnotationBrowser({
 }: BrowserProps) {
   const selected =
     records.find((record) => record.id === selectedId) ?? records[0];
+  const detailProps = (record: Annotation): DetailProps => ({
+    record,
+    state: states[record.id],
+    language,
+    t,
+    compact,
+    draft: drafts[record.id],
+    editing: editing === record.id,
+    conflict: Boolean(conflicts[record.id]),
+    onEdit: () => onEdit(record),
+    onDraft: (patch) => onDraft(record.id, patch),
+    onSave: () => onSave(record.id),
+    onLoadLatest: () => onLoadLatest(record.id),
+    onCancel,
+    onDelete: () => onDelete(record),
+    onFocus: () => onFocus(record),
+    onRebind: () => onRebind(record),
+    onDraw: () => onDraw(record),
+    onOpenPdf: () => onOpenPdf(record),
+  });
+  // The side panel opens the selected annotation in place; the library keeps
+  // a list beside a detail pane.
+  if (compact)
+    return (
+      <section className="annotation-browser compact">
+        <div className="annotation-list" aria-label={t.pageAnnotations}>
+          {records.map((record) => (
+            <AnnotationItem
+              key={record.id}
+              {...detailProps(record)}
+              open={record.id === selected?.id}
+              onSelect={() => setSelectedId(record.id)}
+            />
+          ))}
+        </div>
+      </section>
+    );
   return (
     <section
-      className={`${compact ? "annotation-browser compact" : "annotation-browser"}${detailOpen ? " detail-open" : ""}`}
+      className={
+        detailOpen ? "annotation-browser detail-open" : "annotation-browser"
+      }
     >
       <div className="annotation-list" aria-label={t.library}>
         {records.map((record) => (
@@ -229,31 +268,39 @@ export function AnnotationBrowser({
         ))}
       </div>
       {selected ? (
-        <AnnotationDetail
-          record={selected}
-          state={states[selected.id]}
-          language={language}
-          t={t}
-          compact={compact}
-          back={onBack}
-          draft={drafts[selected.id]}
-          editing={editing === selected.id}
-          conflict={Boolean(conflicts[selected.id])}
-          onEdit={() => onEdit(selected)}
-          onDraft={(patch) => onDraft(selected.id, patch)}
-          onSave={() => onSave(selected.id)}
-          onLoadLatest={() => onLoadLatest(selected.id)}
-          onCancel={onCancel}
-          onDelete={() => onDelete(selected)}
-          onFocus={() => onFocus(selected)}
-          onRebind={() => onRebind(selected)}
-          onDraw={() => onDraw(selected)}
-          onOpenPdf={() => onOpenPdf(selected)}
-        />
+        <AnnotationDetail {...detailProps(selected)} back={onBack} />
       ) : null}
     </section>
   );
 }
+type DetailProps = {
+  record: Annotation;
+  state?: AnchorState;
+  language: Language;
+  t: (typeof COPY)[Language];
+  compact: boolean;
+  draft?: Draft;
+  editing: boolean;
+  conflict: boolean;
+  onEdit: () => void;
+  onDraft: (patch: Pick<Partial<Draft>, "note" | "tags" | "color">) => void;
+  onSave: () => void;
+  onLoadLatest: () => void;
+  onCancel: () => void;
+  onDelete: () => Promise<boolean>;
+  onFocus: () => void;
+  onRebind: () => void;
+  onDraw: () => void;
+  onOpenPdf: () => void;
+};
+const statusKey = (status: AnchorState["status"]) =>
+  status === "located"
+    ? "located"
+    : status === "pending"
+      ? "pending"
+      : status === "unresolved"
+        ? "unresolved"
+        : "unsupportedStatus";
 export function AnnotationRow({
   record,
   selected,
@@ -267,12 +314,6 @@ export function AnnotationRow({
   language: Language;
   onSelect: () => void;
 }) {
-  const description =
-    record.kind === "text"
-      ? record.target.exact
-      : record.kind === "image"
-        ? record.target.alt || record.target.context || record.target.src
-        : record.target.exact || record.target.fileName;
   const icon =
     kindFamily(record.kind) === "text"
       ? "text"
@@ -289,13 +330,9 @@ export function AnnotationRow({
         <Icon name={icon} />
       </span>
       <span className="row-copy">
-        <strong>{description}</strong>
+        <strong>{excerptText(record)}</strong>
         <small>
-          {record.pageTitle ||
-            (isPdf(record)
-              ? record.target.fileName
-              : new URL(record.pageUrl).host)}{" "}
-          · {localDate(record.updatedAt, language)}
+          {sourceName(record)} · {localDate(record.updatedAt, language)}
         </small>
       </span>
       {state ? (
@@ -308,66 +345,92 @@ export function AnnotationRow({
     </button>
   );
 }
-export function AnnotationDetail({
-  record,
-  state,
-  language,
-  t,
-  compact,
-  back,
-  draft,
-  editing,
-  conflict,
-  onEdit,
-  onDraft,
-  onSave,
-  onLoadLatest,
-  onCancel,
-  onDelete,
-  onFocus,
-  onRebind,
-  onDraw,
-  onOpenPdf,
-}: {
-  record: Annotation;
-  state?: AnchorState;
-  language: Language;
-  t: (typeof COPY)[Language];
-  compact: boolean;
-  back?: () => void;
-  draft?: Draft;
-  editing: boolean;
-  conflict: boolean;
-  onEdit: () => void;
-  onDraft: (patch: Pick<Partial<Draft>, "note" | "tags" | "color">) => void;
-  onSave: () => void;
-  onLoadLatest: () => void;
-  onCancel: () => void;
-  onDelete: () => Promise<boolean>;
-  onFocus: () => void;
-  onRebind: () => void;
-  onDraw: () => void;
-  onOpenPdf: () => void;
-}) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  useEffect(() => {
-    setConfirmDelete(false);
-  }, [record.id]);
-  const label = state
-    ? t[
-        state.status === "located"
-          ? "located"
-          : state.status === "pending"
-            ? "pending"
-            : state.status === "unresolved"
-              ? "unresolved"
-              : "unsupportedStatus"
-      ]
-    : undefined;
+/**
+ * One side-panel annotation. Closed it is a single row; open, the same row
+ * grows into the detail card so focus and reading position stay put.
+ */
+function AnnotationItem({
+  open,
+  onSelect,
+  ...props
+}: DetailProps & { open: boolean; onSelect: () => void }) {
+  const { record, state, language, t, editing, draft, conflict } = props;
+  const family = kindFamily(record.kind);
+  const problem =
+    state?.status === "unresolved" || state?.status === "unsupported"
+      ? state
+      : undefined;
+  const editDraft = open && editing ? draft : undefined;
   return (
-    <article
-      className={compact ? "annotation-detail compact" : "annotation-detail"}
+    <div
+      className={open ? "annotation-item open annotation-detail" : "annotation-item"}
+      style={{ "--record-color": record.color } as React.CSSProperties}
     >
+      <button
+        className={open ? "annotation-row selected" : "annotation-row"}
+        aria-expanded={open}
+        onClick={onSelect}
+      >
+        <span className="row-quote">{excerptText(record)}</span>
+        {record.note && !editDraft ? (
+          <span className="note">{record.note}</span>
+        ) : null}
+        <span className="row-meta">
+          {family !== "text" ? (
+            <span>{family === "image" ? t.image : t.pdf}</span>
+          ) : null}
+          <time
+            dateTime={record.updatedAt}
+            title={localDate(record.updatedAt, language)}
+          >
+            {shortDate(record.updatedAt, language)}
+          </time>
+          {record.tags.length ? (
+            <span className="row-tags">
+              {record.tags.map((tag) => `#${tag}`).join(" ")}
+            </span>
+          ) : null}
+          {problem ? (
+            <span className={statusClass(problem.status)} title={problem.reason}>
+              {t[statusKey(problem.status)]}
+            </span>
+          ) : null}
+        </span>
+      </button>
+      {open ? (
+        <div className="item-body">
+          {state?.status === "unresolved" ? (
+            <p className="hint" role="status">
+              {t.restoreExplanation}
+              {record.kind === "text" ? t.rebindTextHint : t.rebindImageHint}
+            </p>
+          ) : null}
+          {editDraft ? (
+            <Editor
+              draft={editDraft}
+              t={t}
+              conflict={conflict}
+              onDraft={props.onDraft}
+              onSave={props.onSave}
+              onLoadLatest={props.onLoadLatest}
+              onCancel={props.onCancel}
+            />
+          ) : (
+            <DetailActions {...props} />
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+export function AnnotationDetail({
+  back,
+  ...props
+}: DetailProps & { back?: () => void }) {
+  const { record, state, t, editing, draft, conflict } = props;
+  const label = state ? t[statusKey(state.status)] : undefined;
+  return (
+    <article className="annotation-detail">
       {back ? (
         <button className="back-button quiet" onClick={back}>
           <Icon name="chevron" />
@@ -384,12 +447,7 @@ export function AnnotationDetail({
                 ? t.text
                 : t.image}
           </p>
-          <h2>
-            {record.pageTitle ||
-              (isPdf(record)
-                ? record.target.fileName
-                : new URL(record.pageUrl).host)}
-          </h2>
+          <h2>{sourceName(record)}</h2>
         </div>
         {label ? (
           <span className={statusClass(state?.status)} title={state?.reason}>
@@ -397,28 +455,25 @@ export function AnnotationDetail({
           </span>
         ) : null}
       </div>
-      {state?.status === "unresolved" ? <p className="hint" role="status">{t.restoreExplanation}{record.kind === "text" ? t.rebindTextHint : t.rebindImageHint}</p> : null}
+      {state?.status === "unresolved" ? (
+        <p className="hint" role="status">
+          {t.restoreExplanation}
+          {record.kind === "text" ? t.rebindTextHint : t.rebindImageHint}
+        </p>
+      ) : null}
       {editing && draft ? (
         <Editor
           draft={draft}
           t={t}
           conflict={conflict}
-          onDraft={onDraft}
-          onSave={onSave}
-          onLoadLatest={onLoadLatest}
-          onCancel={onCancel}
+          onDraft={props.onDraft}
+          onSave={props.onSave}
+          onLoadLatest={props.onLoadLatest}
+          onCancel={props.onCancel}
         />
       ) : (
         <>
-          <p className="detail-excerpt">
-            {record.kind === "text"
-              ? record.target.exact
-              : record.kind === "image"
-                ? record.target.alt ||
-                  record.target.context ||
-                  record.target.src
-                : record.target.exact || record.target.fileName}
-          </p>
+          <p className="detail-excerpt">{excerptText(record)}</p>
           {record.note ? <p className="note">{record.note}</p> : null}
           {record.tags.length ? (
             <div className="tags">
@@ -427,61 +482,85 @@ export function AnnotationDetail({
               ))}
             </div>
           ) : null}
-          <div className="detail-actions">
-            {isPdf(record) ? (
-              <button onClick={onOpenPdf}>
-                <Icon name="pdf" />
-                {t.openPdf}
-              </button>
-            ) : compact ? (
-              <button onClick={onFocus}>
-                <Icon name="focus" />
-                {t.focus}
-              </button>
-            ) : (
-              <a href={record.pageUrl} target="_blank" rel="noreferrer">
-                <Icon name="focus" />
-                {t.source}
-              </a>
-            )}
-            {state?.status === "unresolved" && compact ? (
-              <button onClick={onRebind}>{t.rebind}</button>
-            ) : null}
-            {record.kind === "image" && compact ? (
-              <button onClick={onDraw}>
-                <Icon name="draw" />
-                {t.draw}
-              </button>
-            ) : null}
-            <button onClick={onEdit}>{t.note}</button>
-            {confirmDelete ? (
-              <>
-                <button
-                  className="danger"
-                  onClick={() =>
-                    void onDelete().then((ok) => {
-                      if (ok) setConfirmDelete(false);
-                    })
-                  }
-                >
-                  {t.confirmDelete}
-                </button>
-                <button
-                  className="quiet"
-                  onClick={() => setConfirmDelete(false)}
-                >
-                  {t.cancel}
-                </button>
-              </>
-            ) : (
-              <button className="danger" onClick={() => setConfirmDelete(true)}>
-                {t.delete}
-              </button>
-            )}
-          </div>
+          <DetailActions {...props} />
         </>
       )}
     </article>
+  );
+}
+/** One action vocabulary for both surfaces: quiet icon buttons, delete last. */
+function DetailActions({
+  record,
+  state,
+  t,
+  compact,
+  onEdit,
+  onDelete,
+  onFocus,
+  onRebind,
+  onDraw,
+  onOpenPdf,
+}: DetailProps) {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  useEffect(() => {
+    setConfirmDelete(false);
+  }, [record.id]);
+  return (
+    <div className="detail-actions">
+      {isPdf(record) ? (
+        <button className="quiet" onClick={onOpenPdf}>
+          <Icon name="pdf" />
+          {t.openPdf}
+        </button>
+      ) : compact ? (
+        <button className="quiet" onClick={onFocus}>
+          <Icon name="focus" />
+          {t.focus}
+        </button>
+      ) : (
+        <a className="quiet" href={record.pageUrl} target="_blank" rel="noreferrer">
+          <Icon name="focus" />
+          {t.source}
+        </a>
+      )}
+      {state?.status === "unresolved" && compact ? (
+        <button className="quiet" onClick={onRebind}>
+          {t.rebind}
+        </button>
+      ) : null}
+      {record.kind === "image" && compact ? (
+        <button className="quiet" onClick={onDraw}>
+          <Icon name="draw" />
+          {t.draw}
+        </button>
+      ) : null}
+      <button className="quiet" onClick={onEdit}>
+        <Icon name="note" />
+        {t.note}
+      </button>
+      {confirmDelete ? (
+        <span className="confirm-delete">
+          <button
+            className="danger"
+            onClick={() =>
+              void onDelete().then((ok) => {
+                if (ok) setConfirmDelete(false);
+              })
+            }
+          >
+            {t.confirmDelete}
+          </button>
+          <button className="quiet" onClick={() => setConfirmDelete(false)}>
+            {t.cancel}
+          </button>
+        </span>
+      ) : (
+        <button className="quiet delete" onClick={() => setConfirmDelete(true)}>
+          <Icon name="trash" />
+          {t.delete}
+        </button>
+      )}
+    </div>
   );
 }
 export function Editor({
@@ -521,7 +600,7 @@ export function Editor({
       <ColorPicker
         value={draft.color}
         onChange={(color) => onDraft({ color })}
-        label={t.defaultColor}
+        label={t.color}
       />
       {conflict ? (
         <p className="draft-conflict">

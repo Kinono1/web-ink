@@ -1,5 +1,5 @@
 import { useAnnotationQuery } from "./management/useAnnotationQuery";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { toMarkdown } from "../core/backup";
 import { request } from "../core/client";
@@ -20,7 +20,7 @@ import { isWebPage, pageKey } from "../core/url";
 import { getPdfContext, buildPdfOpenUrl } from "../pdf/context";
 import { ICON_PATHS, type IconName } from "./icons";
 import { StoragePanel } from "./StoragePanel";
-import { THEME_TOKENS } from "./theme";
+import { applyPageTheme, installPageTheme } from "./page-theme";
 import "./management.css";
 import "./sidepanel.css";
 
@@ -62,6 +62,7 @@ import {
 } from "./management/components";
 export { pdfReaderUrl } from "./management/helpers";
 export function mountManagementApp(root: HTMLElement, mode: Mode): void {
+  installPageTheme();
   createRoot(root).render(<ManagementApp mode={mode} />);
 }
 
@@ -98,6 +99,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   settingsRef.current = settings;
   const language = settings.language;
   const t = COPY[language];
+  useLayoutEffect(() => applyPageTheme(settings.theme), [settings.theme]);
   const pdfContext = getPdfContext(tab.url);
   const pageUrl = !pdfContext && tab.url && isWebPage(tab.url) ? pageKey(tab.url) : undefined;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
@@ -526,18 +528,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   };
   const filterCount =
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
-  const explicitTheme =
-    settings.theme === "light" || settings.theme === "dark"
-      ? settings.theme
-      : undefined;
   return (
     <main
       className={mode === "sidepanel" ? "ink-app sidepanel" : "ink-app"}
-      style={
-        explicitTheme
-          ? (THEME_TOKENS[explicitTheme] as React.CSSProperties)
-          : undefined
-      }
       data-theme={settings.theme ?? "system"}
       data-reduce-motion={settings.reduceMotion === true}
       data-reduce-transparency={settings.reduceTransparency === true}
@@ -552,13 +545,19 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                 ? t.settings
                 : t.library}
           </h1>
+          {mode === "sidepanel" && pageUrl && !paused && records.length ? (
+            <span className="count">
+              {records.length}
+              {nextCursor ? "+" : ""}
+            </span>
+          ) : null}
         </div>
         <div className="header-actions">
           {mode === "sidepanel" ? (
             <>
-            <button className="quiet pdf-shortcut" disabled={openingPdf} onClick={openCurrentPdf}
+            <button className="quiet icon-button" disabled={openingPdf} onClick={openCurrentPdf}
               title={t.openPdf} aria-label={t.openPdf}>
-              <Icon name="pdf" /><span>PDF</span>
+              <Icon name="pdf" />
             </button>
             <button
               className="quiet icon-button"
@@ -598,7 +597,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             </button>
           ) : null}
           <button
-            className="icon-button"
+            className="quiet icon-button"
             onClick={() => {
               void refreshContext();
               void loadRecords();
@@ -721,33 +720,30 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           </div>
           {pageUrl && !paused ? (
             <footer className="sidepanel-dock" aria-label={t.pageAnnotations}>
-              <p className="dock-hint">{t.annotationHint}</p>
-              <div className="page-actions">
+              <button
+                className="quiet dock-draw"
+                onClick={() => void pageAction("draw")}
+              >
+                <Icon name="draw" />
+                {t.drawImage}
+              </button>
+              <details className="menu">
+                <summary aria-label={t.moreActions} title={t.moreActions}>
+                  <Icon name="more" />
+                </summary>
                 <button
-                  className="dock-draw"
-                  onClick={() => void pageAction("draw")}
+                  className="danger"
+                  onClick={() =>
+                    saveSettings({
+                      disabledOrigins: origin
+                        ? [...settingsRef.current.disabledOrigins, origin]
+                        : settingsRef.current.disabledOrigins,
+                    })
+                  }
                 >
-                  <Icon name="draw" />
-                  {t.drawImage}
+                  {t.pause}
                 </button>
-                <details className="menu">
-                  <summary aria-label={t.moreActions} title={t.moreActions}>
-                    <Icon name="more" />
-                  </summary>
-                  <button
-                    className="danger"
-                    onClick={() =>
-                      saveSettings({
-                        disabledOrigins: origin
-                          ? [...settingsRef.current.disabledOrigins, origin]
-                          : settingsRef.current.disabledOrigins,
-                      })
-                    }
-                  >
-                    {t.pause}
-                  </button>
-                </details>
-              </div>
+              </details>
             </footer>
           ) : null}
         </>
