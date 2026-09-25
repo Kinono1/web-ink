@@ -25,7 +25,7 @@ import {
   type Settings,
 } from "../core/model";
 import { THEME_TOKENS } from "../ui/theme";
-import { ICON_PATHS } from "../ui/icons";
+import { Icon } from "../ui/management/helpers";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
@@ -610,55 +610,68 @@ export function PdfReader() {
       behavior: "instant",
     });
   }
+  const locked = busy || saving || removing || !!unsaved;
+  // One set of source controls: centred while the reader is empty, then in the
+  // header, where the URL can still be changed once a document is open.
+  const sourceControls = (
+    <section className="pdf-open" aria-label={t("打开 PDF", "Open PDF")}>
+      <label
+        className={opened ? "pdf-file-button compact" : "pdf-file-button"}
+        title={t("选择本地 PDF", "Choose local PDF")}
+      >
+        <Icon name="pdf" />
+        {opened ? null : t("选择本地 PDF", "Choose local PDF")}
+        <input
+          aria-label={t("选择本地 PDF", "Choose local PDF")}
+          type="file"
+          accept="application/pdf,.pdf"
+          disabled={locked}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) void openPdf(file);
+            e.target.value = "";
+          }}
+        />
+      </label>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void openPdf();
+        }}
+      >
+        <input
+          aria-label={t("公开 PDF 网址", "Public PDF URL")}
+          type="url"
+          value={source}
+          placeholder="https://…/paper.pdf"
+          onChange={(e) => setSource(e.target.value)}
+          required
+        />
+        <button disabled={locked}>
+          {busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}
+        </button>
+      </form>
+    </section>
+  );
   return (
     <main className="pdf-app">
       <header className="pdf-header">
         <div className="pdf-brand">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d={ICON_PATHS.pdf} />
-          </svg>
+          <Icon name="pdf" />
           <strong>
             Web Ink <span>PDF</span>
           </strong>
         </div>
-        <a href={chrome.runtime.getURL("/library.html")}>
-          {t("资料库", "Library")}
+        {opened ? sourceControls : null}
+        <a
+          className="pdf-library"
+          href={chrome.runtime.getURL("/library.html")}
+          aria-label={t("资料库", "Library")}
+          title={t("资料库", "Library")}
+        >
+          <Icon name="library" />
         </a>
       </header>
-      <section className="pdf-open" aria-label={t("打开 PDF", "Open PDF")}>
-        <label className="pdf-file-button">
-          {t("选择本地 PDF", "Choose local PDF")}
-          <input
-            aria-label={t("选择本地 PDF", "Choose local PDF")}
-            type="file"
-            accept="application/pdf,.pdf"
-            disabled={busy || saving || removing || !!unsaved}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              if (file) void openPdf(file);
-              e.target.value = "";
-            }}
-          />
-        </label>
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            void openPdf();
-          }}
-        >
-          <input
-            aria-label={t("公开 PDF 网址", "Public PDF URL")}
-            type="url"
-            value={source}
-            placeholder="https://…/paper.pdf"
-            onChange={(e) => setSource(e.target.value)}
-            required
-          />
-          <button disabled={busy || saving || removing || !!unsaved}>
-            {busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}
-          </button>
-        </form>
-      </section>
       {error && (
         <div className="pdf-message error" role="alert">
           <span>{error}</span>
@@ -711,8 +724,7 @@ export function PdfReader() {
             <span className="pdf-name" title={opened.fileName}>
               {opened.fileName}
             </span>
-            <label>
-              {t("页", "Page")}{" "}
+            <label className="pdf-page-field">
               <input
                 aria-label={t("页码", "Page number")}
                 type="number"
@@ -723,11 +735,14 @@ export function PdfReader() {
                   const n = e.target.valueAsNumber;
                   if (Number.isInteger(n)) jump(n);
                 }}
-              />{" "}
-              / {opened.document.numPages}
+              />
+              <span>/ {opened.document.numPages}</span>
             </label>
+            <span className="pdf-sep" aria-hidden="true" />
             <button
+              className="quiet icon-button"
               aria-label={t("缩小", "Zoom out")}
+              title={t("缩小", "Zoom out")}
               disabled={zoom <= 0.5}
               onClick={() => {
                 setSelection(undefined);
@@ -735,11 +750,13 @@ export function PdfReader() {
                 setZoom((z) => Math.max(0.5, z - 0.25));
               }}
             >
-              −
+              <Icon name="minus" />
             </button>
-            <span>{Math.round(zoom * 100)}%</span>
+            <span className="pdf-zoom">{Math.round(zoom * 100)}%</span>
             <button
+              className="quiet icon-button"
               aria-label={t("放大", "Zoom in")}
+              title={t("放大", "Zoom in")}
               disabled={zoom >= 3}
               onClick={() => {
                 setSelection(undefined);
@@ -747,22 +764,28 @@ export function PdfReader() {
                 setZoom((z) => Math.min(3, z + 0.25));
               }}
             >
-              +
+              <Icon name="plus" />
             </button>
             <button
+              className="quiet icon-button"
+              aria-label={t("旋转", "Rotate")}
+              title={t("旋转", "Rotate")}
               onClick={() => {
                 setSelection(undefined);
                 dimensions.current.clear();
                 setRotation((r) => (r + 90) % 360);
               }}
             >
-              {t("旋转", "Rotate")}
+              <Icon name="rotate" />
             </button>
+            <span className="pdf-sep" aria-hidden="true" />
             <button
+              className="quiet"
               aria-pressed={enabled}
               disabled={saving || !!unsaved}
               onClick={() => void toggle()}
             >
+              <Icon name="highlight" />
               {enabled
                 ? t("关闭标注", "Disable annotations")
                 : t("开启标注", "Enable annotations")}
@@ -770,6 +793,7 @@ export function PdfReader() {
             {enabled && (
               <>
                 <button
+                  className="quiet"
                   aria-pressed={area}
                   onClick={() => {
                     setArea((a) => !a);
@@ -929,56 +953,59 @@ export function PdfReader() {
                 }}
               />
             </div>
-            <aside className="pdf-notes">
-              <h2>
-                {t("本篇标注", "Annotations")} <span>{records.length}</span>
-              </h2>
-              {!records.length && (
-                <p className="pdf-muted">
-                  {t(
-                    "开启标注后，选择文字高亮，或框选图表区域。",
-                    "Enable annotations, then select text or draw a rectangle over a figure.",
-                  )}
-                </p>
-              )}
-              {sortedNotes.slice(0, notesLimit).map((r) => (
-                <PdfNote
-                  key={r.id}
-                  record={r}
-                  language={settings.language}
-                  onJump={() => jump(r.target.pageNumber)}
-                  onError={(message) => {
-                    if (documentSession === documentSessionRef.current)
-                      setError(message);
-                  }}
-                  onRemove={remove}
-                  removing={removing}
-                  draft={noteDrafts[r.id]}
-                  onDraft={(draft) =>
-                    setNoteDrafts((current) => ({ ...current, [r.id]: draft }))
-                  }
-                  onClearDraft={() => {
-                    if (documentSession !== documentSessionRef.current) return;
-                    setNoteDrafts((current) => {
-                      const { [r.id]: _removed, ...rest } = current;
-                      return rest;
-                    });
-                  }}
-                />
-              ))}
-              {notesLimit < sortedNotes.length && (
-                <button onClick={() => setNotesLimit((limit) => limit + 50)}>
-                  {t("加载更多", "Load more")}
-                </button>
-              )}
-            </aside>
+            {/* Reading comes first: the notes column appears once annotating starts. */}
+            {(enabled || records.length > 0) && (
+              <aside className="pdf-notes">
+                <h2>
+                  {t("本篇标注", "Annotations")} <span>{records.length}</span>
+                </h2>
+                {!records.length && (
+                  <p className="pdf-muted">
+                    {t(
+                      "选中文字即可高亮，或用「区域标注」框选图表。",
+                      "Select text to highlight it, or use Mark area to frame a figure.",
+                    )}
+                  </p>
+                )}
+                {sortedNotes.slice(0, notesLimit).map((r) => (
+                  <PdfNote
+                    key={r.id}
+                    record={r}
+                    language={settings.language}
+                    onJump={() => jump(r.target.pageNumber)}
+                    onError={(message) => {
+                      if (documentSession === documentSessionRef.current)
+                        setError(message);
+                    }}
+                    onRemove={remove}
+                    removing={removing}
+                    draft={noteDrafts[r.id]}
+                    onDraft={(draft) =>
+                      setNoteDrafts((current) => ({ ...current, [r.id]: draft }))
+                    }
+                    onClearDraft={() => {
+                      if (documentSession !== documentSessionRef.current) return;
+                      setNoteDrafts((current) => {
+                        const { [r.id]: _removed, ...rest } = current;
+                        return rest;
+                      });
+                    }}
+                  />
+                ))}
+                {notesLimit < sortedNotes.length && (
+                  <button onClick={() => setNotesLimit((limit) => limit + 50)}>
+                    {t("加载更多", "Load more")}
+                  </button>
+                )}
+              </aside>
+            )}
           </div>
         </>
       ) : (
         <section className="pdf-welcome" aria-busy={busy}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d={ICON_PATHS.pdf} />
-          </svg>
+          <span className="pdf-welcome-icon" aria-hidden="true">
+            <Icon name="pdf" />
+          </span>
           <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : t("读论文，留下重点", "Read. Mark. Return.")}</h1>
           <p>
             {t(
@@ -986,6 +1013,7 @@ export function PdfReader() {
               "Choose a PDF or open a public URL. Annotations stay on this device; the PDF is not stored in your library.",
             )}
           </p>
+          {sourceControls}
           <p className="pdf-muted">
             {t(
               "单份文件最多 50 MiB。登录网站的 PDF 请下载后选择本地文件；扫描件可做区域标注。",

@@ -71,7 +71,7 @@ const declarations = (tokens: Readonly<Record<string, string>>) =>
 
 /** Safe to embed verbatim in a content-script ShadowRoot stylesheet. */
 export const CONTENT_THEME_CSS = `
-:host { color-scheme: light dark; }
+:host { color-scheme: light dark; ${declarations(SCALE_TOKENS)} }
 :host, :host([data-web-ink-theme="light"]) { ${declarations(THEME_TOKENS.light)} }
 @media (prefers-color-scheme: dark) { :host:not([data-web-ink-theme="light"]) { ${declarations(THEME_TOKENS.dark)} } }
 :host([data-web-ink-theme="dark"]) { ${declarations(THEME_TOKENS.dark)} }

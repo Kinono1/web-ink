@@ -1,3 +1,5 @@
+import { ICON_PATHS } from "../ui/icons";
+
 export interface PaletteToggleState {
   enabled: boolean;
   busy?: boolean;
@@ -21,24 +23,20 @@ export function createPaletteToggle(
   const style = document.createElement("style");
   style.dataset.webInkPaletteToggle = "true";
   style.textContent = `
-    .web-ink-palette-toggle { position:fixed; right:18px; bottom:18px; width:40px; height:40px; padding:0; border-radius:50%; border:1px solid var(--ink-separator); box-shadow:var(--ink-shadow); display:grid; place-items:center; cursor:pointer; pointer-events:auto; color:var(--ink-text); background:var(--ink-fill); transition:background-color .16s ease, transform .16s ease, box-shadow .16s ease; }
-    .web-ink-palette-toggle[data-enabled=true] { background:conic-gradient(from 210deg, #facc15, #fb7185, #c084fc, var(--ink-accent), #4ade80, #facc15); color:var(--ink-text); }
-    .web-ink-palette-toggle[data-enabled=false] svg { filter:grayscale(1); opacity:.72; }
-    .web-ink-palette-toggle:not(:disabled):hover { transform:translateY(-1px); box-shadow:0 5px 16px #17223555; }
-    .web-ink-palette-toggle:focus-visible { outline:3px solid var(--ink-accent); outline-offset:3px; }
-    .web-ink-palette-toggle:disabled { cursor:not-allowed; opacity:.57; filter:grayscale(.75); }
-    .web-ink-palette-toggle svg { width:22px; height:22px; } .web-ink-palette-toggle .state-dot { position:absolute; right:5px; bottom:5px; width:6px; height:6px; border:1px solid #fff; border-radius:50%; background:#8b98a9; } .web-ink-palette-toggle[data-enabled=true] .state-dot { background:#166534; }
+    .web-ink-palette-toggle { position:fixed; right:18px; bottom:18px; width:40px; height:40px; min-height:40px; padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:pointer; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color .16s ease, color .16s ease, transform .16s ease; }
+    .web-ink-palette-toggle:not(:disabled):hover { color:var(--ink-text); transform:translateY(-1px); }
+    .web-ink-palette-toggle[data-enabled=true] { color:#fff; background:var(--ink-accent); box-shadow:0 0 0 1px transparent, var(--ink-shadow); }
+    .web-ink-palette-toggle[data-enabled=true]:not(:disabled):hover { color:#fff; }
+    .web-ink-palette-toggle:focus-visible { outline:2px solid var(--ink-accent); outline-offset:3px; }
+    .web-ink-palette-toggle:disabled { cursor:not-allowed; opacity:.5; }
+    .web-ink-palette-toggle svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     @media (prefers-reduced-motion: reduce) { .web-ink-palette-toggle { transition:none; } }
   `;
   const button = document.createElement("button");
   button.type = "button";
   button.className = "web-ink-palette-toggle";
   button.dataset.webInkPaletteToggle = "true";
-  button.append(paletteIcon());
-  const dot = document.createElement("span");
-  dot.className = "state-dot";
-  dot.setAttribute("aria-hidden", "true");
-  button.append(dot);
+  button.append(highlighterIcon());
   const click = () => {
     if (!button.disabled) onToggle();
   };
@@ -82,32 +80,14 @@ export function createPaletteToggle(
   };
 }
 
-function paletteIcon(): SVGSVGElement {
+/** A monochrome highlighter; colour belongs to the page's marks, not the control. */
+function highlighterIcon(): SVGSVGElement {
   const svg = document.createElementNS(NS, "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("focusable", "false");
-  const outer = document.createElementNS(NS, "path");
-  outer.setAttribute(
-    "d",
-    "M12 3.2A8.8 8.8 0 1 0 12 20h1.1a1.9 1.9 0 0 0 0-3.8h-.5a1.5 1.5 0 0 1 0-3H15a5.8 5.8 0 0 0 0-11.6H12Z",
-  );
-  outer.setAttribute("fill", "#ffffffdd");
-  outer.setAttribute("stroke", "#172235");
-  outer.setAttribute("stroke-width", "1.1");
-  svg.append(outer);
-  for (const [cx, cy, fill] of [
-    ["8", "8.5", "#f59e0b"],
-    ["11.5", "6.8", "#ec4899"],
-    ["15.5", "8.6", "#8b5cf6"],
-    ["7.8", "12.6", "#22c55e"],
-  ] as const) {
-    const circle = document.createElementNS(NS, "circle");
-    circle.setAttribute("cx", cx);
-    circle.setAttribute("cy", cy);
-    circle.setAttribute("r", "1.15");
-    circle.setAttribute("fill", fill);
-    svg.append(circle);
-  }
+  const path = document.createElementNS(NS, "path");
+  path.setAttribute("d", ICON_PATHS.highlight);
+  svg.append(path);
   return svg;
 }
