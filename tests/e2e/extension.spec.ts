@@ -178,6 +178,42 @@ test("production permission is optional, onboarding is reachable, and pages are 
   expect(await rpc(manager, { type: "annotations.list" })).toEqual([]);
 });
 
+test("registration accepts its script ID while Chrome is still restoring it", async () => {
+  await enable();
+  // After a browser start or extension reload Chrome restores the persisted
+  // registration asynchronously: it is not reported yet, but its ID is taken.
+  // A slow competing registration with the same ID recreates that window.
+  const outcomes = await manager.evaluate(async () => {
+    const results: string[] = [];
+    for (let run = 0; run < 5; run++) {
+      await chrome.scripting.unregisterContentScripts({ ids: ["web-ink-pages"] });
+      const [, response] = await Promise.all([
+        chrome.scripting.registerContentScripts([
+          {
+            id: "web-ink-pages",
+            matches: ["https://example.test/*"],
+            js: [
+              "content-scripts/content.js",
+              "pdfjs/pdf.worker.min.mjs",
+              "pdfjs/wasm/openjpeg_nowasm_fallback.js",
+            ],
+            persistAcrossSessions: false,
+          },
+        ]),
+        chrome.runtime.sendMessage({ type: "permissions.enable" }),
+      ]);
+      results.push(response?.ok ? "ok" : String(response?.error));
+    }
+    return results;
+  });
+  expect(outcomes).toEqual(Array(5).fill("ok"));
+  expect(
+    await manager.evaluate(async () =>
+      (await chrome.scripting.getRegisteredContentScripts()).map((s) => s.id),
+    ),
+  ).toEqual(["web-ink-pages"]);
+});
+
 test("real text marking, reload and browser restart keep records", async () => {
   await enable();
   const page = await article();
