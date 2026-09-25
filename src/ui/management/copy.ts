@@ -96,6 +96,10 @@ export const COPY = {
     color: "颜色",
     tag: "标签",
     clearFilters: "清除筛选",
+    customColor: "自定义",
+    preferences: "外观与语言",
+    samePage: "同一页面的其他标注",
+    pageNumber: (n: number) => `第 ${n} 页`,
   },
   en: {
     title: "Web Ink",
@@ -195,5 +199,9 @@ export const COPY = {
     color: "Color",
     tag: "Tag",
     clearFilters: "Clear filters",
+    customColor: "Custom",
+    preferences: "Appearance & language",
+    samePage: "More from this page",
+    pageNumber: (n: number) => `Page ${n}`,
   },
 } as const;

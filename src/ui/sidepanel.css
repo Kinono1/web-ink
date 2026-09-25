@@ -39,8 +39,7 @@
   line-height: 28px;
 }
 .sidepanel .app-title .count {
-  color: var(--ink-tertiary);
-  font-variant-numeric: tabular-nums;
+  font-size: var(--ink-size-body);
 }
 .sidepanel .header-actions {
   flex-wrap: nowrap;
@@ -179,18 +178,6 @@
 }
 .sidepanel .annotation-item.open .note {
   color: var(--ink-text);
-}
-.sidepanel .row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  color: var(--ink-tertiary);
-  font-size: var(--ink-size-meta);
-}
-.sidepanel .row-meta > * + *::before {
-  content: "·";
-  margin: 0 6px;
-  color: var(--ink-tertiary);
 }
 .sidepanel .item-body {
   display: grid;

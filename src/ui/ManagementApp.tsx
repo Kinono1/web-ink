@@ -537,7 +537,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     >
       <header className="topbar">
         <div className="app-title">
-          {mode === "library" ? <p className="eyebrow">LOCAL WEB NOTES</p> : null}
           <h1>
             {mode === "sidepanel"
               ? t.pageAnnotations
@@ -545,7 +544,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                 ? t.settings
                 : t.library}
           </h1>
-          {mode === "sidepanel" && pageUrl && !paused && records.length ? (
+          {(mode === "sidepanel" ? pageUrl && !paused : screen === "library") &&
+          records.length ? (
             <span className="count">
               {records.length}
               {nextCursor ? "+" : ""}
@@ -569,31 +569,35 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             </button>
             </>
           ) : (
-            <>
+            <div className="segmented-control" role="group">
               <button
                 className={
                   screen === "library" ? "segmented selected" : "segmented"
                 }
+                aria-pressed={screen === "library"}
                 onClick={() => setScreen("library")}
               >
-                <Icon name="library" />
                 {t.library}
               </button>
               <button
                 className={
                   screen === "settings" ? "segmented selected" : "segmented"
                 }
+                aria-pressed={screen === "settings"}
                 onClick={() => setScreen("settings")}
               >
-                <Icon name="settings" />
                 {t.settings}
               </button>
-            </>
+            </div>
           )}
           {mode === "library" && screen === "library" ? (
-            <button className="quiet" onClick={() => openPdf()}>
+            <button
+              className="quiet icon-button"
+              onClick={() => openPdf()}
+              aria-label={t.openPdf}
+              title={t.openPdf}
+            >
               <Icon name="pdf" />
-              {t.openPdf}
             </button>
           ) : null}
           <button

@@ -39,6 +39,7 @@ button {
   gap: 16px;
   font-size: var(--ink-size-body);
   line-height: 1.5;
+  --item-hover: color-mix(in srgb, var(--ink-text) 4%, transparent);
 }
 .ink-app[data-reduce-transparency="true"] {
   --ink-surface: var(--ink-surface-solid);
@@ -73,11 +74,6 @@ h2 {
   font-weight: 600;
   letter-spacing: -0.01em;
   line-height: 1.35;
-}
-.eyebrow {
-  color: var(--ink-tertiary);
-  font-size: var(--ink-size-meta);
-  font-weight: 500;
 }
 .icon {
   width: 16px;
@@ -144,16 +140,35 @@ button:disabled {
 .detail-actions a.quiet:hover {
   background: var(--ink-fill);
 }
+.quiet.selected {
+  color: var(--ink-accent);
+  background: var(--ink-accent-fill);
+}
+/* Two views of one page share a pill; the current one is raised, not coloured. */
+.segmented-control {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: var(--ink-fill);
+}
 .segmented {
+  min-height: 24px;
+  padding: 2px 12px;
+  border-radius: 999px;
+  color: var(--ink-secondary);
   background: transparent;
 }
 .segmented:hover {
-  background: var(--ink-fill);
+  color: var(--ink-text);
+  background: transparent;
 }
-.quiet.selected,
 .segmented.selected {
-  color: var(--ink-accent);
-  background: var(--ink-accent-fill);
+  color: var(--ink-text);
+  background: var(--ink-surface-solid);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 14%),
+    0 0 0 0.5px rgb(0 0 0 / 6%);
 }
 .icon-button {
   width: 28px;
@@ -347,6 +362,24 @@ button:disabled {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.row-note {
+  color: var(--ink-secondary);
+  word-break: break-word;
+}
+.row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--ink-size-meta);
+  font-weight: 400;
+}
+.row-meta > * + *::before {
+  content: "·";
+  margin: 0 6px;
+  color: var(--ink-tertiary);
+}
 .tags,
 .colors {
   display: flex;
@@ -470,7 +503,16 @@ select {
   min-height: 36px;
 }
 .app-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
   min-width: 0;
+}
+.app-title .count {
+  color: var(--ink-tertiary);
+  font-size: var(--ink-size-display);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
 }
 .header-actions {
   justify-content: flex-end;
@@ -499,16 +541,19 @@ select {
   position: absolute;
   top: 8px;
   left: 10px;
-  color: var(--ink-secondary);
+  color: var(--ink-tertiary);
 }
 .search input {
   width: 100%;
   height: 32px;
   padding: 0 10px 0 32px;
   color: var(--ink-text);
-  border: 1px solid var(--ink-separator);
+  border: 0;
   border-radius: var(--ink-radius-control);
-  background: var(--ink-surface);
+  background: var(--ink-fill);
+}
+.search input::placeholder {
+  color: var(--ink-tertiary);
 }
 .filter-count {
   display: grid;
@@ -560,108 +605,150 @@ select {
 }
 .library-shell .annotation-browser {
   display: grid;
-  grid-template-columns: minmax(250px, 0.78fr) minmax(340px, 1.22fr);
-  align-items: start;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1.2fr);
+  align-items: stretch;
   min-width: 0;
   border: 1px solid var(--ink-separator);
   border-radius: var(--ink-radius);
   overflow: hidden;
-  background: var(--ink-surface);
+  background: var(--ink-panel);
 }
 .library-shell .annotation-list {
   display: grid;
+  align-content: start;
+  gap: 2px;
   min-width: 0;
-  border-right: 1px solid var(--ink-separator);
-  max-height: calc(100vh - 190px);
+  max-height: calc(100vh - 170px);
+  padding: 6px;
   overflow: auto;
+  border-right: 1px solid var(--ink-separator);
 }
-.library-shell .annotation-row {
+/* Rows and same-page entries: a colour rule, the quote, the note, the facts. */
+.library-shell .annotation-row,
+.sibling {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
   width: 100%;
   min-width: 0;
-  min-height: 60px;
-  padding: 8px 12px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) auto;
-  align-items: center;
-  text-align: left;
-  border-bottom: 1px solid var(--ink-separator);
-  border-radius: 0;
+  padding: 8px 12px 8px 22px;
+  border-radius: var(--ink-radius-control);
+  color: var(--ink-text);
   background: transparent;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
 }
-.library-shell .annotation-row:last-child {
-  border-bottom: 0;
+.library-shell .annotation-row::before,
+.sibling::before,
+.detail-excerpt::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  bottom: 11px;
+  left: 10px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--record-color);
+}
+.library-shell .annotation-row:hover,
+.sibling:hover {
+  background: var(--item-hover);
 }
 .library-shell .annotation-row.selected {
-  background: var(--ink-accent-fill);
+  background: var(--ink-fill);
 }
-.library-shell .annotation-row .type {
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-left: 3px solid var(--record-color);
-  color: var(--ink-secondary);
-}
-.row-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-.row-copy strong,
-.row-copy small {
+.library-shell .row-quote,
+.sibling .row-quote {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
-.row-copy strong {
-  font-size: var(--ink-size-body);
-  font-weight: 500;
+.library-shell .annotation-row .row-quote {
+  font-size: var(--ink-size-title);
+  line-height: 1.4;
 }
-.row-copy small {
-  color: var(--ink-secondary);
-  font-size: var(--ink-size-meta);
-  font-weight: 400;
-}
-.library-shell .annotation-row > .icon {
-  color: var(--ink-tertiary);
-}
-.library-shell .annotation-detail {
-  min-width: 0;
-  padding: 16px;
-  display: grid;
-  gap: 12px;
-  background: var(--ink-surface);
-}
-.detail-heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  min-width: 0;
-}
-.detail-heading > div {
-  min-width: 0;
-  flex: 1;
-  display: grid;
-  gap: 2px;
-}
-.detail-heading h2 {
+.library-shell .row-note,
+.sibling .row-note {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
 }
-.color-dot {
-  width: 10px;
-  height: 10px;
-  margin-top: 4px;
-  border-radius: 50%;
+.library-shell .annotation-row .row-meta {
+  flex-wrap: nowrap;
+}
+.row-meta > * {
   flex: none;
 }
+.row-meta > .row-source {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-shell .annotation-detail {
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  min-width: 0;
+  max-height: calc(100vh - 170px);
+  padding: 24px 28px 28px;
+  overflow: auto;
+}
+.detail-heading {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.detail-heading h2 {
+  font-size: var(--ink-size-display);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .detail-excerpt {
-  padding: 8px 12px;
-  border-radius: var(--ink-radius-control);
-  background: var(--ink-fill);
+  position: relative;
+  margin: 0;
+  padding: 0 0 0 16px;
   font-size: var(--ink-size-title);
-  line-height: 1.55;
+  line-height: 1.65;
+}
+.detail-excerpt::before {
+  top: 4px;
+  bottom: 4px;
+  left: 0;
+}
+.library-shell .annotation-detail > .detail-actions {
+  margin-left: -8px;
+}
+.same-page {
+  display: grid;
+  gap: 2px;
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--ink-separator);
+}
+.same-page h3 {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 4px;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-weight: 500;
+}
+.same-page h3 .count {
+  color: var(--ink-tertiary);
+  font-weight: 400;
+}
+.sibling {
+  margin-left: -12px;
+  width: calc(100% + 12px);
+}
+.sibling .row-note {
+  font-size: var(--ink-size-meta);
 }
 .back-button {
   display: none;
@@ -750,6 +837,10 @@ select {
   .library-shell .annotation-list {
     border-right: 0;
     max-height: none;
+  }
+  .library-shell .annotation-detail {
+    max-height: none;
+    padding: 16px;
   }
   .library-shell .annotation-detail {
     display: none;

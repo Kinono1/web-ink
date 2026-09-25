@@ -263,12 +263,21 @@ export function AnnotationBrowser({
             selected={selected?.id === record.id}
             state={states[record.id]}
             language={language}
+            t={t}
             onSelect={() => setSelectedId(record.id)}
           />
         ))}
       </div>
       {selected ? (
-        <AnnotationDetail {...detailProps(selected)} back={onBack} />
+        <AnnotationDetail
+          {...detailProps(selected)}
+          back={onBack}
+          siblings={records.filter(
+            (record) =>
+              record.pageUrl === selected.pageUrl && record.id !== selected.id,
+          )}
+          onSelect={setSelectedId}
+        />
       ) : null}
     </section>
   );
@@ -301,47 +310,58 @@ const statusKey = (status: AnchorState["status"]) =>
       : status === "unresolved"
         ? "unresolved"
         : "unsupportedStatus";
+/** A library row: the quote first, then the note and one quiet line of facts. */
 export function AnnotationRow({
   record,
   selected,
   state,
   language,
+  t,
   onSelect,
 }: {
   record: Annotation;
   selected: boolean;
   state?: AnchorState;
   language: Language;
+  t: (typeof COPY)[Language];
   onSelect: () => void;
 }) {
-  const icon =
-    kindFamily(record.kind) === "text"
-      ? "text"
-      : kindFamily(record.kind) === "image"
-        ? "image"
-        : "pdf";
+  const family = kindFamily(record.kind);
+  const problem =
+    state?.status === "unresolved" || state?.status === "unsupported"
+      ? state
+      : undefined;
   return (
     <button
       className={selected ? "annotation-row selected" : "annotation-row"}
+      aria-current={selected || undefined}
       onClick={onSelect}
       style={{ "--record-color": record.color } as React.CSSProperties}
     >
-      <span className="type">
-        <Icon name={icon} />
+      <span className="row-quote">{excerptText(record)}</span>
+      {record.note ? <span className="row-note">{record.note}</span> : null}
+      <span className="row-meta">
+        <span className="row-source">{sourceName(record)}</span>
+        {family !== "text" ? (
+          <span>{family === "image" ? t.image : t.pdf}</span>
+        ) : null}
+        <time
+          dateTime={record.updatedAt}
+          title={localDate(record.updatedAt, language)}
+        >
+          {shortDate(record.updatedAt, language)}
+        </time>
+        {record.tags.length ? (
+          <span className="row-tags">
+            {record.tags.map((tag) => `#${tag}`).join(" ")}
+          </span>
+        ) : null}
+        {problem ? (
+          <span className={statusClass(problem.status)} title={problem.reason}>
+            {t[statusKey(problem.status)]}
+          </span>
+        ) : null}
       </span>
-      <span className="row-copy">
-        <strong>{excerptText(record)}</strong>
-        <small>
-          {sourceName(record)} · {localDate(record.updatedAt, language)}
-        </small>
-      </span>
-      {state ? (
-        <span className={statusClass(state.status)} title={state.reason}>
-          {state.status}
-        </span>
-      ) : (
-        <Icon name="chevron" />
-      )}
     </button>
   );
 }
@@ -423,38 +443,58 @@ function AnnotationItem({
     </div>
   );
 }
+/**
+ * The library's reading view: where the quote came from, the quote itself,
+ * your note, then everything else you marked on the same page.
+ */
 export function AnnotationDetail({
   back,
+  siblings = [],
+  onSelect,
   ...props
-}: DetailProps & { back?: () => void }) {
-  const { record, state, t, editing, draft, conflict } = props;
-  const label = state ? t[statusKey(state.status)] : undefined;
+}: DetailProps & {
+  back?: () => void;
+  siblings?: Annotation[];
+  onSelect?: (id: string) => void;
+}) {
+  const { record, state, language, t, editing, draft, conflict } = props;
+  const family = kindFamily(record.kind);
+  const problem =
+    state?.status === "unresolved" || state?.status === "unsupported"
+      ? state
+      : undefined;
   return (
-    <article className="annotation-detail">
+    <article
+      className="annotation-detail"
+      style={{ "--record-color": record.color } as React.CSSProperties}
+    >
       {back ? (
         <button className="back-button quiet" onClick={back}>
           <Icon name="chevron" />
           {t.library}
         </button>
       ) : null}
-      <div className="detail-heading">
-        <span className="color-dot" style={{ backgroundColor: record.color }} />
-        <div>
-          <p className="eyebrow">
-            {kindFamily(record.kind) === "pdf"
-              ? t.pdf
-              : kindFamily(record.kind) === "text"
-                ? t.text
-                : t.image}
-          </p>
-          <h2>{sourceName(record)}</h2>
-        </div>
-        {label ? (
-          <span className={statusClass(state?.status)} title={state?.reason}>
-            {label}
+      <header className="detail-heading">
+        <p className="row-meta">
+          <span>
+            {family === "pdf" ? t.pdf : family === "text" ? t.text : t.image}
           </span>
-        ) : null}
-      </div>
+          <span>
+            {isPdf(record)
+              ? t.pageNumber(record.target.pageNumber)
+              : new URL(record.pageUrl).host}
+          </span>
+          <time dateTime={record.updatedAt}>
+            {localDate(record.updatedAt, language)}
+          </time>
+          {problem ? (
+            <span className={statusClass(problem.status)} title={problem.reason}>
+              {t[statusKey(problem.status)]}
+            </span>
+          ) : null}
+        </p>
+        <h2>{sourceName(record)}</h2>
+      </header>
       {state?.status === "unresolved" ? (
         <p className="hint" role="status">
           {t.restoreExplanation}
@@ -473,7 +513,7 @@ export function AnnotationDetail({
         />
       ) : (
         <>
-          <p className="detail-excerpt">{excerptText(record)}</p>
+          <blockquote className="detail-excerpt">{excerptText(record)}</blockquote>
           {record.note ? <p className="note">{record.note}</p> : null}
           {record.tags.length ? (
             <div className="tags">
@@ -485,6 +525,27 @@ export function AnnotationDetail({
           <DetailActions {...props} />
         </>
       )}
+      {siblings.length ? (
+        <section className="same-page" aria-label={t.samePage}>
+          <h3>
+            {t.samePage}
+            <span className="count">{siblings.length}</span>
+          </h3>
+          {siblings.map((sibling) => (
+            <button
+              key={sibling.id}
+              className="sibling"
+              onClick={() => onSelect?.(sibling.id)}
+              style={{ "--record-color": sibling.color } as React.CSSProperties}
+            >
+              <span className="row-quote">{excerptText(sibling)}</span>
+              {sibling.note ? (
+                <span className="row-note">{sibling.note}</span>
+              ) : null}
+            </button>
+          ))}
+        </section>
+      ) : null}
     </article>
   );
 }
@@ -685,7 +746,7 @@ export function SettingsView({
   return (
     <section className="settings-view">
       <section className="settings-group">
-        <h2>{t.settings}</h2>
+        <h2>{t.preferences}</h2>
         <label>
           {t.theme}
           <select
@@ -740,7 +801,7 @@ export function SettingsView({
           <ColorPicker
             value={settings.defaultColor}
             onChange={(color) => saveSettings({ defaultColor: color })}
-            label={t.defaultColor}
+            label={t.customColor}
           />
         </label>
       </section>
