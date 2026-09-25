@@ -16,7 +16,7 @@ import { TextAnchorSession } from "../core/text-anchor";
 import { captureImage, resolveImage } from "../core/image-anchor";
 import { clientToImage } from "../core/geometry";
 import { pageKey } from "../core/url";
-import { button, createView, svgElement } from "./view-lite";
+import { button, createView, separator, svgElement } from "./view-lite";
 import { renderShape } from "./render-shape";
 import { createNotifications } from "./notifications";
 import { ICON_PATHS } from "../ui/icons";
@@ -241,7 +241,7 @@ export function startEngine(
     };
     primary.forEach(addColor);
     const more = button(
-      "•••",
+      "",
       () => {
         more.remove();
         for (const color of COLORS)
@@ -264,8 +264,11 @@ export function startEngine(
       },
       label("更多颜色", "More colors"),
     );
+    more.className = "more";
+    more.append(glyph(ICON_PATHS.more, 3));
     view.selection.append(more);
     const matches = matchingTextSelection(annotations, textRanges, range);
+    if (matches.length) view.selection.append(separator());
     if (matches.length === 1) view.selection.append(removeButton(matches[0]!));
     else if (matches.length > 1)
       view.selection.append(
@@ -298,7 +301,7 @@ export function startEngine(
     const control = button(name, () => {
       void removeAnnotation(record);
     });
-    control.style.color = "var(--ink-danger)";
+    control.className = "danger";
     control.title =
       record.kind === "text"
         ? record.target.exact
@@ -520,11 +523,29 @@ export function startEngine(
     }
   }
 
+  function glyph(path: string, strokeWidth = 1.8) {
+    const icon = svgElement("svg", {
+      viewBox: "0 0 24 24",
+      "aria-hidden": "true",
+    });
+    icon.append(
+      svgElement("path", {
+        d: path,
+        fill: "none",
+        stroke: "currentColor",
+        "stroke-width": strokeWidth,
+        "stroke-linecap": "round",
+        "stroke-linejoin": "round",
+      }),
+    );
+    return icon;
+  }
   function drawingToolbar() {
     view.drawing.replaceChildren();
-    const title = document.createElement("strong");
+    const title = document.createElement("span");
+    title.className = "brand";
     title.textContent = "Web Ink";
-    view.drawing.append(title);
+    view.drawing.append(title, separator());
     if (mode === "choose-image") {
       const hint = document.createElement("span");
       hint.className = "hint";
@@ -538,21 +559,8 @@ export function startEngine(
     }
     const iconButton = (title: string, path: string, run: () => void) => {
       const control = button("", run, title);
-      const icon = svgElement("svg", {
-        viewBox: "0 0 24 24",
-        "aria-hidden": "true",
-      });
-      icon.append(
-        svgElement("path", {
-          d: path,
-          fill: "none",
-          stroke: "currentColor",
-          "stroke-width": 1.8,
-          "stroke-linecap": "round",
-          "stroke-linejoin": "round",
-        }),
-      );
-      control.append(icon);
+      control.className = "icon";
+      control.append(glyph(path));
       return control;
     };
     const kinds: Array<[ShapeKind, string, string, string]> = [
@@ -578,6 +586,7 @@ export function startEngine(
     });
     view.drawing.append(
       color,
+      separator(),
       iconButton(
         label("撤销", "Undo"),
         "M8 7 4 11l4 4M5 11h8a5 5 0 1 1 0 10",
@@ -592,6 +601,7 @@ export function startEngine(
           void redoDrawing();
         },
       ),
+      separator(),
       iconButton(label("换图片", "Pick image"), ICON_PATHS.image, () => {
         selectedImage = undefined;
         mode = "choose-image";
