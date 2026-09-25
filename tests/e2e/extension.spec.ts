@@ -312,6 +312,11 @@ test("all four image tools persist and session undo/redo preserves the drawing",
   await page.locator("#diagram").scrollIntoViewIfNeeded();
   await rpc(manager, { type: "page.action", tabId: tab.id, action: "draw" });
   await page.locator("#diagram").click();
+  // Icon-only tools must paint their glyphs; an unsized SVG collapses to 0×0.
+  for (const name of ["方框", "椭圆", "箭头", "画笔", "撤销", "重做", "换图片", "完成"])
+    await expect(
+      page.getByRole("button", { name, exact: true }).locator("svg"),
+    ).toBeVisible();
   const box = (await page.locator("#diagram").boundingBox())!;
   for (const [index, name] of ["方框", "椭圆", "箭头", "画笔"].entries()) {
     await page.getByRole("button", { name, exact: true }).click();
