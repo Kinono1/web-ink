@@ -87,18 +87,31 @@ export function PdfNote({
     <article
       className="pdf-note"
       data-pdf-note={record.id}
-      style={{ borderLeftColor: record.color }}
+      style={{ "--record-color": record.color } as React.CSSProperties}
     >
-      <button className="pdf-note-source" onClick={onJump}>
-        {t("第", "Page ")}
-        {record.target.pageNumber}
-        {zh ? "页" : ""} ·{" "}
-        {record.kind === "pdf-text"
-          ? record.target.exact
-          : t("区域标注", "Area annotation")}
+      <button
+        className="pdf-note-source"
+        onClick={onJump}
+        title={t("跳到这一页", "Go to this page")}
+      >
+        <span className="row-quote">
+          {record.kind === "pdf-text"
+            ? record.target.exact
+            : t("区域标注", "Area annotation")}
+        </span>
       </button>
       {record.note && <p>{record.note}</p>}
-      {record.tags.length > 0 && <small>{record.tags.join(" · ")}</small>}
+      <span className="row-meta">
+        <span>
+          {t(
+            `第 ${record.target.pageNumber} 页`,
+            `Page ${record.target.pageNumber}`,
+          )}
+        </span>
+        {record.tags.length > 0 && (
+          <span>{record.tags.map((tag) => `#${tag}`).join(" ")}</span>
+        )}
+      </span>
       {editing ? (
         <div className="pdf-note-editor">
           <label>
