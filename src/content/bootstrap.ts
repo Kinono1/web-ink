@@ -2,6 +2,8 @@ import { request } from "../core/client";
 import { DEFAULT_SETTINGS, type PageMode, type Settings } from "../core/model";
 import { pageKey } from "../core/url";
 import { createPaletteToggle } from "./palette-toggle";
+import { readPalettePosition } from "./palette-position";
+import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
 
 export interface EngineBridge {
@@ -71,11 +73,13 @@ export function startBootstrap(): () => void {
     bridge?.start();
     return Boolean(bridge);
   };
-  const refreshMode = async () => {
+  const refreshMode = async (showBusy = true) => {
     const url = pageKey(location.href);
     currentUrl = url;
-    busy = true;
-    updateToggle();
+    if (showBusy) {
+      busy = true;
+      updateToggle();
+    }
     try {
       const [settings, mode] = await Promise.all([
         request<Settings>({ type: "settings.get" }),
@@ -94,7 +98,7 @@ export function startBootstrap(): () => void {
       stopEngine();
     } finally {
       if (!disposed && pageKey(location.href) === url) {
-        busy = false;
+        if (showBusy) busy = false;
         updateToggle();
       }
     }
@@ -146,9 +150,21 @@ export function startBootstrap(): () => void {
     if (!enabled || blocked || !(await ensureEngine())) return;
     window.__webInkEngine?.dispatch(action, id);
   };
-  const toggle = createPaletteToggle(view.root, () => {
-    void setEnabled(!enabled);
-  });
+  const positionWriter = createPalettePositionWriter(
+    position => chrome.storage.local.set({ [PALETTE_POSITION_KEY]: position }),
+  );
+  const toggle = createPaletteToggle(
+    view.root,
+    () => { void setEnabled(!enabled); },
+    positionWriter.save,
+  );
+  // Read once per content-script lifetime. Other open pages keep their position;
+  // settings/theme changes and SPA routes must not restore this preference again.
+  void chrome.storage.local.get(PALETTE_POSITION_KEY)
+    .then(saved => {
+      if (!disposed) toggle.setPosition(readPalettePosition(saved[PALETTE_POSITION_KEY]));
+    })
+    .catch(() => undefined);
   const onMessage = (
     message: { type?: string; pageUrl?: string; action?: string; id?: string },
     _sender: chrome.runtime.MessageSender,
@@ -167,7 +183,9 @@ export function startBootstrap(): () => void {
       (message.type === "page.mode.changed" &&
         (!message.pageUrl || message.pageUrl === pageKey(location.href)))
     ) {
-      void refreshMode();
+      // Appearance updates must not briefly disable and cancel an active drag.
+      // Pausing an origin still cancels once its actual blocked state is read.
+      void refreshMode(message.type !== "settings.changed");
       return false;
     }
     if (
@@ -206,6 +224,7 @@ export function startBootstrap(): () => void {
       window.removeEventListener("popstate", route);
       window.removeEventListener("hashchange", route);
       stopEngine();
+      positionWriter.dispose();
       toggle.dispose();
       view.host.remove();
       delete window.__webInkBootstrap;

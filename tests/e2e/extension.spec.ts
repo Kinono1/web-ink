@@ -747,6 +747,90 @@ test("dismissed background errors stay quiet while failed saves retain retry con
   );
 });
 
+async function palettePoint(page: Page) {
+  return page.locator('.web-ink-palette-toggle').evaluate(button => ({
+    left: Number.parseFloat((button as HTMLElement).style.left),
+    top: Number.parseFloat((button as HTMLElement).style.top),
+  }));
+}
+
+async function dragPalette(page: Page, left: number, top: number) {
+  const box = (await page.locator('.web-ink-palette-toggle').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(left + box.width / 2, top + box.height / 2, { steps: 5 });
+  await page.mouse.up();
+}
+
+test('palette dragging saves locally, leaves open pages alone, and survives browser restart', async () => {
+  await enable();
+  const page = await article(false);
+  const other = await article(false);
+  const original = await palettePoint(other);
+  await dragPalette(page, 200, 140);
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
+  const moved = await palettePoint(page);
+  expect(Math.abs(moved.left - 200)).toBeLessThan(2);
+  expect(Math.abs(moved.top - 140)).toBeLessThan(2);
+  await page.screenshot({ path: 'test-results/palette-drag-light.png' });
+  await expect.poll(async () => manager.evaluate(async () => (await chrome.storage.local.get('ui.palettePosition'))['ui.palettePosition'])).toMatchObject({ x: expect.any(Number), y: expect.any(Number) });
+  expect(await palettePoint(other)).toEqual(original);
+  await page.reload();
+  await expect.poll(() => palettePoint(page)).toEqual(moved);
+  await other.reload();
+  await expect.poll(() => palettePoint(other)).toEqual(moved);
+  await context.close();
+  await start(profile);
+  const reopened = await article(false);
+  await expect.poll(() => palettePoint(reopened)).toEqual(moved);
+  await reopened.locator('.web-ink-palette-toggle').focus();
+  await reopened.keyboard.press('Enter');
+  await expect(reopened.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'true');
+  await expect(reopened.locator('.web-ink-palette-toggle')).toBeEnabled();
+  await reopened.locator('.web-ink-palette-toggle').focus();
+  await reopened.keyboard.press('Space');
+  await expect(reopened.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
+});
+
+test('palette dragging cancels cleanly and clamps safely when the viewport changes', async () => {
+  await enable();
+  const page = await article(false);
+  const original = await palettePoint(page);
+  const box = (await page.locator('.web-ink-palette-toggle').boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down();
+  await page.mouse.move(200, 150);
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('data-dragging', 'true');
+  await page.keyboard.press('Escape'); await page.mouse.up();
+  expect(await palettePoint(page)).toEqual(original);
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await dragPalette(page, -20, -20);
+  expect(await palettePoint(page)).toEqual({ left: 12, top: 12 });
+  await page.setViewportSize({ width: 320, height: 240 });
+  expect(await palettePoint(page)).toEqual({ left: 12, top: 12 });
+  await page.locator('.web-ink-palette-toggle').click();
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('palette dragging keeps hover motion disabled through a live theme change', async () => {
+  await enable();
+  const page = await article(false);
+  const box = (await page.locator('.web-ink-palette-toggle').boundingBox())!;
+  await page.mouse.move(box.x + 20, box.y + 20); await page.mouse.down();
+  await page.mouse.move(320, 220);
+  const settings = await rpc<any>(manager, { type: 'settings.get' });
+  await rpc(manager, { type: 'settings.put', settings: { ...settings, theme: 'dark' } });
+  await expect(page.locator('web-ink-ui')).toHaveAttribute('data-web-ink-theme', 'dark');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('data-dragging', 'true');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('transform', 'none');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('transition-duration', '0s');
+  // The existing shared button:hover rule uses the theme's fill token.
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('background-color', 'rgba(118, 118, 128, 0.24)');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('color', 'rgb(245, 245, 247)');
+  await page.mouse.up();
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
+  await page.screenshot({ path: 'test-results/palette-drag-dark.png' });
+});
+
 test("palette is quiet by default and remembers the page switch without deleting notes", async () => {
   await enable();
   const page = await article(false);
