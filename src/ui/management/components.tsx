@@ -105,6 +105,13 @@ export function FilterPopover({
 }) {
   const colors = [...new Set(records.map((record) => record.color))].sort();
   const tags = [...new Set(records.flatMap((record) => record.tags))].sort();
+  const tagSuggestions = tag
+    ? tags.filter(
+        (value) =>
+          value.toLocaleLowerCase().startsWith(tag.toLocaleLowerCase()) &&
+          value.toLocaleLowerCase() !== tag.toLocaleLowerCase(),
+      )
+    : tags;
   return (
     <section className="filter-popover" aria-label={t.filter}>
       <div className="filter-kinds" role="group" aria-label={t.filter}>
@@ -144,14 +151,26 @@ export function FilterPopover({
       </label>
       <label>
         {t.tag}
-        <select value={tag} onChange={(event) => setTag(event.target.value)}>
-          <option value="">{t.all}</option>
-          {tags.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
+        <input
+          aria-label={t.tag}
+          value={tag}
+          onChange={(event) => setTag(event.target.value)}
+        />
+        {tagSuggestions.length ? (
+          <span className="filter-tag-suggestions" aria-label={t.currentResultTags}>
+            <span>{t.currentResultTags}</span>
+            {tagSuggestions.map((value) => (
+              <button
+                key={value}
+                className="quiet"
+                type="button"
+                onClick={() => setTag(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </span>
+        ) : null}
       </label>
       <button className="quiet" onClick={clear}>
         {t.clearFilters}

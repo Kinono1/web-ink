@@ -146,6 +146,8 @@ describe("management UI", () => {
       tabId: 7,
       expectedUrl: "https://example.test/reading",
     });
+    expect(host.querySelector('button[aria-label="打开 PDF"]')).toBeNull();
+    expect(host.querySelector(".pdf-local-link")).toBeNull();
     const choices = [...host.querySelectorAll<HTMLButtonElement>(".pdf-source-choice")];
     expect(choices.map((button) => button.textContent)).toEqual([
       "https://example.test/one.pdf",
@@ -187,6 +189,7 @@ describe("management UI", () => {
     expect(host.textContent).toContain("正在阅读");
     expect(host.querySelector(".pdf-open-current")).toBeNull();
     expect(host.querySelector(".pdf-local-link")).toBeNull();
+    expect(host.querySelector('button[aria-label="打开 PDF"]')).toBeNull();
     expect(sent.mock.calls.filter(([message]) => message.type === "pdf.openCurrent")).toHaveLength(0);
   });
 
@@ -286,5 +289,71 @@ describe("management UI", () => {
         .click();
     });
     expect(tagInput.value).toBe("already, research");
+  });
+
+  it("sends a freely entered tag filter even when the current results have no matching tag", async () => {
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query")
+        return { ok: true, data: { items: [record] } };
+      return { ok: true, data: true };
+    });
+    const host = await mount("library");
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>("button")]
+        .find((button) => button.textContent?.includes("筛选"))!
+        .click();
+    });
+    expect(host.querySelector(".filter-tag-suggestions")?.getAttribute("aria-label")).toBe("当前结果中的标签");
+    expect(host.querySelector(".filter-tag-suggestions")?.textContent).toContain("research");
+    const tagFilter = host.querySelector<HTMLInputElement>('input[aria-label="标签"]');
+    expect(tagFilter).not.toBeNull();
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!
+        .set!.call(tagFilter, "unloaded-tag");
+      tagFilter!.dispatchEvent(new Event("input", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(sent).toHaveBeenCalledWith(expect.objectContaining({
+      type: "annotations.query",
+      query: expect.objectContaining({ tag: "unloaded-tag" }),
+    }));
+  });
+
+  it("keeps a specific PDF opening error actionable without a false refresh hint", async () => {
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query")
+        return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return {
+          ok: true,
+          data: {
+            tabId: 7,
+            url: "https://example.test/paper.pdf",
+            kind: "direct",
+            currentReader: false,
+            candidates: [{ url: "https://example.test/paper.pdf", via: "url" }],
+          },
+        };
+      }
+      if (message.type === "pdf.openCurrent") {
+        return { ok: false, code: "PDF_SOURCE_UNAVAILABLE", error: "Choose a source again." };
+      }
+      return { ok: true, data: true };
+    }, { id: 7, url: "https://example.test/paper.pdf", title: "Paper" });
+    const host = await mount("sidepanel");
+    await act(async () => {
+      (host.querySelector(".pdf-open-current") as HTMLButtonElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(host.textContent).toContain("Choose a source again.");
+    expect(host.textContent).not.toContain("刷新此页后重试。");
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      expectedUrl: "https://example.test/paper.pdf",
+      candidateUrl: "https://example.test/paper.pdf",
+    });
   });
 });

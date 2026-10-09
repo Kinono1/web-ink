@@ -7,6 +7,8 @@ import { ManagementApp, pdfReaderUrl } from '../src/ui/ManagementApp';
 import { createView } from '../src/content/view-lite';
 import { CONTENT_THEME_CSS, PAGE_THEME_CSS, SCALE_TOKENS, THEME_TOKENS } from '../src/ui/theme';
 import { shortDate } from '../src/ui/management/helpers';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
@@ -81,6 +83,12 @@ describe('shared UI presentation contract', () => {
   it('ships only vector path data in the shared icon map', () => {
     expect(ICON_PATHS.pdf).toMatch(/^M/); expect(ICON_PATHS.library).toMatch(/^M/);
     expect(Object.values(ICON_PATHS).join('')).not.toContain('<svg');
+  });
+  it('keeps every page-switch transition within the shared 120ms motion cap', () => {
+    const css = readFileSync(resolve('src/ui/management.css'), 'utf8');
+    expect(css).toContain('transition: background-color var(--ink-motion-fast) ease;');
+    expect(css).toContain('transition: transform var(--ink-motion-fast) ease;');
+    expect(css).not.toContain('0.16s ease');
   });
   it('opens a PDF record through its hash and source URL, never file content', () => {
     const url = new URL(pdfReaderUrl('chrome-extension://test/pdf.html', pdf));

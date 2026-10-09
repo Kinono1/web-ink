@@ -2,7 +2,7 @@ import { useAnnotationQuery } from "./management/useAnnotationQuery";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { toMarkdown } from "../core/backup";
-import { request } from "../core/client";
+import { RequestError, request } from "../core/client";
 import {
   COLORS,
   DEFAULT_SETTINGS,
@@ -582,7 +582,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     })
       .catch((cause) => {
         const message = cause instanceof Error ? cause.message : String(cause);
-        setError(`${message} ${t.refreshPdfHint}`);
+        setError(
+          cause instanceof RequestError && cause.code
+            ? message
+            : `${message} ${t.refreshPdfHint}`,
+        );
       })
       .finally(() => {
         pdfOpenPending.current = false;
@@ -594,6 +598,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   };
   const filterCount =
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
+  const showHeaderPdfAction =
+    !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
   return (
     <main
       className={mode === "sidepanel" ? "ink-app sidepanel" : "ink-app"}
@@ -621,10 +627,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         <div className="header-actions">
           {mode === "sidepanel" ? (
             <>
-            <button className="quiet icon-button" disabled={openingPdf} onClick={() => openCurrentPdf()}
-              title={t.openPdf} aria-label={t.openPdf}>
-              <Icon name="pdf" />
-            </button>
+            {showHeaderPdfAction ? (
+              <button className="quiet icon-button" disabled={openingPdf} onClick={() => openCurrentPdf()}
+                title={t.openPdf} aria-label={t.openPdf}>
+                <Icon name="pdf" />
+              </button>
+            ) : null}
             <button
               className="quiet icon-button"
               aria-label={t.openLibrary}
@@ -746,7 +754,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                   <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openCurrentPdf}
                 </button>
               )}
-              {!pdfContext?.currentReader ? (
+              {!pdfContext?.currentReader && pdfContext?.candidates.length !== undefined && pdfContext.candidates.length <= 1 ? (
                 <button className="quiet pdf-local-link" onClick={() => openCurrentPdf()}>{t.chooseLocalPdf}</button>
               ) : null}
               <small>{t.pdfLocalNote}</small>

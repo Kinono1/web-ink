@@ -207,7 +207,7 @@ button:disabled {
   height: 16px;
   border-radius: 999px;
   background: var(--ink-fill-hover);
-  transition: background-color 0.16s ease;
+  transition: background-color var(--ink-motion-fast) ease;
 }
 .page-switch > span::after {
   content: "";
@@ -219,7 +219,7 @@ button:disabled {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgb(0 0 0 / 22%);
-  transition: transform 0.16s ease;
+  transition: transform var(--ink-motion-fast) ease;
 }
 .page-switch.on > span {
   background: var(--ink-accent);
@@ -472,6 +472,20 @@ select {
   font-weight: 400;
 }
 .tag-suggestions button {
+  min-height: var(--ink-control-min-height);
+  padding: 2px 8px;
+}
+.filter-tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  grid-column: 2;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-weight: 400;
+}
+.filter-tag-suggestions button {
   min-height: var(--ink-control-min-height);
   padding: 2px 8px;
 }
