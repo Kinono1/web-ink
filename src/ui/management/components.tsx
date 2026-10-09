@@ -358,29 +358,31 @@ export function AnnotationRow({
       onClick={onSelect}
       style={{ "--record-color": record.color } as React.CSSProperties}
     >
-      <span className="row-quote">{excerptText(record)}</span>
-      {record.note ? <span className="row-note">{record.note}</span> : null}
-      <span className="row-meta">
-        <span className="row-source">{sourceName(record)}</span>
-        {family !== "text" ? (
-          <span>{family === "image" ? t.image : t.pdf}</span>
-        ) : null}
-        <time
-          dateTime={record.updatedAt}
-          title={localDate(record.updatedAt, language)}
-        >
-          {shortDate(record.updatedAt, language)}
-        </time>
-        {record.tags.length ? (
-          <span className="row-tags">
-            {record.tags.map((tag) => `#${tag}`).join(" ")}
-          </span>
-        ) : null}
-        {problem ? (
-          <span className={statusClass(problem.status)} title={problem.reason}>
-            {t[statusKey(problem.status)]}
-          </span>
-        ) : null}
+      <span className="annotation-row-content">
+        <span className="row-quote">{excerptText(record)}</span>
+        {record.note ? <span className="row-note">{record.note}</span> : null}
+        <span className="row-meta">
+          <span className="row-source">{sourceName(record)}</span>
+          {family !== "text" ? (
+            <span>{family === "image" ? t.image : t.pdf}</span>
+          ) : null}
+          <time
+            dateTime={record.updatedAt}
+            title={localDate(record.updatedAt, language)}
+          >
+            {shortDate(record.updatedAt, language)}
+          </time>
+          {record.tags.length ? (
+            <span className="row-tags">
+              {record.tags.map((tag) => `#${tag}`).join(" ")}
+            </span>
+          ) : null}
+          {problem ? (
+            <span className={statusClass(problem.status)} title={problem.reason}>
+              {t[statusKey(problem.status)]}
+            </span>
+          ) : null}
+        </span>
       </span>
     </button>
   );
