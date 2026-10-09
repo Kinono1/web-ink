@@ -141,7 +141,7 @@ button:disabled {
   background: var(--ink-fill);
 }
 .quiet.selected {
-  color: var(--ink-accent);
+  color: var(--ink-text);
   background: var(--ink-accent-fill);
 }
 /* Two views of one page share a pill; the current one is raised, not coloured. */
@@ -443,6 +443,7 @@ button:disabled {
 }
 .editor input,
 .editor textarea,
+.filter-popover input,
 select {
   width: 100%;
   min-width: 0;
@@ -583,7 +584,7 @@ select {
   background: var(--ink-fill);
 }
 .search input::placeholder {
-  color: var(--ink-tertiary);
+  color: var(--ink-secondary);
 }
 .filter-count {
   display: grid;
@@ -630,7 +631,7 @@ select {
   border-radius: 999px;
 }
 .filter-kinds .selected {
-  color: var(--ink-accent);
+  color: var(--ink-text);
   background: var(--ink-accent-fill);
 }
 .library-shell .annotation-browser {

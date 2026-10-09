@@ -10,7 +10,7 @@
 }
 .pdf-app * { box-sizing: border-box; }
 .pdf-app button { min-height: var(--ink-control-min-height); }
-.pdf-app button[aria-pressed="true"] { color: var(--ink-accent); background: var(--ink-accent-fill); }
+.pdf-app button[aria-pressed="true"] { color: var(--ink-text); background: var(--ink-accent-fill); }
 .pdf-app button:disabled { cursor: default; }
 .pdf-app :is(button, input, textarea):focus-visible {
   outline: 2px solid var(--ink-accent);
@@ -27,7 +27,7 @@
   font: inherit;
   caret-color: var(--ink-accent);
 }
-.pdf-app input::placeholder { color: var(--ink-tertiary); }
+.pdf-app input::placeholder { color: var(--ink-secondary); }
 .pdf-app input[type="color"] {
   width: 36px;
   height: 36px;
