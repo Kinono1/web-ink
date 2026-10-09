@@ -459,7 +459,7 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
     await chrome.tabs.update(tab!.id!, { active: true });
     return tab!.id!;
   }, source);
-  const button = page.getByRole("button", { name: "用 Web Ink 打开当前 PDF", exact: true });
+  const button = page.getByRole("button", { name: "在当前页开始标注", exact: true });
   await expect(button).toBeVisible();
   await expect(page.getByRole("switch")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "图片绘制" })).toHaveCount(0);
