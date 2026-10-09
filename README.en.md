@@ -18,9 +18,9 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 
 1. Export a JSON backup from **Library → Settings & data**.
 2. Replace the runtime files in the same install folder with the new archive's files.
-3. Click **Reload** on Web Ink's extension card, refresh open webpages, and reopen the side panel.
+3. Click **Reload** on Web Ink's extension card and reopen the side panel. If the browser refuses reinjection into a page, follow the prompt to refresh that page and retry.
 
-**Do not uninstall: uninstalling removes extension-local data.** Keep the same browser profile and install folder. Developers can use `npm run update:local` to back up, verify identity, synchronize, and hash-check the existing `Web-Ink-Chrome` directory, with rollback on copy failure. Initial installation remains explicit.
+**Do not uninstall: uninstalling removes extension-local data.** Keep the same browser profile and install folder. Developer updates run only in the primary checkout. Chrome's loaded target stays `.output/chrome-mv3`; builds go to `.build-output/chrome-mv3`, and receipts and recovery backups live in `.local-install/`. Explicitly enroll a confirmed legacy installation once with `npm run register:local`, then use `npm run update:local`. The updater accepts a clean commit's matching sealed build, backs up and overwrites runtime files individually, hash-checks the result, and rolls back on failure. Linked worktrees are rejected before building or writing. Initial installation remains explicit.
 
 ## Read, annotate, return
 
