@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
+  outDir: '.build-output',
   modules: ['@wxt-dev/module-react'],
   hooks: {
     'build:manifestGenerated': (_wxt, manifest) => {

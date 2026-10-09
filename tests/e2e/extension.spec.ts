@@ -9,7 +9,7 @@ import { mkdtemp, rm, cp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const extensionPath = path.resolve(process.env.WEB_INK_BUILD || ".output/chrome-mv3");
+const extensionPath = path.resolve(process.env.WEB_INK_BUILD || ".build-output/chrome-mv3");
 const origins = ["http://*/*", "https://*/*"];
 let context: BrowserContext;
 let profile: string;

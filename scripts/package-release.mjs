@@ -1,8 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { runtimeFiles, digest, validateRuntimeIntegrity } from './lib/runtime.mjs';
 import { packFiles, verifyArchive } from './lib/archive.mjs';
-const files = await runtimeFiles('.output/chrome-mv3');
+const files = await runtimeFiles('.build-output/chrome-mv3');
 const manifest = validateRuntimeIntegrity(files);
 const info = JSON.parse(files['build-info.json'].toString());
 const pkg = JSON.parse(await readFile('package.json', 'utf8'));
@@ -13,7 +13,9 @@ if (process.argv.includes('--release') && (info.dirty || workingTreeDirty)) thro
 const bytes = await packFiles(files);
 verifyArchive(bytes, files);
 const name = `web-ink-${pkg.version}-chrome.zip`;
-await writeFile(`.output/${name}`, bytes);
-await writeFile(`.output/${name}.sha256`, `${digest(bytes)}  ${name}\n`);
+const releasesDirectory = '.build-output/releases';
+await mkdir(releasesDirectory, { recursive: true });
+await writeFile(`${releasesDirectory}/${name}`, bytes);
+await writeFile(`${releasesDirectory}/${name}.sha256`, `${digest(bytes)}  ${name}\n`);
 console.log(`${name}: ${Object.keys(files).length} runtime files verified, sha256 ${digest(bytes)}`);
 if (info.dirty) console.log('Working-tree build: local preview only. Rebuild a clean commit before publishing.');

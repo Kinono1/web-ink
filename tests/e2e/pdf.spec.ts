@@ -19,7 +19,7 @@ const rpc = async (message: object) =>
 test.beforeEach(async () => {
   folder = await mkdtemp(path.join(tmpdir(), "web-ink-pdf-"));
   const extension = path.join(folder, "extension");
-  await cp(path.resolve(process.env.WEB_INK_BUILD || ".output/chrome-mv3"), extension, { recursive: true });
+  await cp(path.resolve(process.env.WEB_INK_BUILD || ".build-output/chrome-mv3"), extension, { recursive: true });
   const manifest = JSON.parse(
     await readFile(path.join(extension, "manifest.json"), "utf8"),
   );

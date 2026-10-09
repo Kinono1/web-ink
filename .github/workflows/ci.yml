@@ -64,7 +64,7 @@ jobs:
       - run: npm run zip
       - run: node scripts/checksum.mjs
       - name: Verify release checksums
-        working-directory: .output
+        working-directory: .build-output/releases
         run: sha256sum -c *.zip.sha256
       - name: Upload failure diagnostics
         if: failure()
@@ -85,5 +85,5 @@ jobs:
           # Only these two explicit patterns are uploaded; other hidden files stay out.
           include-hidden-files: true
           path: |
-            .output/web-ink-*-chrome.zip
-            .output/web-ink-*-chrome.zip.sha256
+            .build-output/releases/web-ink-*-chrome.zip
+            .build-output/releases/web-ink-*-chrome.zip.sha256

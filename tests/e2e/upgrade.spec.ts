@@ -34,7 +34,7 @@ test('v0.3.0 profile upgrade preserves complete records, preferences, and backup
       return { records: await rpc({ type: 'annotations.list' }), mode: await rpc({ type: 'page.mode.get', pageUrl: row.pageUrl }) };
     }, row);
     await browser!.close(); browser = undefined;
-    await install(path.resolve(process.env.WEB_INK_BUILD || '.output/chrome-mv3'));
+    await install(path.resolve(process.env.WEB_INK_BUILD || '.build-output/chrome-mv3'));
     current = await start(); expect(current.id).toBe(id);
     const after = await current.page.evaluate(async pageUrl => {
       const rpc = async (m: object) => { const r = await chrome.runtime.sendMessage(m); if (!r.ok) throw Error(r.error); return r.data; };

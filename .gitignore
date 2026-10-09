@@ -2,7 +2,9 @@
 node_modules/
 .wxt/
 # Build output and transient validation artifacts
+.build-output/
 .output/
+.local-install/
 /Web-Ink-Chrome/
 # Local test results and browser profiles
 coverage/
