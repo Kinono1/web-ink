@@ -4,7 +4,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 
 [中文](../README.md) · [Privacy](../PRIVACY.md) · [Third-party notices](../THIRD_PARTY_NOTICES.md) · [Release process](RELEASING.md)
 
-> v0.3.0 is a preview. See [validation boundaries](VALIDATION.md) and [performance measurements](PERFORMANCE.md).
+> The source candidate is v0.3.2; public archives may be older. See [observed validation boundaries](VALIDATION.md) and [existing performance measurements](PERFORMANCE.md).
 
 ## v0.3 improvements
 
@@ -29,13 +29,17 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 - When enabled, the webpage engine is injected on demand. Text restore verifies exact text, context, root, and stable container. An ambiguous target remains unresolved rather than being guessed onto similar text.
 - The text toolbar starts with recent/current/common colors; More reveals remaining colors and custom input.
 - Image selection shows only a hint. Shape, color, undo, redo, and done controls appear after an image is selected. Drawing is rejected for non-identity CSS transforms on an image or ancestor.
-- Side panel and library share a macOS-style theme with system/light/dark, reduced-motion, and reduced-transparency preferences.
+- The side panel, library and reader share one theme with system/light/dark, reduced-motion, and reduced-transparency preferences. Drag the floating switch to save a local position; other already-open pages do not move.
 
 Ordinary webpage annotation requires Chrome 120 or later. Iframes, page-owned Shadow DOM, browser-internal pages, file URLs, and canvas content are outside this webpage scope.
 
 ## PDF
 
-Open the Web Ink side panel from the Chrome toolbar while viewing a PDF, then choose **Open current PDF in Web Ink** when its address is recognized. Already-authorized public HTTPS PDFs load in a separate reader. A **PDF** shortcut is always available at the top of the side panel. If the address is unavailable, the file is local, or sign-in is required, choose a downloaded file or paste a link manually. Web Ink does not replace your default PDF viewer.
+Open the Web Ink side panel from Chrome's toolbar while viewing a PDF, then choose **Start annotating in this tab**. The same tab switches to Web Ink and keeps **Return to original reader**. Choose among multiple readable sources. Wrapper pages such as IEEE use observed embedded addresses, never guessed download links. If the source is unavailable, local, or requires sign-in, open the manual reader and choose a downloaded file or paste a public link. This does not change the default PDF viewer.
+
+Selecting text shows nearby color and note actions. Choosing a color saves a highlight; ordinary copying does not create a record. **Add note** saves the highlight before opening its editor. Failed writes preserve the selection or draft for retry. Select within one page rather than across page breaks. **Show annotations** controls saved overlays independently of creation. Rotation, area drawing, other files and the library live in **More**.
+
+Return, file change and reader departure offer **Save and continue / Discard and continue / Keep editing** for unsaved content. Failed saves keep the current document. Forced browser exit or external extension Reload cannot guarantee memory drafts; save before updating.
 
 PDF support covers baseline text and area annotations. Coordinates are normalized in the unrotated PDF page coordinate space. The PDF page requires Chrome 125 or later; the minimum version is covered by a dedicated Chrome 125 CI step.
 
@@ -43,7 +47,9 @@ PDF support covers baseline text and area annotations. Coordinates are normalize
 - A single PDF input is limited to **50 MiB**. This protects local rendering and browser memory; it does not mean that the file is stored.
 - HTTPS reading uses exact-site authorization and fetches with `credentials: 'omit'`, `cache: 'no-store'`, and `redirect: 'error'`. Redirects are rejected in the MVP: use the final direct PDF URL or download the file and select it locally.
 - Only SHA-256, file name, optional source URL, page number, text anchors, and area geometry are stored. **PDF bytes are never stored.**
-- To restore a local PDF annotation, select the same-content file again. A changed hash is a different document; Web Ink does not migrate annotations across files.
+- Select the original local PDF again to restore its annotations and reading position. Changed file content keeps old annotations separate rather than applying them to the new file.
+- Page, within-page position, zoom and rotation are local preferences keyed by file content, outside JSON backups. Authorized public sources can reopen after refresh; local files need selection again and their bytes are not retained.
+- Return sessions may expire after browser restart or extension Reload. Public documents then offer **Open PDF source**; local documents offer file selection.
 - No OCR, authenticated-page retrieval, cookie/credential forwarding, or PDF write-back/editing is provided. Encrypted or protected documents may not load.
 
 The renderer uses PDF.js `6.3.289` legacy build with its matching worker and packaged resources. See [third-party notices](../THIRD_PARTY_NOTICES.md).

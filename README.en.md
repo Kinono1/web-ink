@@ -26,10 +26,10 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 
 - Select webpage text and choose a color. Click a saved mark to add a note or remove it; removal can be undone.
 - Use the side panel's image tools for rectangles, ellipses, arrows, and freehand drawing.
-- Choose **PDF** in the side panel, or **Open current PDF in Web Ink** when its source is recognized. Download authenticated files and choose them locally. Your default PDF viewer is unchanged.
+- Click Web Ink in Chrome's toolbar, then **Start annotating in this tab** in the side panel. The current tab switches to the Web Ink reader. Select text, then choose a color or add a note. **Return to original reader** opens the address observed before the switch. Choose among multiple sources when needed; download authenticated or unavailable files and choose them locally.
 - Search the library and export JSON or Markdown. If a webpage changes, unresolved notes are retained and can be rebound.
 
-Data belongs to the current browser profile; there is no cross-device sync. Choose the same local PDF again to restore its notes. Original PDF bytes are not saved in the library. Back up before clearing browser data or changing devices.
+Data belongs to the current browser profile; there is no cross-device sync. Choose the same local PDF again to restore its notes and reading position. Original PDF bytes are not saved in the library. Reading and floating-button positions are local preferences outside annotation backups. Return sessions may expire after browser restart or extension Reload; the reader then offers the PDF source or file selection. Back up before clearing browser data or changing devices.
 
 ## Limits and development
 
@@ -45,6 +45,8 @@ npm run build
 npm run test:e2e
 npm run zip
 ```
+
+The full browser suite requires two verified baselines: `WEB_INK_OLD_BUILD` is the extracted v0.3.0 release archive, and `WEB_INK_RELOAD_OLD_BUILD` is the v0.3.1 build at commit `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`. CI prepares both. See [release process](docs/RELEASING.md) for local setup; missing baselines fail instead of skipping upgrade acceptance.
 
 Use Node 24.15+ within the package engine range and the committed lockfile. `build` checks entry points, static resource references and prepared PDF assets, then writes `runtime-integrity.json`. Installation and packaging reject missing, modified or unlisted runtime files. Complete legacy installs can still be upgraded. `zip` verifies and packages the existing build without rebuilding. Clean builds use the commit timestamp as their reproducible build epoch.
 
