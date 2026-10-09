@@ -50,6 +50,7 @@ test.beforeEach(async () => {
     context.serviceWorkers()[0] ||
     (await context.waitForEvent("serviceworker"));
   id = new URL(worker.url()).host;
+  await context.route(/^https?:\/\//, (route) => route.abort("blockedbyclient"));
   page = await context.newPage();
   await page.goto(`chrome-extension://${id}/pdf.html`);
 });
@@ -58,6 +59,10 @@ test.afterEach(async () => {
   if (folder) await rm(folder, { recursive: true, force: true });
 });
 async function open(buffer = fixturePdf(), name = "reading.pdf") {
+  if (await page.locator(".pdf-toolbar").isVisible()) {
+    await moreAction("打开其他文件");
+    await expect(page.getByRole("dialog", { name: "打开其他 PDF", exact: true })).toBeVisible();
+  }
   await expect(page.getByLabel("选择本地 PDF", { exact: true })).toBeEnabled();
   await page
     .getByLabel("选择本地 PDF", { exact: true })
@@ -67,12 +72,13 @@ async function open(buffer = fixturePdf(), name = "reading.pdf") {
     page.locator(".pdf-page[data-ready=true]").first(),
   ).toBeVisible();
 }
+async function moreAction(name: string) {
+  await page.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true }).click();
+  await page.locator(".pdf-more-menu").getByRole("button", { name, exact: true }).click();
+}
 test("PDF text and area annotations survive reselect, zoom and rotation without storing bytes", async () => {
   await open();
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: /^(开启标注|关闭标注)$/ })).toHaveCount(0);
   await page
     .locator(".textLayer span")
     .first()
@@ -90,10 +96,10 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
     .toBe(1);
   await expect(page.locator("[data-pdf-annotation]")).toHaveCount(1);
   await page.getByRole("button", { name: "放大", exact: true }).click();
-  await page.getByRole("button", { name: "旋转", exact: true }).click();
+  await moreAction("旋转页面");
   await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
   await expect(page.locator("[data-pdf-annotation]")).toHaveCount(1);
-  await page.getByRole("button", { name: "区域标注", exact: true }).click();
+  await moreAction("区域标注");
   const box = await page.locator(".pdf-area-capture").boundingBox();
   await page.mouse.move(box!.x + 70, box!.y + 80);
   await page.mouse.down();
@@ -122,10 +128,6 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
 });
 test("PDF mark removal is explicit and does not return after reselecting the same file", async () => {
   await open();
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   await page
     .locator(".textLayer span")
     .first()
@@ -179,10 +181,6 @@ test("PDF mark removal is explicit and does not return after reselecting the sam
 
 test("PDF undo restore keeps the deleted annotation fields and revision-safe identity", async () => {
   await open();
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   await page
     .locator(".textLayer span")
     .first()
@@ -253,11 +251,7 @@ test("PDF undo restore keeps the deleted annotation fields and revision-safe ide
 });
 test("changed PDF identity leaves previous notes intact and canvas count remains bounded", async () => {
   await open();
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "区域标注", exact: true }).click();
+  await moreAction("区域标注");
   const area = page.locator(".pdf-area-capture");
   const box = await area.boundingBox();
   await page.mouse.move(box!.x + 40, box!.y + 60);
@@ -301,7 +295,7 @@ test("500 and 1000 page mixed-size PDFs jump, zoom, and rotate within the virtua
     page.locator('[data-page="250"] .pdf-page[data-ready=true]'),
   ).toBeVisible();
   await page.getByRole("button", { name: "放大", exact: true }).click();
-  await page.getByRole("button", { name: "旋转", exact: true }).click();
+  await moreAction("旋转页面");
   await expect(
     page.locator('[data-page="250"] .pdf-page[data-ready=true]'),
   ).toBeVisible();
@@ -318,10 +312,6 @@ test("500 and 1000 page mixed-size PDFs jump, zoom, and rotate within the virtua
 });
 test("PDF notes load beyond 50 and keep an edited draft when the list reorders", async () => {
   await open();
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   await page
     .locator(".textLayer span")
     .first()
@@ -352,6 +342,7 @@ test("PDF notes load beyond 50 and keep an edited draft when the list reorders",
     },
     overwrite: false,
   });
+  await page.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
   await expect(page.locator(".pdf-note")).toHaveCount(50);
   await page.getByRole("button", { name: "加载更多", exact: true }).click();
   await expect(page.locator(".pdf-note")).toHaveCount(56);
@@ -375,15 +366,16 @@ test("PDF notes load beyond 50 and keep an edited draft when the list reorders",
   await expect(
     note.getByRole("textbox", { name: "笔记", exact: true }),
   ).toHaveValue("draft survives reorder");
-  await page
-    .getByLabel("选择本地 PDF", { exact: true })
-    .setInputFiles({
-      name: "blocked.pdf",
-      mimeType: "application/pdf",
-      buffer: fixturePdf(1, "blocked"),
-    });
-  await expect(page.getByRole("alert")).toContainText("笔记草稿");
-  await page.getByRole("button", { name: "放弃笔记草稿", exact: true }).click();
+  await expect(note.locator(".row-meta")).toContainText("第 2 页");
+  await moreAction("打开其他文件");
+  const guard = page.getByRole("dialog", { name: "未保存的内容", exact: true });
+  await expect(guard).toBeVisible();
+  await guard.getByRole("button", { name: "继续编辑", exact: true }).click();
+  await expect(note.getByRole("textbox", { name: "笔记", exact: true })).toHaveValue("draft survives reorder");
+  await expect(page.locator(".pdf-name")).toHaveText("reading.pdf");
+  await moreAction("打开其他文件");
+  await guard.getByRole("button", { name: "放弃并继续", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "打开其他 PDF", exact: true })).toBeVisible();
   await page
     .getByLabel("选择本地 PDF", { exact: true })
     .setInputFiles({
@@ -394,23 +386,10 @@ test("PDF notes load beyond 50 and keep an edited draft when the list reorders",
   await expect(page.locator(".pdf-name")).toHaveText("next.pdf");
 });
 
-test("rapid A/B/C file selection leaves only the final PDF session visible", async () => {
-  const input = page.getByLabel("选择本地 PDF", { exact: true });
-  await input.setInputFiles({
-    name: "A.pdf",
-    mimeType: "application/pdf",
-    buffer: fixturePdf(1, "A only"),
-  });
-  await input.setInputFiles({
-    name: "B.pdf",
-    mimeType: "application/pdf",
-    buffer: fixturePdf(1, "B only"),
-  });
-  await input.setInputFiles({
-    name: "C.pdf",
-    mimeType: "application/pdf",
-    buffer: fixturePdf(1, "C only"),
-  });
+test("successive A/B/C file choices leave only the final PDF session visible", async () => {
+  await open(fixturePdf(1, "A only"), "A.pdf");
+  await open(fixturePdf(1, "B only"), "B.pdf");
+  await open(fixturePdf(1, "C only"), "C.pdf");
   await expect(page.locator(".pdf-name")).toHaveText("C.pdf");
   await expect(page.locator(".textLayer")).toContainText("C only");
   await expect(page.locator(".textLayer")).not.toContainText("A only");
@@ -428,6 +407,7 @@ test("online public PDF uses authorized reader fetch and rejects HTML", async ()
   await page.route("https://papers.example.test/login", (route) =>
     route.fulfill({ contentType: "text/html", body: "<html>Sign in</html>" }),
   );
+  await moreAction("打开其他文件");
   await page
     .getByLabel("公开 PDF 网址")
     .fill("https://papers.example.test/login");
@@ -439,10 +419,6 @@ test("Chinese multicolumn text uses packaged CMaps and remains separate from are
   await open(fixturePdf(1, "中文论文：阅读、标注与回顾"), "chinese-paper.pdf");
   await expect(page.locator(".textLayer")).toContainText("中文论文");
   await expect(page.locator(".textLayer")).toContainText("右栏独立的研究结果");
-  await page.getByRole("button", { name: "开启标注", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "关闭标注", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
   await page
     .locator(".textLayer span")
     .filter({ hasText: "右栏独立的研究结果" })
@@ -460,6 +436,7 @@ test("Chinese multicolumn text uses packaged CMaps and remains separate from are
     .toBe(1);
   const [record] = await rpc({ type: "annotations.list" });
   expect(record.target.exact).toBe("右栏独立的研究结果");
+  await page.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
   await expect(page.locator(".pdf-note")).toHaveCount(1);
   await page.screenshot({
     path: "test-results/pdf-chinese.png",
@@ -477,9 +454,10 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
   const original = await context.newPage();
   await original.goto(source);
   await page.goto(`chrome-extension://${id}/sidepanel.html`);
-  await page.evaluate(async (url) => {
+  const originalId = await page.evaluate(async (url) => {
     const tab = (await chrome.tabs.query({})).find((tab) => tab.url === url);
     await chrome.tabs.update(tab!.id!, { active: true });
+    return tab!.id!;
   }, source);
   const button = page.getByRole("button", { name: "用 Web Ink 打开当前 PDF", exact: true });
   await expect(button).toBeVisible();
@@ -492,21 +470,31 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
   await rpc({ type: "settings.put", settings: { ...settings, theme: "dark" } });
   await expect(page.locator(".ink-app")).toHaveAttribute("data-theme", "dark");
   await page.screenshot({ path: "test-results/pdf-handoff-dark.png" });
-  const newPage = context.waitForEvent("page");
+  const before = context.pages().length;
   await button.click();
-  const reader = await newPage;
-  await expect(reader.getByLabel("公开 PDF 网址")).toHaveValue(source);
+  const reader = original;
+  await expect(reader).toHaveURL(new RegExp(`^chrome-extension://${id}/pdf\\.html\\?`));
   await expect(reader.locator(".pdf-page[data-ready=true]")).toBeVisible();
   await expect(reader.locator(".pdf-name")).toHaveText("current.pdf");
-  await expect(original).toHaveURL(source);
+  expect(new URL(reader.url()).searchParams.get("source")).toBe(source);
+  expect(context.pages().length).toBe(before);
+  expect(await page.evaluate(async (tabId) => (await chrome.tabs.get(tabId)).id, originalId)).toBe(originalId);
+  expect(await rpc({ type: "pdf.context.get", tabId: originalId, expectedUrl: reader.url() })).toMatchObject({
+    tabId: originalId, url: reader.url(), currentReader: true,
+  });
 });
 
 test("sidepanel offers a manual PDF entry when the current page is inaccessible", async () => {
   await page.goto(`chrome-extension://${id}/sidepanel.html`);
-  await expect(page.getByRole("heading", { name: "在 Web Ink 中读 PDF" })).toBeVisible();
+  const tabId = await page.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]!.id!);
+  expect(await rpc({ type: "pdf.context.get", tabId })).toMatchObject({ kind: "unavailable", candidates: [] });
+  await expect(page.locator(".pdf-handoff")).toContainText("选择本地文件，或粘贴 PDF 链接");
+  await expect(page.getByRole("button", { name: "选择本地 PDF", exact: true })).toBeVisible();
+  const before = context.pages().length;
   const newPage = context.waitForEvent("page");
   await page.locator(".pdf-open-current").click();
   const reader = await newPage;
+  expect(context.pages().length).toBe(before + 1);
   await expect(reader.getByLabel("公开 PDF 网址")).toHaveValue("");
   await reader.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({ name: "local.pdf", mimeType: "application/pdf", buffer: fixturePdf() });
   await expect(reader.locator(".pdf-page[data-ready=true]")).toBeVisible();
