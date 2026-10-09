@@ -38,6 +38,14 @@ export class PageLayoutIndex {
     return this.#sum(this.#count);
   }
 
+  /** Returns a measured page's actual content height, excluding the layout gap. */
+  pageHeight(page: number): number | undefined {
+    if (!Number.isSafeInteger(page) || page < 1 || page > this.#count)
+      return undefined;
+    const stored = this.#heights[page]!;
+    return Number.isFinite(stored) ? Math.max(0, stored - this.#gap) : undefined;
+  }
+
   pageAt(offset: number): number {
     if (!this.#count) return 1;
     const target = Math.max(0, Math.min(this.totalHeight() - 1, offset));

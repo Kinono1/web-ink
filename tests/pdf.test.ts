@@ -244,6 +244,15 @@ describe("PDF source boundary", () => {
 });
 
 describe("incremental PDF layout", () => {
+  it("returns the measured page height without the virtual-layout gap", () => {
+    const layout = new PageLayoutIndex();
+    layout.reset(2, 100, 20);
+    layout.update(2, 180);
+
+    expect(layout.pageHeight(1)).toBe(100);
+    expect(layout.pageHeight(2)).toBe(180);
+    expect(layout.pageHeight(3)).toBeUndefined();
+  });
   it("maps 1,000 mixed-height pages with local updates and stable offsets", () => {
     const layout = new PageLayoutIndex();
     layout.reset(1000, 800);
