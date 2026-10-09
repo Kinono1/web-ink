@@ -1,0 +1,25 @@
+{
+  "version": "0.3.2",
+  "nativeAcceptance": false,
+  "note": "Actual captured pixels, without resizing. The PDF selection capture predates cfdc565 and does not expose its repaired placeholder/active-label/open-tag-field roles; management images come from the post-fix build. These are candidate UI captures; native/CI/installation gates remain separate.",
+  "images": [
+    {
+      "file": "v032-pdf-selection.png",
+      "sourceCommit": "6df483c80c995dc8ceab5fa1029c103928c509e3",
+      "sha256": "caf0cbc0fc8b51c11b31da3b14d55dedd554aa1fd92187f1e0d5efad448d9299",
+      "scene": "local synthetic PDF or synthetic records; isolated Chrome for Testing 153.0.8010.12"
+    },
+    {
+      "file": "v032-pdf-entry.png",
+      "sourceCommit": "cfdc565d02c6c1d38c027f46d84f892b077e8527",
+      "sha256": "f467b967812f63376e712985451b175becc3116e9d23bc76c0002c51a74e0554",
+      "scene": "local synthetic PDF or synthetic records; isolated Chrome for Testing 153.0.8010.12"
+    },
+    {
+      "file": "v032-library-dark.png",
+      "sourceCommit": "cfdc565d02c6c1d38c027f46d84f892b077e8527",
+      "sha256": "fedde7897ba0b438abb0c51e36b7d144bc37af642fbf3c2540e6856ae0d1e0db",
+      "scene": "local synthetic PDF or synthetic records; isolated Chrome for Testing 153.0.8010.12"
+    }
+  ]
+}

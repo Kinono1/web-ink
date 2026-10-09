@@ -4,7 +4,7 @@
 
 [下载预览版](https://github.com/Kinono1/web-ink/releases) · [English](README.en.md) · [使用说明与支持范围](docs/USAGE.zh-CN.md) · [隐私说明](PRIVACY.md)
 
-![Web Ink PDF 入口](docs/images/v031-pdf-entry.png)
+![Web Ink PDF 选区标注](docs/images/v032-pdf-selection.png)
 
 ## 安装：第一次使用
 

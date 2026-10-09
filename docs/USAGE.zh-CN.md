@@ -85,6 +85,10 @@ npm run zip
 
 ## 界面预览
 
-![Web Ink library on an artificial fixture](images/v02-library.png)
+![Web Ink library on an artificial fixture](images/v032-library-dark.png)
 
-![Web Ink PDF reader on an artificial fixture](images/v02-pdf.png)
+![Web Ink PDF reader on an artificial fixture](images/v032-pdf-selection.png)
+
+![Web Ink current-tab PDF entry on an artificial fixture](images/v032-pdf-entry.png)
+
+这些截图来自独立测试配置中的人工样例；原生权限、Scholar/IEEE 和本机更新验收仍需单独完成。截图来源与哈希见 [记录](images/v032-provenance.json)。

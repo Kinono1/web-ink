@@ -6,8 +6,10 @@ It supplements the immutable technical audit at
 was checked at integration `2e95042b931d6d4db89e06fc7f20ad4781a0f9c3`, which
 contains runtime `b7137e3`, reading `c8f1cac`, management `cae074c`, theme
 `4db975d`, notice preparation `fbc9f6d`, and PDF UI `9b3d368`. Source and
-declared unit-test mappings are verified at that head. Browser/E2E acceptance
-and final release-ZIP/resource-notice verification are separate pending work.
+declared unit-test mappings are verified at that head. The clean `6df483c`
+checkpoint subsequently passed all 57 local E2E cases and
+an actual ZIP/resource-notice audit; see [the validation record](VALIDATION-v0.3.2.md).
+Native acceptance, CI, final main and installation remain separate pending gates.
 
 | Pinned reference | Exact commit and license | Examined contract | Web Ink boundary |
 | --- | --- | --- | --- |
@@ -93,7 +95,8 @@ if candidate is absent, unsafe, native-shell, blank, or handled: return unavaila
 return { kind: "embedded", sourceUrl: candidate.publicHttpsUrl }
 ```
 
-**Verified source/unit mapping; browser acceptance remains pending:**
+**Verified source/unit mapping; local browser checkpoint is recorded above,
+with native and final installation acceptance pending:**
 `tests/pdf-handoff.test.ts:137-225,372-447` covers iframe/embed/object
 candidates, known viewers, normal-link non-takeover, hostile URLs, changed
 tab/document handling, and return-token boundaries. The current reader's
@@ -159,7 +162,7 @@ return SelectionTarget(pageNumber, normalizedRects, exact, prefix, suffix)
 **Verified source/unit mapping:** `PdfPage.tsx:163-197` checks that both
 endpoints are in its one text layer and bounds selection text and rectangles;
 the integrated UI's cross-page unit case is recorded above. It is not the
-Hypothesis selector architecture. Browser/E2E acceptance remains pending.
+Hypothesis selector architecture. The local browser checkpoint passed; native and final acceptance remain pending.
 
 ### shadcn/ui — contained sidebar scroll
 
@@ -185,7 +188,7 @@ moreMenu: clamp its box to the reader viewport
 **Current verified tests:** `tests/management-ui.test.ts:92-109` verifies no
 initial detail expansion; `:111-151` covers narrow scroll restoration; and
 `:152-201` verifies a selected observed PDF source is sent to the background.
-Visual/browser verification remains pending and none of these tests establish
+Local synthetic visual/browser evidence is recorded separately; none of these tests establish
 a shadcn-derived implementation.
 
 ## License gate before release

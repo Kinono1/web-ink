@@ -46,7 +46,7 @@ spacing: { 4: "4px", 8: "8px", 12: "12px", 16: "16px", 24: "24px", 32: "32px" }
 components:
   primary-action: { backgroundColor: "{colors.light-primary}", textColor: "{colors.light-primary-text}", rounded: "{rounded.control}", padding: "4px 10px", height: "36px" }
   quiet-action: { backgroundColor: "transparent", textColor: "{colors.light-secondary}", rounded: "{rounded.control}", padding: "4px 10px", height: "36px" }
-  search-field: { backgroundColor: "{colors.light-panel}", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "0 10px 0 32px", height: "36px" }
+  search-field: { backgroundColor: "{colors.light-fill}", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "0 10px 0 32px", height: "36px" }
   record-row: { backgroundColor: "transparent", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "8px 12px 8px 22px" }
   floating-surface: { backgroundColor: "{colors.light-panel}", textColor: "{colors.light-text}", rounded: "{rounded.surface}", padding: "8px" }
 ---
@@ -86,10 +86,11 @@ detail hierarchy. Use source-applied 400/500/600 weights; do not load web fonts.
 Management uses a centered column. The approved 700px library threshold changes
 the list/detail split into list-or-detail and Back restores list position.
 
-The PDF contract implemented in the current PDF worktree is one 52px reader
+The integrated PDF contract is one 52px reader
 row, a 320px notes rail at 900px and wider that overlays below it, and essential
-Back/page/Notes/More controls below 600px. This remains source evidence only;
-browser and native-surface visual acceptance are still pending final integration.
+Back/page/Notes/More controls below 600px. Source definitions and actual
+local synthetic browser geometry are recorded in `docs/VALIDATION-v0.3.2.md`;
+native-surface acceptance remains a separate gate.
 
 ## Elevation & Depth
 
@@ -119,7 +120,9 @@ are removed for reduced motion.
 
 Search, note, tag, and source fields use surface or fill roles, separator
 borders, and control geometry. Source choices name local-file and public-URL
-boundaries explicitly.
+boundaries explicitly. Placeholders use the secondary text role. Selected
+small labels use the text role over the accent fill so text contrast does not
+depend on the focus accent. The tag filter uses the same 36px/8px field rules.
 
 ### Navigation
 
@@ -155,6 +158,7 @@ Alerts name a failure, retain existing work, and offer bounded recovery.
 ## Production reference boundary
 
 `docs/design/v032-prototype.html` is static synthetic prototype material. This
-draft is grounded in `src/ui/theme.ts`, `src/ui/page-theme.ts`, management and
-side-panel CSS, and `src/pdf/pdf.css`; final provenance and browser acceptance
-remain pending the final integrated PDF head.
+document is grounded in `src/ui/theme.ts`, `src/ui/page-theme.ts`, management and
+side-panel CSS, and `src/pdf/pdf.css`. Candidate synthetic-browser and package
+evidence is recorded in `docs/VALIDATION-v0.3.2.md`; native activation and final
+PR/main/installation acceptance remain pending.

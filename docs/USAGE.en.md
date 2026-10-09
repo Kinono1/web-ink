@@ -85,6 +85,10 @@ Web Ink is [MIT licensed](../LICENSE). Dependency and PDF.js resource notices ar
 
 ## Interface preview
 
-![Web Ink library on an artificial fixture](images/v02-library.png)
+![Web Ink library on an artificial fixture](images/v032-library-dark.png)
 
-![Web Ink PDF reader on an artificial fixture](images/v02-pdf.png)
+![Web Ink PDF reader on an artificial fixture](images/v032-pdf-selection.png)
+
+![Web Ink current-tab PDF entry on an artificial fixture](images/v032-pdf-entry.png)
+
+These captures use artificial fixtures in an isolated test profile. Native permission, Scholar/IEEE and installed-version acceptance remain separate. See [capture provenance](images/v032-provenance.json).
