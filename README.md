@@ -18,11 +18,11 @@ Chrome 120 起支持网页标注，PDF 阅读器要求 Chrome 125 或更高。�
 
 1. 在 Web Ink 的 **资料库 → 设置与数据 → 下载 JSON** 备份标注。
 2. 解压新版本，用其运行文件替换原安装目录的文件。
-3. 在 `chrome://extensions` 找到 Web Ink，点击该扩展的 **重新加载**，刷新原网页并重新打开侧栏。
+3. 在 `chrome://extensions` 找到 Web Ink，点击该扩展的 **重新加载**，重新打开侧栏。若浏览器拒绝重新注入当前网页，按提示刷新该页后重试。
 
 **不要卸载旧扩展：卸载会删除本地数据。** 保持同一个浏览器 profile 和安装目录；不要把源码目录当作扩展安装目录。
 
-本项目开发者更新已存在的 `Web-Ink-Chrome` 目录，可运行 `npm run update:local`。它会备份旧构建、检查扩展身份、同步并核对全部文件；复制失败会回滚。首次安装仍由上面的步骤明确选择目录。
+本项目开发者只在主检出运行更新命令。Chrome 当前加载的目录保留为 `.output/chrome-mv3`；构建暂存到 `.build-output/chrome-mv3`，安装收据和恢复备份保存在 `.local-install/`。已确认的旧安装先运行一次 `npm run register:local`，核对现有身份、文件和旧收据后登记；随后运行 `npm run update:local`。更新只接受干净提交对应的构建，逐文件覆盖并核对哈希，失败会回滚。linked worktree 在构建和写入前会被拒绝。首次安装仍由上面的步骤明确选择目录。
 
 ## 日常使用
 
@@ -52,7 +52,7 @@ npm run test:e2e
 npm run zip
 ```
 
-**清理构建产物：** 定期清理旧的测试快照和历史版本以释放磁盘空间：
+**清理构建产物：** 清理超过七天的暂存 ZIP 和校验文件，不清理安装目录、恢复备份或浏览器 profile：
 
 ```sh
 npm run clean:artifacts
