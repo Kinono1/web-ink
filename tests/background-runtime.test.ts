@@ -45,7 +45,7 @@ beforeEach(() => {
     },
     tabs: {
       query: async () => [{ id: 7, url: 'https://example.test/page' }, { id: 8, url: 'chrome://extensions' }, { id: 9, url: 'file:///private.pdf' }],
-      sendMessage: async () => {}, onRemoved: event(), onUpdated: event(),
+      sendMessage: async () => {}, onRemoved: event(), onUpdated: event(), onActivated: event(),
       reload: () => { throw Error('Tab reload is forbidden'); }, update: () => { throw Error('Tab navigation is forbidden'); },
     },
     sidePanel: { setPanelBehavior: async () => {} },

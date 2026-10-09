@@ -1,6 +1,7 @@
 import { handleDataRequest } from "../src/background/data";
 import { isWebPage, pageKey } from "../src/core/url";
 import { getDatabase } from "../src/background/database";
+import { createPdfHandoffHandler } from "../src/background/pdf-handoff";
 import {
   initializeRuntime,
   RUNTIME_REGISTRATION_KEY,
@@ -26,6 +27,7 @@ export default defineBackground(() => {
   // Transient display state only. The durable annotation database is owned by data.ts.
   const pageStates = new Map<number, PageState>();
   const resolveContentPage = createContentPageResolver();
+  const handlePdfRequest = createPdfHandoffHandler();
   const broadcast = async (message: object, pageUrl?: string) => {
     void chrome.runtime.sendMessage(message).catch(() => undefined);
     const tabs = await chrome.tabs.query({});
@@ -161,6 +163,8 @@ export default defineBackground(() => {
           if (sender.id !== chrome.runtime.id) throw new Error("Not allowed");
           return { ok: true, data: await runtimeHealth };
         }
+        if (["pdf.context.get", "pdf.openCurrent", "pdf.handoff.get", "pdf.returnOriginal"].includes(type))
+          return handlePdfRequest(raw, sender);
         if (
           !trusted &&
           [

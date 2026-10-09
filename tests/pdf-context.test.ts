@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPdfOpenUrl, getPdfContext } from "../src/pdf/context";
+import { buildPdfOpenUrl, classifyPdfTab, getPdfContext } from "../src/pdf/context";
 
 describe("PDF page context", () => {
   it("recognizes HTTPS PDF paths case-insensitively and preserves query/hash", () => {
@@ -80,5 +80,21 @@ describe("PDF page context", () => {
         ),
       ),
     ).toBe(reader);
+  });
+
+  it("returns an unavailable context for a malformed observed URL", () => {
+    expect(classifyPdfTab(7, "invalid URL")).toMatchObject({ kind: "unavailable", candidates: [], reason: "context-unavailable" });
+  });
+
+  it("keeps credentialed PDF embeds in an explicit unsafe manual fallback even without a MIME hint", () => {
+    expect(classifyPdfTab(7, "https://papers.example.test/article", [
+      { url: "https://user:secret@papers.example.test/paper.pdf", via: "iframe", mimeType: "" },
+    ])).toMatchObject({ kind: "embedded", candidates: [], reason: "unsafe-source" });
+  });
+
+  it("labels known viewers wrapping HTTP or file sources as a local-source fallback", () => {
+    for (const source of ["http://papers.example.test/paper.pdf", "file:///tmp/paper.pdf"])
+      expect(classifyPdfTab(7, `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=${encodeURIComponent(source)}`))
+        .toMatchObject({ kind: "wrapper", candidates: [], reason: "local-source" });
   });
 });
