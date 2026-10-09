@@ -824,8 +824,8 @@ test('palette dragging keeps hover motion disabled through a live theme change',
   await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('transform', 'none');
   await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('transition-duration', '0s');
   // The existing shared button:hover rule uses the theme's fill token.
-  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('background-color', 'rgba(118, 118, 128, 0.24)');
-  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('color', 'rgb(245, 245, 247)');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('background-color', 'rgb(37, 42, 52)');
+  await expect(page.locator('.web-ink-palette-toggle')).toHaveCSS('color', 'rgb(244, 244, 245)');
   await page.mouse.up();
   await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
   await page.screenshot({ path: 'test-results/palette-drag-dark.png' });
@@ -1011,6 +1011,9 @@ test("click or reselect existing text to remove it, undo preserves notes, and re
     annotation: { ...first, note: "Keep my note", tags: ["paper"] },
     expectedRevision: first.revision,
   });
+  const row = manager.locator(".annotation-row");
+  await expect(row).toHaveCount(1);
+  await row.click();
   await expect(manager.locator(".note")).toHaveText("Keep my note");
   await clickHighlightedText(page);
   await expect(
@@ -1191,6 +1194,9 @@ test("library removes an existing annotation through inline confirmation without
   await enable();
   const page = await article();
   await selectAndMark(page);
+  const row = manager.locator(".annotation-row");
+  await expect(row).toHaveCount(1);
+  await row.click();
   let dialogs = 0;
   manager.on("dialog", async (dialog) => {
     dialogs++;
