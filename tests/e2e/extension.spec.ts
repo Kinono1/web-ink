@@ -1323,8 +1323,11 @@ test("sidepanel preserves per-annotation notes and its display switch controls p
   const page = await article();
   await selectAndMark(page);
   await openSidepanel(page);
-  await expect(manager.locator(".annotation-row")).toHaveCount(1);
+  const row = manager.locator(".annotation-row");
+  await expect(row).toHaveCount(1);
   const detail = manager.locator(".annotation-detail");
+  await expect(detail).toHaveCount(0);
+  await row.first().click();
   await expect(detail).toContainText("Precise highlights survive a return visit.");
   await detail.getByRole("button", { name: "笔记", exact: true }).click();
   await detail
