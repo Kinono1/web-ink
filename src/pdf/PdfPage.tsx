@@ -12,6 +12,7 @@ import {
   type PdfAnnotation,
   type PdfApi,
   type SelectionTarget,
+  type SelectionPreview,
 } from "./types";
 export function PdfPage({
   opened,
@@ -19,7 +20,6 @@ export function PdfPage({
   zoom,
   rotation,
   records,
-  enabled,
   area,
   color,
   measurementGeneration,
@@ -34,11 +34,10 @@ export function PdfPage({
   zoom: number;
   rotation: number;
   records: PdfAnnotation[];
-  enabled: boolean;
   area: boolean;
   color: string;
   measurementGeneration: number;
-  onSelection: (v: SelectionTarget | undefined) => void;
+  onSelection: (v: SelectionPreview | undefined) => void;
   onPick: (record: PdfAnnotation) => void;
   onArea: (v: SelectionTarget) => void;
   onDimensions: (generation: number, w: number, h: number) => void;
@@ -139,7 +138,7 @@ export function PdfPage({
     };
   }, [opened, number, zoom, rotation, measurementGeneration]);
   function capture(event: React.MouseEvent<HTMLDivElement>) {
-    if (!enabled || area || !geometry || !text.current || !root.current) return;
+    if (area || !geometry || !text.current || !root.current) return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
       const page = root.current.getBoundingClientRect();
@@ -166,6 +165,7 @@ export function PdfPage({
       !text.current.contains(range.endContainer)
     ) {
       onSelection(undefined);
+      onError("请在同一页内选择文字；跨页选择不会保存。 / Select text within one page; cross-page selections are not saved.");
       return;
     }
     const exact = s.toString().trim();
@@ -173,7 +173,8 @@ export function PdfPage({
     const box = root.current.getBoundingClientRect();
     const rects: PdfRect[] = [];
     const seen = new Set<string>();
-    for (const rect of range.getClientRects()) {
+    const clientRects = [...range.getClientRects()];
+    for (const rect of clientRects) {
       const normalized = toPdfRect(
         {
           left: rect.left - box.left,
@@ -201,13 +202,18 @@ export function PdfPage({
     const after = range.cloneRange();
     after.selectNodeContents(text.current);
     after.setStart(range.endContainer, range.endOffset);
-    onSelection({
+    onSelection({ target: {
       pageNumber: number,
       rects,
       exact,
       prefix: before.toString().slice(-64),
       suffix: after.toString().slice(0, 64),
-    });
+    }, anchor: {
+      left: Math.min(...clientRects.map((rect) => rect.left)),
+      top: Math.min(...clientRects.map((rect) => rect.top)),
+      right: Math.max(...clientRects.map((rect) => rect.right)),
+      bottom: Math.max(...clientRects.map((rect) => rect.bottom)),
+    } });
   }
   function position(e: React.PointerEvent) {
     const r = root.current!.getBoundingClientRect();
@@ -259,7 +265,7 @@ export function PdfPage({
           )}
         </svg>
       )}
-      {enabled && area && geometry && (
+      {area && geometry && (
         <div
           className="pdf-area-capture"
           onPointerDown={(e) => {

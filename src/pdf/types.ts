@@ -13,6 +13,11 @@ export type SelectionTarget = {
   prefix: string;
   suffix: string;
 };
+/** Transient viewport placement stays outside the durable PDF target. */
+export type SelectionPreview = {
+  target: SelectionTarget;
+  anchor: { left: number; top: number; right: number; bottom: number };
+};
 export type OpenDocument = {
   document: PDFDocumentProxy;
   api: PdfApi;
