@@ -7,6 +7,8 @@ import { ManagementApp, pdfReaderUrl } from '../src/ui/ManagementApp';
 import { createView } from '../src/content/view-lite';
 import { CONTENT_THEME_CSS, PAGE_THEME_CSS, SCALE_TOKENS, THEME_TOKENS } from '../src/ui/theme';
 import { shortDate } from '../src/ui/management/helpers';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 
@@ -82,9 +84,16 @@ describe('shared UI presentation contract', () => {
     expect(ICON_PATHS.pdf).toMatch(/^M/); expect(ICON_PATHS.library).toMatch(/^M/);
     expect(Object.values(ICON_PATHS).join('')).not.toContain('<svg');
   });
+  it('keeps every page-switch transition within the shared 120ms motion cap', () => {
+    const css = readFileSync(resolve('src/ui/management.css'), 'utf8');
+    expect(css).toContain('transition: background-color var(--ink-motion-fast) ease;');
+    expect(css).toContain('transition: transform var(--ink-motion-fast) ease;');
+    expect(css).not.toContain('0.16s ease');
+  });
   it('opens a PDF record through its hash and source URL, never file content', () => {
     const url = new URL(pdfReaderUrl('chrome-extension://test/pdf.html', pdf));
     expect(url.pathname).toBe('/pdf.html'); expect(url.searchParams.get('document')).toBe('abc123');
+    expect(url.searchParams.get('page')).toBe('3');
     expect(url.searchParams.get('source')).toBe('https://example.test/paper.pdf?token=x');
     expect(url.search).not.toContain('rects'); expect(url.search).not.toContain('finding');
   });
@@ -164,6 +173,7 @@ describe('management mount lifecycle', () => {
     Object.defineProperty(window, 'confirm', { configurable: true, value: confirm });
     const host = document.createElement('div'); document.body.append(host); root = createRoot(host);
     await act(async () => { root!.render(createElement(ManagementApp, { mode: 'library' })); await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => { (host.querySelector('.annotation-row') as HTMLButtonElement).click(); });
     const detail = host.querySelector('.annotation-detail')!;
     const remove = [...detail.querySelectorAll('button')].find(button => button.textContent === '删除')!;
     await act(async () => { remove.click(); });

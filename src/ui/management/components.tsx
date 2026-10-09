@@ -105,6 +105,13 @@ export function FilterPopover({
 }) {
   const colors = [...new Set(records.map((record) => record.color))].sort();
   const tags = [...new Set(records.flatMap((record) => record.tags))].sort();
+  const tagSuggestions = tag
+    ? tags.filter(
+        (value) =>
+          value.toLocaleLowerCase().startsWith(tag.toLocaleLowerCase()) &&
+          value.toLocaleLowerCase() !== tag.toLocaleLowerCase(),
+      )
+    : tags;
   return (
     <section className="filter-popover" aria-label={t.filter}>
       <div className="filter-kinds" role="group" aria-label={t.filter}>
@@ -144,14 +151,26 @@ export function FilterPopover({
       </label>
       <label>
         {t.tag}
-        <select value={tag} onChange={(event) => setTag(event.target.value)}>
-          <option value="">{t.all}</option>
-          {tags.map((value) => (
-            <option key={value} value={value}>
-              {value}
-            </option>
-          ))}
-        </select>
+        <input
+          aria-label={t.tag}
+          value={tag}
+          onChange={(event) => setTag(event.target.value)}
+        />
+        {tagSuggestions.length ? (
+          <span className="filter-tag-suggestions" aria-label={t.currentResultTags}>
+            <span>{t.currentResultTags}</span>
+            {tagSuggestions.map((value) => (
+              <button
+                key={value}
+                className="quiet"
+                type="button"
+                onClick={() => setTag(value)}
+              >
+                {value}
+              </button>
+            ))}
+          </span>
+        ) : null}
       </label>
       <button className="quiet" onClick={clear}>
         {t.clearFilters}
@@ -210,8 +229,7 @@ export function AnnotationBrowser({
   onDraw,
   onOpenPdf,
 }: BrowserProps) {
-  const selected =
-    records.find((record) => record.id === selectedId) ?? records[0];
+  const selected = records.find((record) => record.id === selectedId);
   const detailProps = (record: Annotation): DetailProps => ({
     record,
     state: states[record.id],
@@ -231,6 +249,7 @@ export function AnnotationBrowser({
     onRebind: () => onRebind(record),
     onDraw: () => onDraw(record),
     onOpenPdf: () => onOpenPdf(record),
+    tagSuggestions: [...new Set(records.flatMap((item) => item.tags))].sort(),
   });
   // The side panel opens the selected annotation in place; the library keeps
   // a list beside a detail pane.
@@ -301,6 +320,7 @@ type DetailProps = {
   onRebind: () => void;
   onDraw: () => void;
   onOpenPdf: () => void;
+  tagSuggestions: string[];
 };
 const statusKey = (status: AnchorState["status"]) =>
   status === "located"
@@ -434,6 +454,7 @@ function AnnotationItem({
               onSave={props.onSave}
               onLoadLatest={props.onLoadLatest}
               onCancel={props.onCancel}
+              tagSuggestions={props.tagSuggestions}
             />
           ) : (
             <DetailActions {...props} />
@@ -510,6 +531,7 @@ export function AnnotationDetail({
           onSave={props.onSave}
           onLoadLatest={props.onLoadLatest}
           onCancel={props.onCancel}
+            tagSuggestions={props.tagSuggestions}
         />
       ) : (
         <>
@@ -632,6 +654,7 @@ export function Editor({
   onSave,
   onLoadLatest,
   onCancel,
+  tagSuggestions,
 }: {
   draft: Draft;
   t: (typeof COPY)[Language];
@@ -640,7 +663,22 @@ export function Editor({
   onSave: () => void;
   onLoadLatest: () => void;
   onCancel: () => void;
+  tagSuggestions: string[];
 }) {
+  const partialTag =
+    draft.tags.split(",").at(-1)?.trim().toLocaleLowerCase() ?? "";
+  const suggestions = partialTag
+    ? tagSuggestions.filter(
+        (tag) =>
+          tag.toLocaleLowerCase().startsWith(partialTag) &&
+          tag.toLocaleLowerCase() !== partialTag,
+      )
+    : [];
+  const chooseTag = (tag: string) => {
+    const parts = draft.tags.split(",");
+    parts[parts.length - 1] = ` ${tag}`;
+    onDraft({ tags: parts.join(",").replace(/^\s+/, "") });
+  };
   return (
     <div className="editor">
       <label>
@@ -657,6 +695,21 @@ export function Editor({
           value={draft.tags}
           onChange={(event) => onDraft({ tags: event.target.value })}
         />
+        {suggestions.length ? (
+          <span className="tag-suggestions" aria-label={t.tagSuggestions}>
+            <span>{t.tagSuggestions}</span>
+            {suggestions.map((tag) => (
+              <button
+                key={tag}
+                className="quiet"
+                type="button"
+                onClick={() => chooseTag(tag)}
+              >
+                {tag}
+              </button>
+            ))}
+          </span>
+        ) : null}
       </label>
       <ColorPicker
         value={draft.color}

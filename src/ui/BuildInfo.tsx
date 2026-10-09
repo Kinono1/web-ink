@@ -1,19 +1,31 @@
 import { useEffect, useState } from "react";
-import type { Language } from "../core/model";
-type Build = { version: string; commit: string; builtAt: string; dirty: boolean };
+import { request } from "../core/client";
+import type { Language, RuntimeHealth } from "../core/model";
+
+function isRuntimeHealth(value: unknown): value is RuntimeHealth {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      typeof (value as RuntimeHealth).generation === "string" &&
+      typeof (value as RuntimeHealth).version === "string" &&
+      typeof (value as RuntimeHealth).commit === "string" &&
+      typeof (value as RuntimeHealth).dirty === "boolean",
+  );
+}
+
 export function BuildInfo({ language }: { language: Language }) {
-  const [build, setBuild] = useState<Build>();
+  const [health, setHealth] = useState<RuntimeHealth>();
   useEffect(() => {
-    const controller = new AbortController();
-    void fetch(chrome.runtime.getURL("build-info.json"), { signal: controller.signal })
-      .then((response) => { if (!response.ok) throw Error("Build identity unavailable"); return response.json(); })
-      .then(setBuild).catch(() => undefined);
-    return () => controller.abort();
+    void request<RuntimeHealth>({ type: "runtime.health" })
+      .then((value) => {
+        if (isRuntimeHealth(value)) setHealth(value);
+      })
+      .catch(() => undefined);
   }, []);
   const zh = language === "zh-CN";
   return <section className="settings-group build-info" aria-label={zh ? "版本信息" : "Version information"}>
     <h2>Web Ink</h2>
-    <p>{build ? `v${build.version} · ${build.commit.slice(0, 7)}${build.dirty ? (zh ? " · 本地修改" : " · Local changes") : ""}` : (zh ? "构建信息暂不可用" : "Build information unavailable")}</p>
-    {build ? <small>{zh ? "构建基准时间：" : "Build epoch: "}{new Date(build.builtAt).toLocaleString(language)}</small> : null}
+    <p>{health ? `v${health.version} · ${health.commit.slice(0, 7)}${health.dirty ? (zh ? " · 本地修改" : " · Local changes") : ""}` : (zh ? "运行身份暂不可用" : "Running identity unavailable")}</p>
+    {health ? <small>{zh ? "当前运行代次：" : "Running generation: "}{health.generation}</small> : null}
   </section>;
 }
