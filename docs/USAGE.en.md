@@ -39,7 +39,7 @@ Open the Web Ink side panel from Chrome's toolbar while viewing a PDF, then choo
 
 Selecting text shows nearby color and note actions. Choosing a color saves a highlight; ordinary copying does not create a record. **Add note** saves the highlight before opening its editor. Failed writes preserve the selection or draft for retry. Select within one page rather than across page breaks. **Show annotations** controls saved overlays independently of creation. Rotation, area drawing, other files and the library live in **More**.
 
-Return, file change and reader departure offer **Save and continue / Discard and continue / Keep editing** for unsaved content. Failed saves keep the current document. Forced browser exit or external extension Reload cannot guarantee memory drafts; save before updating.
+The reader's return, file-change and library actions offer **Save and continue / Discard and continue / Keep editing** for unsaved content. Failed saves keep the current document. Closing or refreshing the tab invokes the browser's departure confirmation only when content is unsaved. Forced browser exit or external extension Reload cannot guarantee memory drafts; save before updating.
 
 PDF support covers baseline text and area annotations. Coordinates are normalized in the unrotated PDF page coordinate space. The PDF page requires Chrome 125 or later; the minimum version is covered by a dedicated Chrome 125 CI step.
 
