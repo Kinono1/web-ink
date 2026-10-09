@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import type { Annotation } from '../src/core/model';
 import { ICON_PATHS } from '../src/ui/icons';
 import { ManagementApp, pdfReaderUrl } from '../src/ui/ManagementApp';
+import { createView } from '../src/content/view-lite';
 import { CONTENT_THEME_CSS, PAGE_THEME_CSS, SCALE_TOKENS, THEME_TOKENS } from '../src/ui/theme';
 import { shortDate } from '../src/ui/management/helpers';
 
@@ -47,6 +48,16 @@ describe('shared UI presentation contract', () => {
     });
     expect(CONTENT_THEME_CSS).toContain('--ink-primary:#27272a;');
     expect(PAGE_THEME_CSS).toContain('--ink-control-min-height:36px;');
+  });
+  it('keeps toast type and radii on the shared scale', () => {
+    const view = createView();
+    const css = view.root.querySelector('style')!.textContent!;
+    expect(css).toContain('border-radius:var(--ink-radius);');
+    expect(css).toContain('font-size:var(--ink-size-body);');
+    expect(css).toContain('border-radius:var(--ink-radius-control);');
+    expect(css).not.toContain('border-radius:22px');
+    expect(css).not.toContain('border-radius:16px');
+    view.host.remove();
   });
   it('keeps light and dark token sets usable by both React and Shadow DOM', () => {
     for (const key of ['--ink-bg', '--ink-surface', '--ink-text', '--ink-accent', '--ink-separator'] as const) {
