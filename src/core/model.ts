@@ -121,6 +121,12 @@ export interface PageRecord {
 export interface PageMode {
   enabled: boolean;
 }
+export interface RuntimeHealth {
+  generation: string;
+  version: string;
+  commit: string;
+  dirty: boolean;
+}
 export interface BackupEnvelope {
   format: "web-ink";
   schemaVersion: typeof SCHEMA_VERSION;
@@ -189,6 +195,7 @@ export type Result<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string };
 export type Request =
+  | { type: "runtime.health" }
   | { type: "annotations.list"; pageUrl?: string }
   | {
       type: "annotations.put";

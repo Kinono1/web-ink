@@ -71,6 +71,7 @@ export function startEngine(
   let focusId: string | undefined;
   let passiveRetryCount = 0;
   let passiveRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  const yieldTimers = new Map<ReturnType<typeof setTimeout>, () => void>();
   // One session owns every reading index and DOM reference for this engine run.
   // It is flushed by capture/resolve, so a save cannot reuse a stale mouseup index.
   const textSession = new TextAnchorSession(document);
@@ -741,6 +742,7 @@ export function startEngine(
   }
 
   async function refresh() {
+    if (disposed) return;
     const token = ++generation;
     refreshDepth++;
     let requestedUrl = currentUrl;
@@ -877,7 +879,13 @@ export function startEngine(
         }
         // Yield for large pages, while a newer refresh can cancel this work.
         if (i % 20 === 19) {
-          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+          await new Promise<void>((resolve) => {
+            const timer = setTimeout(() => {
+              yieldTimers.delete(timer);
+              resolve();
+            }, 0);
+            yieldTimers.set(timer, resolve);
+          });
           if (token !== generation || disposed) return;
           if (pageKey(location.href) !== requestedUrl) {
             queueRefresh();
@@ -933,7 +941,7 @@ export function startEngine(
     );
   }
   function queueRefresh() {
-    if (refreshTimer) return;
+    if (disposed || refreshTimer) return;
     refreshTimer = setTimeout(() => {
       refreshTimer = undefined;
       if (!disposed && (enabled() || pageKey(location.href) !== currentUrl))
@@ -1308,6 +1316,7 @@ export function startEngine(
     action: "focus" | "rebind" | "draw" | "refresh",
     id?: string,
   ) => {
+    if (disposed) return;
     if (action === "refresh") {
       void refresh();
       return;
@@ -1345,6 +1354,7 @@ export function startEngine(
     _sender: chrome.runtime.MessageSender,
     respond: (value: unknown) => void,
   ) => {
+    if (disposed) return false;
     if (message.type === "page.snapshot") {
       respond({ pageUrl: currentUrl, states, enabled: enabled() });
       return false;
@@ -1380,9 +1390,8 @@ export function startEngine(
       void refresh();
     return false;
   };
-  chrome.runtime.onMessage.addListener(onMessage);
-  void refresh();
   const stop = () => {
+    if (disposed) return;
     disposed = true;
     generation++;
     observers.abort();
@@ -1391,6 +1400,11 @@ export function startEngine(
     textSession.dispose();
     clearTimeout(refreshTimer);
     clearTimeout(passiveRetryTimer);
+    for (const [timer, resolve] of yieldTimers) {
+      clearTimeout(timer);
+      resolve();
+    }
+    yieldTimers.clear();
     cancelAnimationFrame(renderFrame);
     clearText();
     notifications.dispose();
@@ -1402,8 +1416,12 @@ export function startEngine(
     view.svg.style.cursor = "";
     images.clear();
     imageLayers.clear();
-    chrome.runtime.onMessage.removeListener(onMessage);
     highlightStyle.remove();
+    try {
+      chrome.runtime.onMessage.removeListener(onMessage);
+    } catch {
+      // Extension Reload can invalidate Chrome APIs before DOM cleanup finishes.
+    }
   };
   const canStop = () => {
     if (!unsaved && !pendingSave) return true;
@@ -1422,6 +1440,13 @@ export function startEngine(
     );
     return false;
   };
+  try {
+    chrome.runtime.onMessage.addListener(onMessage);
+  } catch (error) {
+    stop();
+    throw error;
+  }
+  void refresh();
   return {
     stop,
     dispatch,

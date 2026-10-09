@@ -25,7 +25,7 @@ function fixture(get: () => Promise<Record<string, unknown>>) {
       set: async (value: object) => { Object.assign(stored, value); },
     } },
   });
-  dispose = startBootstrap();
+  dispose = startBootstrap({ generation: 'palette-test', version: '0.3.2', commit: 'test', dirty: true });
   const host = document.querySelector('web-ink-ui') as HTMLElement;
   const button = host.shadowRoot!.querySelector('button')!;
   button.setPointerCapture = () => {};

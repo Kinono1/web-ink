@@ -1,6 +1,10 @@
 import { handleDataRequest } from "../src/background/data";
 import { isWebPage, pageKey } from "../src/core/url";
 import { getDatabase } from "../src/background/database";
+import {
+  initializeRuntime,
+  RUNTIME_REGISTRATION_KEY,
+} from "../src/background/runtime";
 import type {
   Annotation,
   AnchorState,
@@ -90,25 +94,32 @@ export default defineBackground(() => {
   // onAdded and the onboarding response can arrive together. Serialize registration
   // to prevent duplicate content-script IDs and replay later revocation changes.
   let registrationTask: Promise<boolean> = Promise.resolve(false);
-  const register = () => {
+  const register = (generation?: string) => {
     registrationTask = registrationTask
       .catch(() => false)
-      .then(performRegistration);
+      .then(async () => {
+        // An older successful pass must not hide a newly rejected registration.
+        await chrome.storage.session.remove(RUNTIME_REGISTRATION_KEY);
+        const granted = await performRegistration();
+        const currentGeneration = generation ?? (await runtimeHealth).generation;
+        await chrome.storage.session.set({
+          [RUNTIME_REGISTRATION_KEY]: currentGeneration,
+        });
+        return granted;
+      });
     return registrationTask;
   };
+  const runtimeHealth = initializeRuntime(register);
+  void runtimeHealth.catch(() => undefined);
   chrome.runtime.onInstalled.addListener(() => {
     void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
-    void register();
-  });
-  chrome.runtime.onStartup.addListener(() => {
-    void register();
   });
   chrome.permissions.onAdded.addListener(() => {
-    void register();
+    void register().catch(() => undefined);
   });
   chrome.permissions.onRemoved.addListener(() => {
     pageStates.clear();
-    void register();
+    void register().catch(() => undefined);
     void broadcast({ type: "permissions.revoked" });
   });
   chrome.tabs.onRemoved.addListener((id) => {
@@ -145,6 +156,11 @@ export default defineBackground(() => {
         : undefined;
     const process = async (): Promise<Result<unknown>> => {
       try {
+        // Health must not open the annotation database or probe the sending page.
+        if (type === "runtime.health") {
+          if (sender.id !== chrome.runtime.id) throw new Error("Not allowed");
+          return { ok: true, data: await runtimeHealth };
+        }
         if (
           !trusted &&
           [
