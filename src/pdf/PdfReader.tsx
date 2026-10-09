@@ -83,6 +83,8 @@ export function PdfReader() {
   const [source, setSource] = useState(initialParams.get("source") || "");
   const [opened, setOpened] = useState<OpenDocument>();
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
+  const recordsRef = useRef(records);
+  recordsRef.current = records;
   const [showMarks, setShowMarks] = useState(true),
     [area, setArea] = useState(false);
   const [color, setColor] = useState<string>(COLORS[0]);
@@ -97,6 +99,7 @@ export function PdfReader() {
     [sourceOpen, setSourceOpen] = useState(false);
   const moreMenu = useRef<HTMLDivElement>(null);
   const moreTrigger = useRef<HTMLButtonElement>(null);
+  const notesRail = useRef<HTMLElement>(null);
   const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
   const [handoffReady, setHandoffReady] = useState(!handoffToken);
   const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
@@ -146,6 +149,14 @@ export function PdfReader() {
   const zh = settings.language === "zh-CN";
   const t = (cn: string, en: string) => (zh ? cn : en);
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
+  const savedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
+  const deletedDrafts = Object.values(noteDrafts).filter(
+    (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
+  );
+  useLayoutEffect(() => {
+    if (notesOpen && deletedDrafts.length)
+      notesRail.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+  }, [notesOpen, deletedDrafts.length]);
   const sortedNotes = useMemo(
     () =>
       records
@@ -172,6 +183,20 @@ export function PdfReader() {
     clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(""), 1800);
   };
+  // Remote deletion must reach pending save callbacks before React renders.
+  function updateRecords(next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) {
+    const values = typeof next === "function" ? next(recordsRef.current) : next;
+    const ids = new Set(values.map((record) => record.id));
+    for (const record of recordsRef.current) {
+      const draft = draftsRef.current[record.id];
+      if (draft && dirtyDraft(draft) && !ids.has(record.id)) {
+        setNotesOpen(true);
+        break;
+      }
+    }
+    recordsRef.current = values;
+    setRecords(values);
+  }
   function updateDraft(id: string, draft?: PdfNoteDraft, resolveConflict = false) {
     const next = { ...draftsRef.current };
     if (draft) next[id] = draft;
@@ -310,7 +335,7 @@ export function PdfReader() {
         type: "annotations.list",
         pageUrl: key,
       });
-      if (active === documentSessionRef.current) setRecords(all.filter(isPdf));
+      if (active === documentSessionRef.current) updateRecords(all.filter(isPdf));
     } catch (cause) {
       if (active === documentSessionRef.current) setError(errorText(cause));
     }
@@ -331,13 +356,13 @@ export function PdfReader() {
       ) {
         if (m.annotation && isPdf(m.annotation)) {
           const changed = m.annotation;
-          setRecords((old) =>
+          updateRecords((old) =>
             [...old.filter((r) => r.id !== changed.id), changed].sort(
               (a, b) => a.target.pageNumber - b.target.pageNumber,
             ),
           );
         } else if (m.deletedId)
-          setRecords((old) => old.filter((r) => r.id !== m.deletedId));
+          updateRecords((old) => old.filter((r) => r.id !== m.deletedId));
         else void refresh();
       }
     };
@@ -520,7 +545,7 @@ export function PdfReader() {
     setSelection(undefined);
     setPicked(undefined);
     setUndoRecord(undefined);
-    setRecords([]);
+    updateRecords([]);
     setNoteDrafts({});
     draftsRef.current = {};
     setNoteConflicts({});
@@ -613,7 +638,7 @@ export function PdfReader() {
       });
       documentSessionRef.current++;
       setDocumentSession(documentSessionRef.current);
-      setRecords(all.filter(isPdf));
+      updateRecords(all.filter(isPdf));
       setArea(false);
       const expected = openingParams.get("document");
       const requestedPage = openingParams.get("page");
@@ -684,7 +709,7 @@ export function PdfReader() {
         expectedRevision: record.revision,
       });
       if (active !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
-      setRecords((old) => [...old.filter((r) => r.id !== stored.id), stored]);
+      updateRecords((old) => [...old.filter((r) => r.id !== stored.id), stored]);
       setUnsaved(undefined);
       unsavedRef.current = undefined;
       setSelection(undefined);
@@ -704,6 +729,15 @@ export function PdfReader() {
     } });
   }
   async function saveNote(id: string, draft: PdfNoteDraft): Promise<void> {
+    const deletedMessage = t(
+      "原标注已被删除。草稿仅保留在此窗口，请复制内容或放弃草稿后再继续。",
+      "The original annotation was deleted. This draft remains in this window; copy its contents or discard it before leaving.",
+    );
+    if (!recordsRef.current.some((record) => record.id === id)) {
+      setNotesOpen(true);
+      setError(deletedMessage);
+      throw Error(deletedMessage);
+    }
     const active = documentSession;
     setNoteSaving(id);
     setError("");
@@ -712,7 +746,8 @@ export function PdfReader() {
         ...draft.base, note: draft.note, tags: noteTags(draft.tags), color: draft.color, updatedAt: new Date().toISOString(),
       }, expectedRevision: draft.base.revision });
       if (active !== documentSessionRef.current) return;
-      setRecords((old) => [...old.filter((record) => record.id !== id), stored]);
+      if (!recordsRef.current.some((record) => record.id === id)) throw Error(deletedMessage);
+      updateRecords((old) => [...old.filter((record) => record.id !== id), stored]);
       updateDraft(id);
     } catch (cause) {
       if (active === documentSessionRef.current) {
@@ -751,6 +786,12 @@ export function PdfReader() {
     } finally { setLeaving(false); }
   }
   function requestLeave(action: LeaveAction) {
+    if (action.kind === "open") {
+      autoOpenAttempted.current = true;
+      // Cancel old initialization without queuing another old-document write.
+      intentEpoch.current++;
+      if (positionSession.current) positionSession.current.pending = undefined;
+    }
     setMoreOpen(false);
     if (unsavedRef.current || annotationWrites.current.size || Object.values(draftsRef.current).some(dirtyDraft)) {
       setPendingLeave(action);
@@ -783,6 +824,10 @@ export function PdfReader() {
     setError("");
     void executeLeave(pendingLeave);
   }
+  function keepEditing() {
+    setPendingLeave(undefined);
+    if (deletedDrafts.length) setNotesOpen(true);
+  }
   async function remove(record: PdfAnnotation) {
     if (removing || saving || unsaved || record.pageUrl !== key) return;
     setRemoving(true);
@@ -795,7 +840,7 @@ export function PdfReader() {
         expectedRevision: record.revision,
       }));
       if (active !== documentSessionRef.current) return;
-      setRecords((old) => old.filter((item) => item.id !== record.id));
+      updateRecords((old) => old.filter((item) => item.id !== record.id));
       setNoteDrafts((current) => {
         const { [record.id]: _removed, ...rest } = current;
         return rest;
@@ -827,7 +872,7 @@ export function PdfReader() {
         annotation: { ...undoRecord, updatedAt: new Date().toISOString() },
       }));
       if (active !== documentSessionRef.current) return;
-      setRecords((old) => [
+      updateRecords((old) => [
         ...old.filter((item) => item.id !== restored.id),
         restored,
       ]);
@@ -925,7 +970,7 @@ export function PdfReader() {
   return (
     <main className="pdf-app" onKeyDown={(event) => {
       if (event.key !== "Escape" || guardSaving || leaving) return;
-      if (pendingLeave) setPendingLeave(undefined);
+      if (pendingLeave) keepEditing();
       else if (sourceOpen) setSourceOpen(false);
       else {
         if (moreOpen) moreTrigger.current?.focus();
@@ -1026,14 +1071,15 @@ export function PdfReader() {
             ))}
             <div aria-hidden="true" style={{ height: Math.max(0, layoutIndex.current.totalHeight() - layoutIndex.current.offsetBefore(Math.min(pageWindow.end, opened.document.numPages) + 1)) }} />
           </div>
-          <aside className="pdf-notes" id="pdf-notes" aria-label={t("本篇笔记", "Document notes")} hidden={!notesOpen}>
+          <aside className="pdf-notes" id="pdf-notes" ref={notesRail} aria-label={t("本篇笔记", "Document notes")} hidden={!notesOpen}>
             <div className="pdf-notes-header"><h2>{t("本篇标注", "Annotations")} <span>{records.length}</span></h2>
               <button className="quiet icon-button" aria-label={t("关闭笔记", "Close notes")} onClick={() => setNotesOpen(false)}><Icon name="close" /></button></div>
             {!records.length && <p className="pdf-muted">{t("选中文字后选择颜色保存高亮，或用「区域标注」框选图表。", "Select text and choose a color to save it, or use Mark area for a figure.")}</p>}
-            {sortedNotes.slice(0, notesLimit).map((record) => <PdfNote key={record.id} record={record} language={settings.language}
+            {[...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <PdfNote key={record.id} record={record} language={settings.language}
               onJump={() => jump(record.target.pageNumber)} onSave={(draft) => saveNote(record.id, draft)} onRemove={remove}
               removing={removing} saving={noteSaving === record.id} conflict={noteConflicts[record.id] === true}
               locked={leaving || guardSaving || writeCount > 0 || !!unsaved} draft={noteDrafts[record.id]}
+              deleted={!savedIds.has(record.id)}
               onDraft={(draft, resolveConflict) => updateDraft(record.id, draft, resolveConflict)} onClearDraft={() => updateDraft(record.id)} />)}
             {notesLimit < sortedNotes.length && <button onClick={() => setNotesLimit((limit) => limit + 50)}>{t("加载更多", "Load more")}</button>}
           </aside>
@@ -1058,7 +1104,7 @@ export function PdfReader() {
         <div className="pdf-dialog-actions">
           <button disabled={guardSaving || leaving} onClick={() => void saveAndContinue()}>{guardSaving ? t("正在保存…", "Saving…") : t("保存并继续", "Save and continue")}</button>
           <button disabled={guardSaving || leaving || writeCount > 0} onClick={discardAndContinue}>{t("放弃并继续", "Discard and continue")}</button>
-          <button autoFocus disabled={guardSaving || leaving} onClick={() => setPendingLeave(undefined)}>{t("继续编辑", "Keep editing")}</button>
+          <button autoFocus disabled={guardSaving || leaving} onClick={keepEditing}>{t("继续编辑", "Keep editing")}</button>
         </div>
       </section></div>}
     </main>

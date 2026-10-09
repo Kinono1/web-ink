@@ -20,6 +20,7 @@ export function PdfNote({
   saving,
   conflict,
   locked,
+  deleted = false,
 }: {
   record: PdfAnnotation;
   language: Settings["language"];
@@ -33,6 +34,7 @@ export function PdfNote({
   saving: boolean;
   conflict: boolean;
   locked: boolean;
+  deleted?: boolean;
 }) {
   const editing = draft?.editing === true;
   const note = draft?.note ?? record.note;
@@ -85,6 +87,12 @@ export function PdfNote({
       </span>
       {editing ? (
         <div className="pdf-note-editor">
+          {deleted && <p role="alert">
+            {t(
+              "原标注已被删除。此草稿只保留在当前窗口，可继续编辑或复制内容后放弃草稿。",
+              "The original annotation was deleted. This draft remains in this window; keep editing or copy its contents before discarding it.",
+            )}
+          </p>}
           <label>
             {t("笔记", "Note")}
             <textarea
@@ -109,7 +117,7 @@ export function PdfNote({
             value={color}
             onChange={(e) => updateDraft({ color: e.target.value })}
           />
-          {conflict && (
+          {conflict && !deleted && (
             <p role="alert">
               {t(
                 "其他窗口已修改。草稿保留，请载入最新版本后再保存。",
@@ -124,11 +132,11 @@ export function PdfNote({
               </button>
             </p>
           )}
-          <button disabled={saving || locked || conflict} onClick={() => void save().catch(() => undefined)}>
+          {!deleted && <button disabled={saving || locked || conflict} onClick={() => void save().catch(() => undefined)}>
             {t("保存", "Save")}
-          </button>
+          </button>}
           <button disabled={saving || locked} onClick={onClearDraft}>
-            {t("取消", "Cancel")}
+            {deleted ? t("放弃草稿", "Discard draft") : t("取消", "Cancel")}
           </button>
         </div>
       ) : (

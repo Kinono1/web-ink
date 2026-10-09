@@ -236,8 +236,98 @@ async function editNote(value: string) {
   });
   await settle();
 }
+function runtimeListeners() {
+  const listeners = new Set<(message: object) => void>();
+  chrome.runtime.onMessage.addListener = ((listener: (message: object) => void) => listeners.add(listener)) as typeof chrome.runtime.onMessage.addListener;
+  chrome.runtime.onMessage.removeListener = ((listener: (message: object) => void) => listeners.delete(listener)) as typeof chrome.runtime.onMessage.removeListener;
+  return listeners;
+}
 
 describe("PDF reader workspace", () => {
+  it("preserves an explicit local file after delayed initial settings", async () => {
+    const settingsGate = deferred<unknown>();
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "settings.get"
+      ? settingsGate.promise : send(message)) as typeof send;
+    await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+    io.hash = "b".repeat(64);
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF-"], "local-b.pdf")] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await settle();
+    expect(host.querySelector(".pdf-name")?.textContent).toBe("local-b.pdf");
+    await act(async () => settingsGate.resolve({ ok: true, data: DEFAULT_SETTINGS }));
+    await settle();
+    expect(host.querySelector(".pdf-name")?.textContent).toBe("local-b.pdf");
+    expect(io.remoteReads).toHaveLength(0);
+    expect(new URL(location.href).searchParams.get("document")).toBe("b".repeat(64));
+    expect(new URL(location.href).searchParams.has("source")).toBe(false);
+  });
+
+  it.each(["deletedId", "list refresh"])("keeps a dirty deleted note editable after %s without resurrecting its record", async (route) => {
+    const listeners = runtimeListeners();
+    records = [baseRecord(), ...Array.from({ length: 55 }, (_, index) => ({
+      ...baseRecord(), id: `other-saved-${index}`,
+      target: { ...baseRecord().target, pageNumber: 2, exact: "other passage" },
+    }))];
+    await mount(`?handoff=${TOKEN}`);
+    await editNote("preserve this orphan draft");
+    await act(async () => {
+      records = records.filter((record) => record.id !== "saved-highlight");
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: `urn:web-ink:pdf:${HASH}`,
+        ...(route === "deletedId" ? { deletedId: "saved-highlight" } : {}) });
+    });
+    await settle();
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("preserve this orphan draft");
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    const orphan = host.querySelector('[data-pdf-note="saved-highlight"]');
+    expect(orphan?.textContent).toContain("saved passage");
+    expect(orphan?.textContent).toContain("原标注已被删除");
+    expect(orphan?.textContent).not.toContain("载入最新版本");
+    expect(host.querySelector(".pdf-notes h2 span")?.textContent).toBe("55");
+    await click("笔记");
+    await click("返回原阅读器");
+    await click("继续编辑");
+    expect(host.querySelector(".pdf-notes")?.hasAttribute("hidden")).toBe(false);
+    await click("返回原阅读器");
+    await click("保存并继续");
+    expect(puts()).toHaveLength(0);
+    expect(messages.some((message) => message.type === "pdf.returnOriginal")).toBe(false);
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy();
+    await click("继续编辑");
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(textarea.value).toBe("preserve this orphan draft");
+    expect(textarea.disabled).toBe(false);
+    textarea.select();
+    expect(textarea.selectionEnd - textarea.selectionStart).toBe(textarea.value.length);
+    expect(unloadBlocked()).toBe(true);
+    await click("放弃草稿");
+    expect(unloadBlocked()).toBe(false);
+    expect(records).toHaveLength(55);
+    expect(records.some((record) => record.id === "saved-highlight")).toBe(false);
+    expect(puts()).toHaveLength(0);
+    expect(messages.some((message) => message.type === "annotations.restore" || message.type === "annotations.delete")).toBe(false);
+  });
+
+  it("does not re-add a deleted note from a save response that arrives after deletion", async () => {
+    const listeners = runtimeListeners();
+    records = [baseRecord()];
+    await mount();
+    await editNote("draft being saved");
+    putGate = deferred();
+    await click("保存");
+    await act(async () => {
+      records = [];
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: `urn:web-ink:pdf:${HASH}`, deletedId: "saved-highlight" });
+      putGate!.resolve({ ok: true, data: { ...baseRecord(), note: "draft being saved", revision: 4 } });
+    });
+    await settle();
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("draft being saved");
+    expect(unloadBlocked()).toBe(true);
+    expect(puts()).toHaveLength(1);
+  });
+
   it("returns focus only when Escape closes an open More menu", async () => {
     await mount();
     const trigger = button("更多");
