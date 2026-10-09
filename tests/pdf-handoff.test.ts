@@ -28,6 +28,10 @@ function setUrl(url: string, doc = 'source-document') {
   documentId = doc;
   tabs.set(7, { ...tabs.get(7), id: 7, url, active: true, windowId: 1 } as chrome.tabs.Tab);
   vi.stubGlobal('location', { href: url });
+  // The real browser document resolves relative attributes from its actual URL.
+  const base = document.createElement('base');
+  base.href = url;
+  document.head.replaceChildren(base);
 }
 function loadedReader(tabId: number, url: string, doc = `reader-${tabId}`) {
   tabs.set(tabId, { ...tabs.get(tabId), id: tabId, url, windowId: 1, active: true } as chrome.tabs.Tab);
@@ -128,7 +132,7 @@ beforeEach(async () => {
   });
   vi.resetModules(); (await import('../entrypoints/background')).default.main();
 });
-afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); });
+afterEach(() => { document.body.replaceChildren(); document.head.replaceChildren(); vi.unstubAllGlobals(); });
 
 describe('observed PDF sources', () => {
   it('classifies a direct HTTPS PDF without fetching bytes', async () => {
@@ -153,6 +157,26 @@ describe('observed PDF sources', () => {
     setUrl('https://papers.example.test/reading');
     visibleEmbeds(`<${tag} ${tag === 'object' ? 'data' : 'src'}="/public.PDF?id=8" type="application/pdf"></${tag}><embed src="https://papers.example.test/hidden.pdf" type="application/pdf" style="display:none">`);
     expect(value(await inspect())).toMatchObject({ kind: 'embedded', candidates: [{ url: 'https://papers.example.test/public.PDF?id=8', via: tag }] });
+  });
+
+  it.each(['iframe', 'embed', 'object'])('uses the actual document base URI for a relative %s source', async tag => {
+    const original = 'https://papers.example.test/reading';
+    const source = 'https://cdn.example.test/documents/paper.pdf';
+    setUrl(original);
+    document.head.innerHTML = '<base href="https://cdn.example.test/documents/">';
+    visibleEmbeds(`<${tag} ${tag === 'object' ? 'data' : 'src'}="paper.pdf" type="application/pdf"></${tag}>`);
+    expect(document.baseURI).toBe('https://cdn.example.test/documents/');
+    expect(value(await inspect()).candidates).toEqual([{ url: source, via: tag }]);
+    expect(value(await open())).toMatchObject({ navigation: 'same-tab', sourceUrl: source });
+    expect(handoffs()[0]![1]).toMatchObject({ returnUrl: original, sourceUrl: source });
+  });
+
+  it('does not forward a credentialed source resolved from a document base URI', async () => {
+    setUrl('https://papers.example.test/reading');
+    document.head.innerHTML = '<base href="https://user:secret@cdn.example.test/documents/">';
+    visibleEmbeds('<embed src="paper.pdf" type="application/pdf">');
+    expect(value(await inspect())).toMatchObject({ candidates: [], reason: 'unsafe-source' });
+    expect(new URL(value(await open()).readerUrl).searchParams.has('source')).toBe(false);
   });
 
   it('does not invent a different source by truncating an oversized observed URL', async () => {
@@ -281,6 +305,15 @@ describe('same-tab navigation authority', () => {
     };
     expect(await open()).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
     expect(updates).toHaveLength(0);
+  });
+
+  it('rejects a sidebar caller that moves to another window during session persistence', async () => {
+    contexts = [context(40, UI.url!, UI.documentId!, 'TAB')];
+    afterWrite = () => { contexts[0] = { ...contexts[0]!, windowId: 2 }; };
+    expect(await open()).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(tabs.get(7)!.url).toBe(ORIGINAL);
+    expect(updates).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
   });
 
   it('rejects an active-tab change during the final asynchronous browser check', async () => {

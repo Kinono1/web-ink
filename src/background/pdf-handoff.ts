@@ -181,7 +181,8 @@ export function createPdfHandoffHandler() {
     if (epoch(actor.tabId) !== snapshot.epoch) throw changed();
     if (actor.kind === "sidebar" && activation(actor.windowId!) !== actor.activationEpoch) throw changed();
     if (actor.kind === "sidebar") {
-      await ownContext(actor.sender, "sidepanel.html");
+      const context = await ownContext(actor.sender, "sidepanel.html");
+      if (context.windowId !== actor.windowId) throw changed();
       if (await activeTab(actor.windowId!) !== actor.tabId) throw changed();
     } else if (actor.kind === "reader") await ownContext(actor.sender, "pdf.html");
     const observed = await observeTab(actor.tabId);

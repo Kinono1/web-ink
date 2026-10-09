@@ -142,8 +142,11 @@ export function probePdfDocument(): PdfDocumentSnapshot {
     )
       continue;
     const via = element.localName as "iframe" | "embed" | "object";
-    const url = element.getAttribute(via === "object" ? "data" : "src");
-    if (!url || url.length > 8192) continue;
+    const attribute = element.getAttribute(via === "object" ? "data" : "src");
+    if (!attribute || attribute.length > 8192) continue;
+    let url: string;
+    try { url = new URL(attribute, document.baseURI).href; } catch { continue; }
+    if (url.length > 8192) continue;
     candidates.push({ url, via, mimeType: (element.getAttribute("type") ?? "").slice(0, 200) });
     if (candidates.length === 100) break;
   }
