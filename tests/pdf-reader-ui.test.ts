@@ -244,6 +244,47 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it.each(["open", "closed"])("restores orphan draft focus after Keep editing when Notes was %s", async (notes) => {
+    const listeners = runtimeListeners();
+    records = [baseRecord()];
+    await mount(`?handoff=${TOKEN}`);
+    await editNote("recover editor focus");
+    await act(async () => {
+      records = [];
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: `urn:web-ink:pdf:${HASH}`, deletedId: "saved-highlight" });
+    });
+    await settle();
+    const textarea = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    if (notes === "closed") await click("笔记");
+    await click("返回原阅读器");
+    const keep = button("继续编辑");
+    keep.focus();
+    expect(document.activeElement).toBe(keep);
+    await click("继续编辑");
+    expect(host.querySelector('[role="dialog"]')).toBeNull();
+    expect(host.querySelector(".pdf-notes")?.hasAttribute("hidden")).toBe(false);
+    expect(document.activeElement).toBe(textarea);
+  });
+
+  it("keeps focus inside an open leave dialog when its dirty annotation is deleted", async () => {
+    const listeners = runtimeListeners();
+    records = [baseRecord()];
+    await mount(`?handoff=${TOKEN}`);
+    await editNote("retain modal focus");
+    await click("返回原阅读器");
+    const keep = button("继续编辑");
+    keep.focus();
+    await act(async () => {
+      records = [];
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: `urn:web-ink:pdf:${HASH}`, deletedId: "saved-highlight" });
+    });
+    await settle();
+    expect(host.querySelector('[role="dialog"]')).toBeTruthy();
+    expect(document.activeElement).toBe(keep);
+    await click("继续编辑");
+    expect(document.activeElement).toBe(host.querySelector("textarea"));
+  });
+
   it("preserves an explicit local file after delayed initial settings", async () => {
     const settingsGate = deferred<unknown>();
     const send = chrome.runtime.sendMessage;

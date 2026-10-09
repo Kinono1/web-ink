@@ -154,9 +154,9 @@ export function PdfReader() {
     (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
   );
   useLayoutEffect(() => {
-    if (notesOpen && deletedDrafts.length)
+    if (notesOpen && deletedDrafts.length && !pendingLeave && !sourceOpen)
       notesRail.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
-  }, [notesOpen, deletedDrafts.length]);
+  }, [notesOpen, deletedDrafts.length, pendingLeave, sourceOpen]);
   const sortedNotes = useMemo(
     () =>
       records
