@@ -1,7 +1,5 @@
-import { useState } from "react";
-import { request, RequestError } from "../core/client";
 import type { Settings } from "../core/model";
-import { errorText, type PdfAnnotation } from "./types";
+import type { PdfAnnotation } from "./types";
 export type PdfNoteDraft = {
   note: string;
   tags: string;
@@ -13,25 +11,29 @@ export function PdfNote({
   record,
   language,
   onJump,
-  onError,
+  onSave,
   onRemove,
   removing,
   draft,
   onDraft,
   onClearDraft,
+  saving,
+  conflict,
+  locked,
 }: {
   record: PdfAnnotation;
   language: Settings["language"];
   onJump: () => void;
-  onError: (e: string) => void;
+  onSave: (draft: PdfNoteDraft) => Promise<void>;
   onRemove: (record: PdfAnnotation) => void;
   removing: boolean;
   draft?: PdfNoteDraft;
-  onDraft: (draft: PdfNoteDraft) => void;
+  onDraft: (draft: PdfNoteDraft, resolveConflict?: boolean) => void;
   onClearDraft: () => void;
+  saving: boolean;
+  conflict: boolean;
+  locked: boolean;
 }) {
-  const [conflict, setConflict] = useState(false),
-    [saving, setSaving] = useState(false);
   const editing = draft?.editing === true;
   const note = draft?.note ?? record.note;
   const tags = draft?.tags ?? record.tags.join(", ");
@@ -40,49 +42,18 @@ export function PdfNote({
   const zh = language === "zh-CN";
   const t = (cn: string, en: string) => (zh ? cn : en);
   const edit = () => {
-    setConflict(false);
     onDraft({
       note: record.note,
       tags: record.tags.join(", "),
       color: record.color,
       base: record,
       editing: true,
-    });
+    }, true);
   };
   const updateDraft = (
     next: Partial<Pick<PdfNoteDraft, "note" | "tags" | "color">>,
   ) => onDraft({ note, tags, color, base, editing: true, ...next });
-  const save = async () => {
-    setSaving(true);
-    try {
-      await request({
-        type: "annotations.put",
-        annotation: {
-          ...base,
-          note,
-          tags: [
-            ...new Set(
-              tags
-                .split(",")
-                .map((s) => s.trim())
-                .filter(Boolean),
-            ),
-          ],
-          color,
-          updatedAt: new Date().toISOString(),
-        },
-        expectedRevision: base.revision,
-      });
-      setConflict(false);
-      onClearDraft();
-    } catch (cause) {
-      if (cause instanceof RequestError && cause.code === "CONFLICT")
-        setConflict(true);
-      onError(errorText(cause));
-    } finally {
-      setSaving(false);
-    }
-  };
+  const save = () => onSave({ note, tags, color, base, editing: true });
   return (
     <article
       className="pdf-note"
@@ -117,6 +88,8 @@ export function PdfNote({
           <label>
             {t("笔记", "Note")}
             <textarea
+              autoFocus
+              disabled={saving || locked}
               value={note}
               onChange={(e) => updateDraft({ note: e.target.value })}
             />
@@ -124,11 +97,13 @@ export function PdfNote({
           <label>
             {t("标签", "Tags")}
             <input
+              disabled={saving || locked}
               value={tags}
               onChange={(e) => updateDraft({ tags: e.target.value })}
             />
           </label>
           <input
+            disabled={saving || locked}
             type="color"
             aria-label={t("颜色", "Color")}
             value={color}
@@ -142,24 +117,23 @@ export function PdfNote({
               )}
               <button
                 onClick={() => {
-                  onDraft({ note, tags, color, base: record, editing: true });
-                  setConflict(false);
+                  onDraft({ note, tags, color, base: record, editing: true }, true);
                 }}
               >
                 {t("载入最新版本", "Load latest")}
               </button>
             </p>
           )}
-          <button disabled={saving || conflict} onClick={() => void save()}>
+          <button disabled={saving || locked || conflict} onClick={() => void save().catch(() => undefined)}>
             {t("保存", "Save")}
           </button>
-          <button disabled={saving} onClick={onClearDraft}>
+          <button disabled={saving || locked} onClick={onClearDraft}>
             {t("取消", "Cancel")}
           </button>
         </div>
       ) : (
         <div className="pdf-note-actions">
-          <button onClick={edit}>{t("编辑", "Edit")}</button>
+          <button disabled={locked} onClick={edit}>{t("编辑", "Edit")}</button>
           <button disabled={removing} onClick={() => onRemove(record)}>
             {t("取消标注", "Remove annotation")}
           </button>
