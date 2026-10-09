@@ -64,7 +64,7 @@ p {
   margin: 0;
 }
 h1 {
-  font-size: var(--ink-size-display);
+  font-size: var(--ink-size-title);
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.2;
@@ -335,6 +335,7 @@ button:disabled {
 }
 .empty h2 {
   color: var(--ink-text);
+  font-size: var(--ink-size-display);
 }
 .empty p {
   font-size: var(--ink-size-body);
@@ -669,6 +670,16 @@ select {
   line-height: 1.5;
   text-align: left;
 }
+.library-shell .annotation-row {
+  display: block;
+  height: max-content;
+}
+.annotation-row-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  min-width: 0;
+}
 .library-shell .annotation-row::before,
 .sibling::before,
 .detail-excerpt::before {
@@ -708,6 +719,9 @@ select {
 }
 .library-shell .annotation-row .row-meta {
   flex-wrap: nowrap;
+}
+.library-shell .annotation-row-content > * {
+  min-width: 0;
 }
 .row-meta > * {
   flex: none;

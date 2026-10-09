@@ -108,6 +108,49 @@ describe("management UI", () => {
     expect(host.querySelector(".annotation-detail")).not.toBeNull();
   });
 
+  it("restores the narrow library reading position after Back", async () => {
+    const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    const scrollY = Object.getOwnPropertyDescriptor(window, "scrollY");
+    const scrollTo = Object.getOwnPropertyDescriptor(window, "scrollTo");
+    const restored = vi.fn();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 });
+    Object.defineProperty(window, "scrollY", { configurable: true, value: 1477 });
+    Object.defineProperty(window, "scrollTo", { configurable: true, value: restored });
+    try {
+      installChrome((message) => {
+        if (message.type === "settings.get") return { ok: true, data: settings };
+        if (message.type === "annotations.query")
+          return { ok: true, data: { items: [record] } };
+        return { ok: true, data: true };
+      });
+      const host = await mount("library");
+      await act(async () => {
+        (host.querySelector(".annotation-row") as HTMLButtonElement).click();
+      });
+      await act(async () => {
+        (host.querySelector(".back-button") as HTMLButtonElement).click();
+      });
+      expect(restored).toHaveBeenCalledWith({ top: 1477, behavior: "auto" });
+    } finally {
+      if (width) Object.defineProperty(window, "innerWidth", width);
+      if (scrollY) Object.defineProperty(window, "scrollY", scrollY);
+      if (scrollTo) Object.defineProperty(window, "scrollTo", scrollTo);
+    }
+  });
+
+  it("renders a library-specific empty state without an empty record frame", async () => {
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query")
+        return { ok: true, data: { items: [] } };
+      return { ok: true, data: true };
+    });
+    const host = await mount("library");
+    expect(host.querySelector(".annotation-browser")).toBeNull();
+    expect(host.textContent).toContain("还没有保存的标注");
+    expect(host.textContent).toContain("当前页面");
+  });
+
   it("uses the observed current-tab context and sends only a selected source to the background", async () => {
     const context: PdfTabContext = {
       tabId: 7,

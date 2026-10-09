@@ -99,6 +99,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const pdfOpenPending = useRef(false);
   const moreMenu = useRef<HTMLDetailsElement>(null);
   const moreTrigger = useRef<HTMLElement>(null);
+  const libraryScrollY = useRef<number | undefined>(undefined);
   const contextRequest = useRef(0);
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
@@ -600,6 +601,20 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
   const showHeaderPdfAction =
     !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
+  const openLibraryDetail = (id: string) => {
+    if (window.innerWidth <= 699) libraryScrollY.current = window.scrollY;
+    setSelectedId(id);
+    setLibraryDetail(true);
+  };
+  const closeLibraryDetail = () => {
+    setLibraryDetail(false);
+  };
+  useLayoutEffect(() => {
+    const top = libraryScrollY.current;
+    if (mode !== "library" || libraryDetail || top === undefined) return;
+    libraryScrollY.current = undefined;
+    window.scrollTo({ top, behavior: "auto" });
+  }, [libraryDetail, mode]);
   return (
     <main
       className={mode === "sidepanel" ? "ink-app sidepanel" : "ink-app"}
@@ -892,15 +907,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               />
             ) : null}
           </div>
-          <AnnotationBrowser
+          {records.length ? <AnnotationBrowser
             detailOpen={libraryDetail}
-            onBack={() => setLibraryDetail(false)}
+            onBack={closeLibraryDetail}
             records={records}
             selectedId={selectedId}
-            setSelectedId={(id) => {
-              setSelectedId(id);
-              setLibraryDetail(true);
-            }}
+            setSelectedId={openLibraryDetail}
             states={states}
             language={language}
             t={t}
@@ -917,11 +929,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             onRebind={() => undefined}
             onDraw={() => undefined}
             onOpenPdf={openPdf}
-          />
+          /> : null}
           {!records.length && !loading ? (
             <Empty
-              title={query || filterCount ? t.noResults : t.empty}
-              text=""
+              title={query || filterCount ? t.noResults : t.libraryEmptyTitle}
+              text={query || filterCount ? "" : t.libraryEmptyText}
             />
           ) : null}
           {loading ? (
