@@ -54,6 +54,7 @@ export function pdfReaderUrl(readerBase: string, record?: Annotation): string {
   const url = new URL(readerBase);
   if (record && isPdf(record)) {
     url.searchParams.set("document", record.target.documentHash);
+    url.searchParams.set("page", String(record.target.pageNumber));
     if (record.target.sourceUrl)
       url.searchParams.set("source", record.target.sourceUrl);
   }
