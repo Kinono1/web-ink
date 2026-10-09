@@ -2,6 +2,7 @@ import { lstat, readdir, readFile, mkdir, cp, rm, writeFile, mkdtemp, rename } f
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import assert from 'node:assert/strict';
+import { isDeepStrictEqual } from 'node:util';
 import { validateRuntimeIntegrity } from './integrity.mjs';
 export { createRuntimeIntegrity, validateRuntimeIntegrity } from './integrity.mjs';
 
@@ -47,7 +48,7 @@ async function installationPaths(repo) {
   repo = path.resolve(repo);
   const state = path.join(repo, '.local-install');
   for (const location of [repo, path.join(repo, '.output'), path.join(repo, '.build-output'), state,
-    path.join(state, 'backups'), path.join(state, 'receipt.json')]) await rejectSymlink(location);
+    path.join(state, 'backups'), path.join(state, 'receipt.json'), path.join(state, 'pending.json')]) await rejectSymlink(location);
   return { repo, source: path.join(repo, '.build-output/chrome-mv3'),
     target: path.join(repo, '.output/chrome-mv3'), state, receiptPath: path.join(state, 'receipt.json') };
 }
@@ -66,14 +67,12 @@ function receiptFor(target, identity, files, backup = null) {
 }
 
 async function saveReceipt(receiptPath, receipt) {
-  const temporary = receiptPath + '.tmp';
-  await rejectSymlink(temporary);
-  let created = false;
+  const temporaryDirectory = await mkdtemp(path.join(path.dirname(receiptPath), '.receipt-'));
+  const temporary = path.join(temporaryDirectory, 'data.json');
   try {
     await writeFile(temporary, JSON.stringify(receipt, null, 2) + '\n', { flag: 'wx' });
-    created = true;
     await rename(temporary, receiptPath);
-  } finally { if (created) await rm(temporary, { force: true }); }
+  } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
 }
 
 function checkReceipt(receipt, target, files) {
@@ -81,9 +80,56 @@ function checkReceipt(receipt, target, files) {
   assert.deepEqual(fileHashes(files), receipt.files, 'Installed files changed outside the updater');
 }
 
+async function restoreFiles(target, previous, currentNames) {
+  for (const rel of currentNames) if (!(rel in previous)) await rm(path.join(target, rel), { force: true });
+  for (const [rel, bytes] of Object.entries(previous)) {
+    await mkdir(path.dirname(path.join(target, rel)), { recursive: true });
+    await writeFile(path.join(target, rel), bytes);
+  }
+  assert.deepEqual(fileHashes(await runtimeFiles(target)), fileHashes(previous), 'Rollback failed; retain backup and stop');
+}
+
+/** A durable backup reference lets the next invocation recover an interrupted file copy. */
+async function recoverPending({ target, state, receiptPath }, identity) {
+  const journalPath = path.join(state, 'pending.json');
+  const pending = await readReceipt(journalPath);
+  if (!pending) return;
+  if (pending.schemaVersion !== 1 || pending.target !== target || typeof pending.backup !== 'string' ||
+    path.dirname(pending.backup) !== path.join(state, 'backups') || !/^build-[\w-]+$/.test(path.basename(pending.backup)))
+    throw Error('Invalid update recovery journal; installation refused');
+  await rejectSymlink(pending.backup);
+  const previous = await runtimeFiles(path.join(pending.backup, 'chrome-mv3'));
+  validateIdentity(previous, identity);
+  validateRuntimeIntegrity(previous, { requireIntegrity: false });
+  checkReceipt(pending.before, target, previous);
+  if (pending.after?.target !== target || !pending.after.files || typeof pending.after.files !== 'object')
+    throw Error('Invalid update recovery journal');
+  for (const [name, hash] of Object.entries(pending.after.files)) {
+    const parts = name.split('/');
+    if (!name || parts.some(part => !part || part === '.' || part === '..') ||
+      !(parts.length === 1 ? roots.has(name) : folders.has(parts[0])) || !/^[a-f0-9]{64}$/.test(hash))
+      throw Error('Invalid update recovery file');
+  }
+  const receipt = await readReceipt(receiptPath);
+  const current = await runtimeFiles(target);
+  // A committed receipt means synchronization completed; do not undo later external changes.
+  if (receipt && isDeepStrictEqual(receipt.files, pending.after.files)) {
+    checkReceipt(receipt, target, current);
+  } else {
+    assert.deepEqual(receipt, pending.before, 'Recovery receipt mismatch; retain backup and stop');
+    for (const rel of Object.keys(current)) if (!(rel in pending.before.files) && !(rel in pending.after.files))
+      throw Error(`Unknown recovery entry: ${rel}`);
+    await restoreFiles(target, previous, Object.keys(current));
+    await saveReceipt(receiptPath, pending.before);
+  }
+  await rm(journalPath);
+}
+
 /** Explicit enrollment verifies the existing runtime before creating protected state. */
 export async function registerInstallation(repo, identity) {
-  const { target, state, receiptPath, repo: root } = await installationPaths(repo);
+  const paths = await installationPaths(repo);
+  const { target, state, receiptPath, repo: root } = paths;
+  await recoverPending(paths, identity);
   const files = await runtimeFiles(target);
   validateIdentity(files, identity);
   validateRuntimeIntegrity(files, { requireIntegrity: false });
@@ -121,7 +167,9 @@ export async function registerInstallation(repo, identity) {
 
 /** Only verified runtime files are overwritten; the Chrome-loaded directory itself stays in place. */
 export async function installRuntime(repo, identity, { copyFile = cp } = {}) {
-  const { source, target, state, receiptPath } = await installationPaths(repo);
+  const paths = await installationPaths(repo);
+  const { source, target, state, receiptPath } = paths;
+  await recoverPending(paths, identity);
   const receipt = await readReceipt(receiptPath);
   if (!receipt) throw Error('Installation is not registered. Run npm run register:local in the primary checkout first.');
   const incoming = await runtimeFiles(source);
@@ -138,6 +186,9 @@ export async function installRuntime(repo, identity, { copyFile = cp } = {}) {
   const backup = await mkdtemp(path.join(backupRoot, 'build-'));
   await cp(target, path.join(backup, 'chrome-mv3'), { recursive: true, errorOnExist: true, force: false });
   assert.deepEqual(fileHashes(await runtimeFiles(path.join(backup, 'chrome-mv3'))), fileHashes(previous));
+  const nextReceipt = receiptFor(target, identity, incoming, backup);
+  const journalPath = path.join(state, 'pending.json');
+  await saveReceipt(journalPath, { schemaVersion: 1, target, backup, before: receipt, after: nextReceipt });
   const written = [];
   try {
     for (const rel of Object.keys(incoming)) {
@@ -149,14 +200,12 @@ export async function installRuntime(repo, identity, { copyFile = cp } = {}) {
     for (const rel of Object.keys(previous))
       if (!(rel in incoming)) await rm(path.join(target, rel));
     assert.deepEqual(fileHashes(await runtimeFiles(target)), fileHashes(incoming), 'Installed hash mismatch');
-    await saveReceipt(receiptPath, receiptFor(target, identity, incoming, backup));
+    await saveReceipt(receiptPath, nextReceipt);
+    await rm(journalPath);
   } catch (error) {
-    for (const rel of written) if (!(rel in previous)) await rm(path.join(target, rel), { force: true });
-    for (const [rel, bytes] of Object.entries(previous)) {
-      await mkdir(path.dirname(path.join(target, rel)), { recursive: true });
-      await writeFile(path.join(target, rel), bytes);
-    }
-    assert.deepEqual(fileHashes(await runtimeFiles(target)), fileHashes(previous), 'Rollback failed; retain backup and stop');
+    await restoreFiles(target, previous, written);
+    await saveReceipt(receiptPath, receipt);
+    await rm(journalPath);
     throw error;
   }
   return { source, target, backup, ...receiptFor(target, identity, incoming, backup), files: Object.keys(incoming).length };

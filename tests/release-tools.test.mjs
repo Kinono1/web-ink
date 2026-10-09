@@ -331,3 +331,51 @@ test('artifact cleanup deletes only stale staged archives and preserves installs
     else for (const name of stale) await assert.rejects(stat(path.join(repo, name)), { code: 'ENOENT' });
   }
 });
+
+test('interrupted update restores its verified backup before the next attempt', async t => {
+  const repo = await fixture(t);
+  await writeFile(path.join(repo, sourceName, 'background.js'), "import './chunks/helper.js';\nexport const candidate = true;\n");
+  await reseal(path.join(repo, sourceName));
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const library = new URL('../scripts/lib/runtime.mjs', import.meta.url).href;
+  const script = `import { installRuntime } from ${JSON.stringify(library)};
+    import { cp } from 'node:fs/promises';
+    let copies = 0;
+    await installRuntime(${JSON.stringify(repo)}, ${JSON.stringify(identity)}, { copyFile: async (from, to) => {
+      await cp(from, to); if (++copies === 2) process.exit(71);
+    } });`;
+  const stopped = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  assert.equal(stopped.status, 71, stopped.stderr);
+  assert.notDeepEqual(await hashes(target), before);
+  const result = await installRuntime(repo, identity);
+  assert.deepEqual(await hashes(path.join(result.backup, 'chrome-mv3')), before);
+  assert.deepEqual(await hashes(target), await hashes(path.join(repo, sourceName)));
+});
+
+test('an unrelated stale receipt temporary file cannot prevent the next update or be deleted', async t => {
+  const repo = await fixture(t);
+  const stale = path.join(repo, '.local-install/receipt.json.tmp');
+  await writeFile(stale, 'preserve for investigation');
+  await installRuntime(repo, identity);
+  assert.equal(await readFile(stale, 'utf8'), 'preserve for investigation');
+});
+
+test('invalid recovery journal is refused without modifying the installation', async t => {
+  const repo = await fixture(t);
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const receipt = JSON.parse(await readFile(path.join(repo, receiptName), 'utf8'));
+  const backup = path.join(repo, '.local-install/backups/build-recovery');
+  await cp(target, path.join(backup, 'chrome-mv3'), { recursive: true });
+  const pending = { schemaVersion: 1, target, backup, before: receipt, after: receipt };
+  for (const invalid of [
+    { ...pending, backup: path.join(repo, 'outside') },
+    { ...pending, before: { ...receipt, files: {} } },
+    { ...pending, after: { ...receipt, files: { '../outside': 'a'.repeat(64) } } },
+  ]) {
+    await writeFile(path.join(repo, '.local-install/pending.json'), JSON.stringify(invalid));
+    await assert.rejects(installRuntime(repo, identity), /journal|changed outside|recovery/i);
+    assert.deepEqual(await hashes(target), before);
+  }
+});
