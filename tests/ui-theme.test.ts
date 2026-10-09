@@ -21,6 +21,33 @@ const web: Annotation = {
 };
 
 describe('shared UI presentation contract', () => {
+  it('publishes the approved primary action and control tokens to both surfaces', () => {
+    expect(THEME_TOKENS.light).toMatchObject({
+      '--ink-bg': '#f6f7f9',
+      '--ink-text': '#18181b',
+      '--ink-primary': '#27272a',
+      '--ink-primary-text': '#ffffff',
+      '--ink-accent': '#2563eb',
+    });
+    expect(THEME_TOKENS.dark).toMatchObject({
+      '--ink-bg': '#111318',
+      '--ink-text': '#f4f4f5',
+      '--ink-primary': '#f4f4f5',
+      '--ink-primary-text': '#18181b',
+      '--ink-accent': '#60a5fa',
+    });
+    expect(SCALE_TOKENS).toMatchObject({
+      '--ink-size-body': '14px',
+      '--ink-size-title': '16px',
+      '--ink-size-display': '22px',
+      '--ink-control-min-height': '36px',
+      '--ink-radius-control': '8px',
+      '--ink-radius': '12px',
+      '--ink-motion-fast': '120ms',
+    });
+    expect(CONTENT_THEME_CSS).toContain('--ink-primary:#27272a;');
+    expect(PAGE_THEME_CSS).toContain('--ink-control-min-height:36px;');
+  });
   it('keeps light and dark token sets usable by both React and Shadow DOM', () => {
     for (const key of ['--ink-bg', '--ink-surface', '--ink-text', '--ink-accent', '--ink-separator'] as const) {
       expect(THEME_TOKENS.light[key]).toBeTruthy(); expect(THEME_TOKENS.dark[key]).toBeTruthy();
