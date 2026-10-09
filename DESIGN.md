@@ -9,8 +9,9 @@ runtime tokens yet.
 
 Each extension surface is **Operate**: the reader needs to finish a task with
 minimal visual ceremony. The system is light, calm, and document-first. Brand
-appears in precise blue focus/action states, a compact document mark, and clear
-local-data language rather than decorative imagery.
+appears in precise selection/focus states, a compact document mark, and clear
+local-data language rather than decorative imagery. Blue is reserved for focus
+and selected state; it is not the default call-to-action color.
 
 The incumbent baseline is the authority for product wording and icon language.
 The prototype fixes its observed empty-state problem: the library does not
@@ -27,6 +28,7 @@ surface says what it applies to instead of using library copy.
 | secondary text | `#52525B` | `#A1A1AA` |
 | separator | `#E4E4E7` | `#2B303B` |
 | accent | `#2563EB` | `#60A5FA` |
+| primary action | `#27272A` with white text | `#F4F4F5` with `#18181B` text |
 
 - System sans stack only: `-apple-system`, `BlinkMacSystemFont`, `PingFang SC`,
   `Hiragino Sans GB`, `Segoe UI`, `Microsoft YaHei`, `system-ui`, `sans-serif`.
@@ -41,13 +43,16 @@ surface says what it applies to instead of using library copy.
 
 ## Layout rules
 
-- Reader: one 52px toolbar row after the compact app bar. Notes are closed by
-  default. At 900px and above, a 320px note rail may sit beside pages; below
-  that it overlays the reader. Below 600px, retain Back, page, Notes, and More;
-  zoom moves into More.
-- Sidebar/current page: name the active page, source host, and annotation
-  state first. The empty state has a concrete next action and a stable bottom
-  image-drawing entry.
+- Reader: the loaded-reader header is **one total 52px toolbar row** containing
+  Back, filename, page, zoom, Notes, and More. It has no second app bar. Notes
+  are closed by default. At 900px and above, a 320px note rail may sit beside
+  pages; below that it overlays the reader. Below 600px, retain Back, page,
+  Notes, and More; zoom moves into More.
+- Sidebar/current page: start with the actual document name, source host, and
+  enabled/disabled state. Show the compact saved-record list without expanding
+  a record by default; show a PDF-context action when applicable; keep image
+  drawing as a stable bottom action. Empty copy must state the actual workflow,
+  not use marketing language.
 - Library: a compact list starts without automatically opening a record.
   Search/filter controls have clear labels. At 700px and above it can become a
   list/detail split; otherwise the detail replaces the list and keeps its
