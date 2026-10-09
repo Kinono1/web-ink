@@ -238,6 +238,29 @@ async function editNote(value: string) {
 }
 
 describe("PDF reader workspace", () => {
+  it("returns focus only when Escape closes an open More menu", async () => {
+    await mount();
+    const trigger = button("更多");
+    await click("更多");
+    const item = button("旋转页面");
+    item.focus();
+    expect(document.activeElement).toBe(item);
+    await act(async () => item.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true,
+    })));
+    await settle();
+    expect(host.querySelector(".pdf-more-menu")).toBeNull();
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(document.activeElement).toBe(trigger);
+
+    const pages = host.querySelector<HTMLElement>(".pdf-pages")!;
+    pages.focus();
+    await act(async () => pages.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true,
+    })));
+    expect(document.activeElement).toBe(pages);
+  });
+
   it("offers selection actions immediately, keeps copying inert and separates overlay visibility", async () => {
     await mount();
     expect(host.querySelector(".pdf-notes")?.hasAttribute("hidden")).toBe(true);

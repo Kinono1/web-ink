@@ -96,6 +96,7 @@ export function PdfReader() {
     [moreOpen, setMoreOpen] = useState(false),
     [sourceOpen, setSourceOpen] = useState(false);
   const moreMenu = useRef<HTMLDivElement>(null);
+  const moreTrigger = useRef<HTMLButtonElement>(null);
   const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
   const [handoffReady, setHandoffReady] = useState(!handoffToken);
   const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
@@ -926,7 +927,13 @@ export function PdfReader() {
       if (event.key !== "Escape" || guardSaving || leaving) return;
       if (pendingLeave) setPendingLeave(undefined);
       else if (sourceOpen) setSourceOpen(false);
-      else { setMoreOpen(false); setSelection(undefined); setPicked(undefined); setArea(false); }
+      else {
+        if (moreOpen) moreTrigger.current?.focus();
+        setMoreOpen(false);
+        setSelection(undefined);
+        setPicked(undefined);
+        setArea(false);
+      }
     }}>
       {opened ? <nav className="pdf-toolbar" aria-label={t("PDF 工具栏", "PDF toolbar")}>
         <button className="quiet icon-button pdf-back" aria-label={backLabel} title={backLabel}
@@ -940,7 +947,7 @@ export function PdfReader() {
         <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={notesOpen} aria-controls="pdf-notes"
           onClick={() => setNotesOpen((open) => !open)}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
         <div className="pdf-more" ref={moreMenu}>
-          <button className="quiet icon-button" aria-label={t("更多", "More")} title={t("更多", "More")}
+          <button className="quiet icon-button" ref={moreTrigger} aria-label={t("更多", "More")} title={t("更多", "More")}
             aria-expanded={moreOpen} aria-controls="pdf-more-menu" disabled={leaving || guardSaving}
             onClick={() => setMoreOpen((open) => !open)}><Icon name="more" /></button>
           {moreOpen && <div className="pdf-more-menu" id="pdf-more-menu" aria-label={t("更多阅读器操作", "More reader actions")}>
