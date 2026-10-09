@@ -118,26 +118,27 @@ export function createPdfReadingPositionWriter(
   let disposed = false;
   let writing = false;
   let pending: PdfReadingPosition | undefined;
+  let pendingReady = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let lastWriteFailed = false;
   let lastFailure: unknown;
   const waiters: Array<{ resolve: () => void; reject: (cause: unknown) => void }> = [];
 
   const settleFlushes = (): void => {
     if (writing || pending || timer) return;
-    const failure = lastFailure;
     const currentWaiters = waiters.splice(0);
     for (const waiter of currentWaiters) {
-      if (failure === undefined) waiter.resolve();
-      else waiter.reject(failure);
+      if (!lastWriteFailed) waiter.resolve();
+      else waiter.reject(lastFailure);
     }
   };
 
-  const finishWrite = (failure?: unknown): void => {
+  const finishWrite = (succeeded: boolean, failure?: unknown): void => {
     writing = false;
-    if (failure === undefined) lastFailure = undefined;
-    else lastFailure = failure;
+    lastWriteFailed = !succeeded;
+    lastFailure = failure;
 
-    if (!disposed && pending) {
+    if (!disposed && pending && pendingReady) {
       startWrite();
       return;
     }
@@ -147,6 +148,7 @@ export function createPdfReadingPositionWriter(
   const startWrite = (): void => {
     const snapshot = pending;
     pending = undefined;
+    pendingReady = false;
     if (!snapshot) {
       settleFlushes();
       return;
@@ -157,19 +159,21 @@ export function createPdfReadingPositionWriter(
     try {
       result = chrome.storage.local.set({ [key]: snapshot });
     } catch (cause) {
-      finishWrite(cause);
+      finishWrite(false, cause);
       return;
     }
     void Promise.resolve(result).then(
-      () => finishWrite(),
-      (cause: unknown) => finishWrite(cause),
+      () => finishWrite(true),
+      (cause: unknown) => finishWrite(false, cause),
     );
   };
 
   const scheduleWrite = (): void => {
     if (timer) clearTimeout(timer);
+    pendingReady = false;
     timer = setTimeout(() => {
       timer = undefined;
+      pendingReady = true;
       if (!writing) startWrite();
     }, 500);
   };
@@ -178,14 +182,15 @@ export function createPdfReadingPositionWriter(
     save(snapshot) {
       if (disposed || !isReadingPosition(snapshot)) return;
       pending = copyPosition(snapshot);
-      if (!writing) scheduleWrite();
+      scheduleWrite();
     },
     flush() {
-      if (timer) {
-        clearTimeout(timer);
+      if (pending) {
+        if (timer) clearTimeout(timer);
         timer = undefined;
+        pendingReady = true;
+        if (!writing) startWrite();
       }
-      if (!writing && pending) startWrite();
 
       const flushed = new Promise<void>((resolve, reject) => {
         waiters.push({ resolve, reject });
@@ -199,6 +204,7 @@ export function createPdfReadingPositionWriter(
     dispose() {
       disposed = true;
       pending = undefined;
+      pendingReady = false;
       if (timer) clearTimeout(timer);
       timer = undefined;
       settleFlushes();

@@ -123,21 +123,28 @@ describe("PDF reading positions", () => {
     await writer.flush();
   });
 
-  it("serializes A/B/C and writes only the latest pending record", async () => {
+  it("keeps the latest A/B/C snapshot idle for 500ms while A is in flight", async () => {
     vi.useFakeTimers();
     const first = deferred<void>();
     const second = deferred<void>();
     const completions = [first, second];
     const writes: Record<string, unknown>[] = [];
+    let activeWrites = 0;
+    let maximumActiveWrites = 0;
     installStorage({}, (entries) => {
       writes.push(entries);
-      return completions[writes.length - 1]!.promise;
+      activeWrites += 1;
+      maximumActiveWrites = Math.max(maximumActiveWrites, activeWrites);
+      return completions[writes.length - 1]!.promise.finally(() => {
+        activeWrites -= 1;
+      });
     });
     const writer = createPdfReadingPositionWriter(HASH_A);
 
     writer.save(position(1));
     await vi.advanceTimersByTimeAsync(500);
     writer.save(position(2));
+    await vi.advanceTimersByTimeAsync(100);
     writer.save(position(3));
     expect(writes).toEqual([
       { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
@@ -147,10 +154,19 @@ describe("PDF reading positions", () => {
     await vi.runAllTicks();
     expect(writes).toEqual([
       { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+    ]);
+    await vi.advanceTimersByTimeAsync(499);
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+    ]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
       { [`ui.pdfReadingPosition.${HASH_A}`]: position(3) },
     ]);
     second.resolve();
     await writer.flush();
+    expect(maximumActiveWrites).toBe(1);
   });
 
   it("flushes a pending idle record and waits for its in-flight write", async () => {
@@ -174,7 +190,7 @@ describe("PDF reading positions", () => {
     await expect(flushed).resolves.toBeUndefined();
   });
 
-  it("drops a failed record, then persists a newer record without retrying the failure", async () => {
+  it("waits 500ms after a newer save when the in-flight write fails", async () => {
     vi.useFakeTimers();
     const first = deferred<void>();
     const second = deferred<void>();
@@ -188,8 +204,17 @@ describe("PDF reading positions", () => {
     writer.save(position(1));
     await vi.advanceTimersByTimeAsync(500);
     writer.save(position(2));
+    await vi.advanceTimersByTimeAsync(1);
     first.reject(new Error("storage unavailable"));
     await vi.runAllTicks();
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+    ]);
+    await vi.advanceTimersByTimeAsync(498);
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+    ]);
+    await vi.advanceTimersByTimeAsync(1);
     expect(writes).toEqual([
       { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
       { [`ui.pdfReadingPosition.${HASH_A}`]: position(2) },
@@ -197,6 +222,64 @@ describe("PDF reading positions", () => {
 
     second.resolve();
     await expect(writer.flush()).resolves.toBeUndefined();
+  });
+
+  it("flushes the current pending record immediately after an in-flight write", async () => {
+    vi.useFakeTimers();
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const writes: Record<string, unknown>[] = [];
+    installStorage({}, (entries) => {
+      writes.push(entries);
+      return [first, second][writes.length - 1]!.promise;
+    });
+    const writer = createPdfReadingPositionWriter(HASH_A);
+
+    writer.save(position(1));
+    await vi.advanceTimersByTimeAsync(500);
+    writer.save(position(2));
+    const flushed = writer.flush();
+    first.resolve();
+    await vi.runAllTicks();
+
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(2) },
+    ]);
+    second.resolve();
+    await expect(flushed).resolves.toBeUndefined();
+  });
+
+  it("applies normal idle time to a save that arrives after flush", async () => {
+    vi.useFakeTimers();
+    const first = deferred<void>();
+    const second = deferred<void>();
+    const writes: Record<string, unknown>[] = [];
+    installStorage({}, (entries) => {
+      writes.push(entries);
+      return [first, second][writes.length - 1]!.promise;
+    });
+    const writer = createPdfReadingPositionWriter(HASH_A);
+
+    writer.save(position(1));
+    await vi.advanceTimersByTimeAsync(500);
+    writer.save(position(2));
+    const flushed = writer.flush();
+    writer.save(position(3));
+    first.resolve();
+    await vi.runAllTicks();
+    await vi.advanceTimersByTimeAsync(499);
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+    ]);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(writes).toEqual([
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(1) },
+      { [`ui.pdfReadingPosition.${HASH_A}`]: position(3) },
+    ]);
+    second.resolve();
+    await expect(flushed).resolves.toBeUndefined();
   });
 
   it("keeps writers isolated by document hash", async () => {
