@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24.15.0'
@@ -43,6 +45,16 @@ jobs:
           (cd "$RUNNER_TEMP/webink-baseline-download" && sha256sum -c web-ink-0.3.0-chrome.zip.sha256)
           node scripts/extract-runtime.mjs "$RUNNER_TEMP/webink-baseline-download/web-ink-0.3.0-chrome.zip" "$RUNNER_TEMP/webink-v030"
           echo "WEB_INK_OLD_BUILD=$RUNNER_TEMP/webink-v030" >> "$GITHUB_ENV"
+      - name: Prepare pinned Reload baseline
+        shell: bash
+        run: |
+          BASELINE_COMMIT=d37555855f4d3f8cec0bbd27d28de8afa12f49fc
+          BASELINE_WORKTREE="$RUNNER_TEMP/webink-reload-baseline"
+          git worktree add --detach "$BASELINE_WORKTREE" "$BASELINE_COMMIT"
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$BASELINE_WORKTREE/node_modules"
+          (cd "$BASELINE_WORKTREE" && npm run build)
+          node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
+          echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
       - name: Verify minimum PDF browser (Chrome 125)
         shell: bash
