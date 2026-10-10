@@ -123,6 +123,23 @@ async function moreAction(reader: Page, name: string) {
   await reader.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true }).click();
   await reader.locator(".pdf-more-menu").getByRole("button", { name, exact: true }).click();
 }
+async function viewAction(reader: Page, name: "旋转页面" | "适合宽度") {
+  const toolbarAction = reader.locator(".pdf-toolbar").getByRole("button", { name, exact: true });
+  if (await toolbarAction.isVisible()) await toolbarAction.click();
+  else await moreAction(reader, name);
+}
+async function expectToolbarBounds(reader: Page, viewportWidth: number) {
+  const toolbar = reader.locator(".pdf-toolbar");
+  const more = toolbar.getByRole("button", { name: "更多", exact: true });
+  const { scrollWidth, clientWidth } = await toolbar.evaluate((element) => ({
+    scrollWidth: element.scrollWidth,
+    clientWidth: element.clientWidth,
+  }));
+  expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  const box = await more.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewportWidth);
+}
 async function readingPosition(hash: string): Promise<PdfReadingPosition | undefined> {
   const value = await control.evaluate(async (hash) =>
     (await chrome.storage.local.get(`ui.pdfReadingPosition.${hash}`))[`ui.pdfReadingPosition.${hash}`],
@@ -452,7 +469,7 @@ test("mixed-page bookmarks restore after local reselect and explicit pages beat 
   await openLocal(reader, bytes, "mixed-pages.pdf");
   await reader.getByLabel("页码", { exact: true }).fill("7");
   await reader.getByRole("button", { name: "放大", exact: true }).click();
-  await moreAction(reader, "旋转页面");
+  await viewAction(reader, "旋转页面");
   await expect(reader.locator('[data-page="7"] .pdf-page[data-ready=true]')).toBeVisible();
   await reader.locator(".pdf-pages").evaluate((element) => {
     const slot = element.querySelector<HTMLElement>('[data-page="7"]')!;
@@ -469,7 +486,7 @@ test("mixed-page bookmarks restore after local reselect and explicit pages beat 
   await expect(reader.locator(".pdf-page canvas")).toHaveCount(0);
   await openLocal(reader, bytes, "same-bytes-renamed.pdf");
   await expect(reader.getByLabel("页码", { exact: true })).toHaveValue("7");
-  await expect(reader.locator(".pdf-zoom")).toHaveText("125%");
+  await expect(reader.getByLabel("缩放比例", { exact: true })).toHaveValue("125%");
   await expect(reader.locator('[data-page="7"] .pdf-page[data-ready=true]')).toBeVisible();
   await expect.poll(async () => {
     const box = await reader.locator('[data-page="7"]').boundingBox();
@@ -486,10 +503,22 @@ test("mixed-page bookmarks restore after local reselect and explicit pages beat 
   await reader.goto(`chrome-extension://${id}/pdf.html`);
   await openLocal(reader, fixturePdf(1, "Different exact bytes"), "different.pdf");
   await expect(reader.getByLabel("页码", { exact: true })).toHaveValue("1");
-  await expect(reader.locator(".pdf-zoom")).toHaveText("100%");
+  await expect(reader.getByLabel("缩放比例", { exact: true })).toHaveValue("100%");
   expect((await readingPosition(hash))?.rotation).toBe(90);
   expect(JSON.stringify(await rpc(control, { type: "backup.export" }))).not.toContain("ui.pdfReadingPosition");
   observations.push({ hash, saved });
+});
+
+test("Chinese PDF search scans packaged CMaps text and marks the current result", async () => {
+  const reader = await readerPage();
+  await openLocal(reader, fixturePdf(1, "中文论文：阅读、标注与回顾"), "chinese-search.pdf");
+  await reader.keyboard.press("Control+f");
+  const find = reader.getByRole("search", { name: "PDF 文内搜索", exact: true });
+  await expect(find).toBeVisible();
+  await find.getByRole("textbox", { name: "搜索 PDF 文字", exact: true }).fill("右栏独立的研究结果");
+  await expect(find.getByRole("status")).toHaveText("1 / 1");
+  await expect(reader.locator(".pdf-search-match")).toHaveCount(1);
+  await expect(reader.getByLabel("页码", { exact: true })).toHaveValue("1");
 });
 
 for (const failure of ["login", "redirect"] as const) {
@@ -532,7 +561,12 @@ test("the 320px dark reader keeps its toolbar usable while the synthetic sidepan
   const toolbar = reader.locator(".pdf-toolbar");
   for (const name of ["笔记", "更多"])
     await expect(toolbar.getByRole("button", { name, exact: true })).toBeVisible();
+  await expectToolbarBounds(reader, 320);
   await expect(reader.getByLabel("页码", { exact: true })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: "下一页", exact: true })).toBeHidden();
+  await toolbar.getByRole("button", { name: "更多", exact: true }).click();
+  await reader.locator(".pdf-more-menu").getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(reader.getByLabel("页码", { exact: true })).toHaveValue("2");
   expect(Math.abs((await toolbar.boundingBox())!.height - 52)).toBeLessThanOrEqual(1);
   expect(await reader.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(await reader.locator(".pdf-app").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(17, 19, 24)");
@@ -547,4 +581,12 @@ test("the 320px dark reader keeps its toolbar usable while the synthetic sidepan
   expect(motion).toEqual({ transition: "0s", animation: "0s" });
   await reader.screenshot({ path: test.info().outputPath("pdf-reader-dark-320.png") });
   await control.screenshot({ path: test.info().outputPath("pdf-synthetic-sidepanel-dark-320.png") });
+});
+
+test("the 600px reader toolbar stays within its viewport and keeps More reachable", async () => {
+  const reader = await readerPage();
+  await reader.setViewportSize({ width: 600, height: 720 });
+  await openLocal(reader, fixturePdf(3), "medium-toolbar.pdf");
+  await expectToolbarBounds(reader, 600);
+  await expect(reader.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true })).toBeVisible();
 });

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   PDFPageProxy,
   RenderTask,
 } from "pdfjs-dist/types/src/display/api";
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { Language, PdfRect } from "../core/model";
+import type { PdfSearchMatch } from "./search";
 import { fromPdfRect, toPdfRect } from "./geometry";
 import {
   errorText,
@@ -24,6 +25,8 @@ export function PdfPage({
   area,
   color,
   measurementGeneration,
+  searchRanges,
+  onSearchPosition,
   onSelection,
   onPick,
   onArea,
@@ -39,6 +42,8 @@ export function PdfPage({
   area: boolean;
   color: string;
   measurementGeneration: number;
+  searchRanges?: PdfSearchMatch["itemRanges"];
+  onSearchPosition?: (top: number) => void;
   onSelection: (v: SelectionPreview | undefined) => void;
   onPick: (record: PdfAnnotation) => void;
   onArea: (v: SelectionTarget) => void;
@@ -47,6 +52,7 @@ export function PdfPage({
 }) {
   const t = (zh: string, en: string) => language === "zh-CN" ? zh : en;
   const [ready, setReady] = useState(false);
+  const [rendering, setRendering] = useState(true);
   const [failure, setFailure] = useState<"image-too-large" | "render-failed">();
   const root = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
@@ -57,24 +63,57 @@ export function PdfPage({
   const [geometry, setGeometry] = useState<{
       viewport: PageViewport;
       box: number[];
+      opened: OpenDocument;
+      number: number;
     }>(),
     [preview, setPreview] = useState<PdfRect>();
-  const callbacks = useRef({ onDimensions, onError });
-  callbacks.current = { onDimensions, onError };
+  const committedLayer = useRef<InstanceType<PdfApi["TextLayer"]> | undefined>(undefined);
+  const [searchRects, setSearchRects] = useState<PdfRect[]>([]);
+  const pending = useRef(Promise.resolve());
+  const cachedPage = useRef<PDFPageProxy | undefined>(undefined);
+  const callbacks = useRef({ onDimensions, onError, onSearchPosition });
+  callbacks.current = { onDimensions, onError, onSearchPosition };
   useEffect(() => {
+    const pageRoot = root.current, c = canvas.current, layerRoot = text.current;
+    return () => {
+      if (c) {
+        c.width = 0;
+        c.height = 0;
+      }
+      layerRoot?.replaceChildren();
+      committedLayer.current = undefined;
+      // Zoom generations share PDF.js's cached page. Release it only after
+      // this mounted page is gone and its last stage has settled.
+      void pending.current.then(() => {
+        if (!pageRoot?.isConnected) cachedPage.current?.cleanup();
+      });
+    };
+  }, []);
+  useLayoutEffect(() => {
     const generation = measurementGeneration;
+    const previous = pending.current;
     let dead = false;
-    let page: PDFPageProxy | undefined,
-      render: RenderTask | undefined,
-      layer: InstanceType<PdfApi["TextLayer"]> | undefined;
-    setGeometry(undefined);
+    let render: RenderTask | undefined,
+      layer: InstanceType<PdfApi["TextLayer"]> | undefined,
+      stagedCanvas: HTMLCanvasElement | undefined,
+      stagedText: HTMLDivElement | undefined;
     setReady(false);
+    setRendering(true);
     setFailure(undefined);
-    text.current?.replaceChildren();
-    if (root.current) root.current.dataset.ready = "false";
-    void (async () => {
+    setPreview(undefined);
+    drag.current = undefined;
+    if (root.current) {
+      root.current.dataset.ready = "false";
+      root.current.dataset.rendering = "true";
+    }
+    pending.current = (async () => {
       try {
-        page = await opened.document.getPage(number);
+        // A cancelled stage must settle before another one allocates a raster.
+        // Superseded generations waiting here never allocate their own stage.
+        await previous;
+        if (dead) return;
+        const page = await opened.document.getPage(number);
+        cachedPage.current = page;
         const pageRoot = root.current,
           c = canvas.current,
           layerRoot = text.current;
@@ -88,40 +127,63 @@ export function PdfPage({
           2,
           Math.sqrt(16777216 / (viewport.width * viewport.height)),
         );
-        c.width = Math.floor(viewport.width * ratio);
-        c.height = Math.floor(viewport.height * ratio);
-        c.style.width = `${viewport.width}px`;
-        c.style.height = `${viewport.height}px`;
-        pageRoot.style.setProperty(
-          "--total-scale-factor",
-          String(viewport.scale),
-        );
-        pageRoot.style.setProperty("--scale-factor", String(viewport.scale));
-        callbacks.current.onDimensions(
-          generation,
-          viewport.width,
-          viewport.height,
-        );
-        setGeometry({ viewport, box: page.view });
+        stagedCanvas = document.createElement("canvas");
+        stagedCanvas.width = Math.floor(viewport.width * ratio);
+        stagedCanvas.height = Math.floor(viewport.height * ratio);
+        stagedText = document.createElement("div");
+        stagedText.className = "textLayer";
         render = page.render({
-          canvas: c,
+          canvas: stagedCanvas,
           viewport,
           transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0],
         });
         await render.promise;
+        render = undefined;
         if (dead) return;
-        layerRoot.replaceChildren();
         layer = new opened.api.TextLayer({
           textContentSource: page.streamTextContent(),
-          container: layerRoot,
+          container: stagedText,
           viewport,
         });
         await layer.render();
-        if (!dead && pageRoot.isConnected) {
-          pageRoot.dataset.ready = "true";
-          setReady(true);
-        }
+        const finishedLayer = layer;
+        layer = undefined;
+        if (dead || !pageRoot.isConnected) return;
+
+        // Keep React's canvas node, then commit the finished image, text and
+        // viewport in one task so the browser never paints an empty zoom frame.
+        const context = c.getContext("2d");
+        if (!context) throw new Error("PDF canvas context is unavailable");
+        c.width = stagedCanvas.width;
+        c.height = stagedCanvas.height;
+        context.drawImage(stagedCanvas, 0, 0);
+        c.style.width = `${viewport.width}px`;
+        c.style.height = `${viewport.height}px`;
+        layerRoot.style.cssText = stagedText.style.cssText;
+        layerRoot.setAttribute("data-main-rotation", String(viewport.rotation));
+        const finishedText = document.createDocumentFragment();
+        while (stagedText.firstChild) finishedText.append(stagedText.firstChild);
+        layerRoot.replaceChildren(finishedText);
+        committedLayer.current = finishedLayer;
+        pageRoot.style.width = `${viewport.width}px`;
+        pageRoot.style.height = `${viewport.height}px`;
+        pageRoot.style.setProperty("--total-scale-factor", String(viewport.scale));
+        pageRoot.style.setProperty("--scale-factor", String(viewport.scale));
+        setGeometry({ viewport, box: page.view, opened, number });
+        pageRoot.dataset.ready = "true";
+        pageRoot.dataset.rendering = "false";
+        setReady(true);
+        setRendering(false);
+        callbacks.current.onDimensions(generation, viewport.width, viewport.height);
       } catch (cause) {
+        if (!dead) {
+          setReady(false);
+          setRendering(false);
+          if (root.current) {
+            root.current.dataset.ready = "false";
+            root.current.dataset.rendering = "false";
+          }
+        }
         if (
           !dead &&
           !(
@@ -136,29 +198,55 @@ export function PdfPage({
             canvas.current.height = 0;
           }
           text.current?.replaceChildren();
+          committedLayer.current = undefined;
           setFailure(errorText(cause).includes("Image exceeded maximum allowed size")
             ? "image-too-large" : "render-failed");
         }
       } finally {
-        if (dead) page?.cleanup();
+        render?.cancel();
+        layer?.cancel();
+        if (stagedCanvas) {
+          stagedCanvas.width = 0;
+          stagedCanvas.height = 0;
+        }
+        stagedText?.replaceChildren();
       }
     })();
     return () => {
       dead = true;
       render?.cancel();
+      render = undefined;
       layer?.cancel();
-      if (canvas.current) {
-        canvas.current.width = 0;
-        canvas.current.height = 0;
-      }
-      text.current?.replaceChildren();
-      void Promise.resolve(render?.promise)
-        .catch(() => undefined)
-        .finally(() => page?.cleanup());
+      layer = undefined;
     };
   }, [opened, number, zoom, rotation, measurementGeneration]);
+  useLayoutEffect(() => {
+    setSearchRects([]);
+    const layer = committedLayer.current;
+    const pageRoot = root.current;
+    if (!ready || !geometry || !layer || !pageRoot || !searchRanges?.length) return;
+    const bounds = pageRoot.getBoundingClientRect();
+    const rects: PdfRect[] = [];
+    let firstTop: number | undefined;
+    for (const item of searchRanges) {
+      const element = layer.textDivs?.[item.itemIndex];
+      const node = element?.firstChild;
+      if (!node || node.nodeType !== Node.TEXT_NODE || item.end > (node.textContent?.length ?? 0)) continue;
+      const range = document.createRange();
+      range.setStart(node, item.start);
+      range.setEnd(node, item.end);
+      for (const client of range.getClientRects()) {
+        if (!client.width || !client.height) continue;
+        const rect = toPdfRect({ left: client.left - bounds.left, top: client.top - bounds.top,
+          right: client.right - bounds.left, bottom: client.bottom - bounds.top }, geometry.viewport, geometry.box);
+        if (rect) { rects.push(rect); firstTop ??= client.top - bounds.top; }
+      }
+    }
+    setSearchRects(rects);
+    if (firstTop !== undefined) callbacks.current.onSearchPosition?.(firstTop);
+  }, [ready, geometry, searchRanges]);
   function capture(event: React.MouseEvent<HTMLDivElement>) {
-    if (area || !ready || !geometry || !text.current || !root.current) return;
+    if (area || !ready || !geometry || !text.current || root.current?.dataset.ready !== "true") return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
       const page = root.current.getBoundingClientRect();
@@ -246,6 +334,8 @@ export function PdfPage({
     <div
       className="pdf-page"
       ref={root}
+      data-ready={ready}
+      data-rendering={rendering}
       onMouseUp={capture}
       onClick={capture}
       style={{
@@ -254,7 +344,10 @@ export function PdfPage({
       }}
     >
       <canvas ref={canvas} aria-label={`PDF ${number}`} />
-      <div className="textLayer" ref={text} />
+      <div className="textLayer" ref={text} style={{
+        pointerEvents: ready ? undefined : "none",
+        userSelect: ready ? undefined : "none",
+      }} />
       {failure && <div className="pdf-page-error" role="alert">
         <h2>{t(`第 ${number} 页无法完整显示`, `Page ${number} could not be displayed completely`)}</h2>
         <p>{failure === "image-too-large"
@@ -262,7 +355,7 @@ export function PdfPage({
           : t("这页暂时无法显示，请重新打开 PDF。", "This page could not be displayed. Reopen the PDF to try again.")}</p>
         <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
       </div>}
-      {ready && geometry && (
+      {geometry && !failure && geometry.opened === opened && geometry.number === number && (
         <svg
           className="pdf-marks"
           width={geometry.viewport.width}
@@ -292,11 +385,16 @@ export function PdfPage({
           )}
         </svg>
       )}
+      {ready && geometry && searchRects.length > 0 && <svg className="pdf-search-marks"
+        width={geometry.viewport.width} height={geometry.viewport.height} aria-hidden="true">
+        {searchRects.map((rect, index) => <rect key={index} className="pdf-search-match"
+          {...fromPdfRect(rect, geometry.viewport, geometry.box)} />)}
+      </svg>}
       {area && ready && geometry && (
         <div
           className="pdf-area-capture"
           onPointerDown={(e) => {
-            if (e.button !== 0) return;
+            if (e.button !== 0 || root.current?.dataset.ready !== "true") return;
             e.currentTarget.setPointerCapture(e.pointerId);
             drag.current = { ...position(e), pointer: e.pointerId };
             onSelection(undefined);
