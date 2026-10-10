@@ -20,3 +20,12 @@ export async function request<T>(message: Request): Promise<T> {
   if (!response.ok) throw new RequestError(response.error, response.code);
   return response.data;
 }
+
+/** Chrome invalidates extension APIs before React releases listeners on Reload. */
+export function releaseChromeListener(remove: () => void): void {
+  try {
+    remove();
+  } catch (cause) {
+    if (!(cause instanceof Error && /Extension context invalidated/i.test(cause.message))) throw cause;
+  }
+}

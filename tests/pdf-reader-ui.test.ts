@@ -737,6 +737,34 @@ describe("PDF reader workspace", () => {
     expect(puts()).toHaveLength(0);
   });
 
+  it("handles tab lookup invalidation during reader startup without an unhandled promise", async () => {
+    Object.defineProperty(chrome, "tabs", { configurable: true, value: {
+      getCurrent: async () => { throw new Error("Extension context invalidated."); },
+    } });
+    await mount("", false);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Extension context invalidated");
+  });
+
+  it("reports a failed initial settings request instead of leaving an unhandled Reload rejection", async () => {
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "settings.get"
+      ? Promise.reject(new Error("Extension context invalidated.")) : send(message)) as typeof send;
+    await mount("", false);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Extension context invalidated");
+  });
+
+  it("releases reader listeners and canvas resources when Reload invalidates listener cleanup", async () => {
+    await mount();
+    const canvas = host.querySelector("canvas")!;
+    chrome.runtime.onMessage.removeListener = () => { throw new Error("Extension context invalidated."); };
+    const current = root!;
+    root = undefined;
+    await expect(act(async () => current.unmount())).resolves.toBeUndefined();
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+    expect(frames.size).toBe(0);
+  });
+
   it("opens PDF search with Cmd+F and closes it with Escape", async () => {
     await mount();
     await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true, cancelable: true })));

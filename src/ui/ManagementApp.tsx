@@ -2,7 +2,7 @@ import { useAnnotationQuery } from "./management/useAnnotationQuery";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { toMarkdown } from "../core/backup";
-import { RequestError, request } from "../core/client";
+import { RequestError, request, releaseChromeListener } from "../core/client";
 import {
   COLORS,
   DEFAULT_SETTINGS,
@@ -306,9 +306,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     chrome.tabs.onActivated.addListener(activated);
     chrome.tabs.onUpdated.addListener(updated);
     return () => {
-      chrome.runtime.onMessage.removeListener(listener);
-      chrome.tabs.onActivated.removeListener(activated);
-      chrome.tabs.onUpdated.removeListener(updated);
+      releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
+      releaseChromeListener(() => chrome.tabs.onActivated.removeListener(activated));
+      releaseChromeListener(() => chrome.tabs.onUpdated.removeListener(updated));
     };
   }, [
     color,

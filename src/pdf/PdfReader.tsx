@@ -19,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { request, RequestError } from "../core/client";
+import { request, RequestError, releaseChromeListener } from "../core/client";
 import {
   COLORS,
   DEFAULT_SETTINGS,
@@ -174,7 +174,9 @@ export function PdfReader() {
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
   const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
   useEffect(() => {
-    void chrome.tabs?.getCurrent?.().then((tab) => { readerTab.current = tab?.id; });
+    void chrome.tabs?.getCurrent?.()
+      .then((tab) => { readerTab.current = tab?.id; })
+      .catch((cause) => setError(errorText(cause)));
     if (!chrome.runtime.connect) return;
     const client = connectPdfSidebar("web-ink-pdf-reader", (message) => {
       if (message.type === "attached") {
@@ -339,13 +341,13 @@ export function PdfReader() {
       setSettings(next);
       setColor(next.defaultColor);
       setSettingsReady(true);
-    });
+    }).catch((cause) => setError(errorText(cause)));
     const listener = (m: { type?: string }) => {
       if (m.type === "settings.changed")
-        void request<Settings>({ type: "settings.get" }).then(setSettings);
+        void request<Settings>({ type: "settings.get" }).then(setSettings).catch((cause) => setError(errorText(cause)));
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, []);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -421,7 +423,7 @@ export function PdfReader() {
       }
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, [key, documentSession, refresh]);
   useLayoutEffect(() => {
     if (!opened) return;
