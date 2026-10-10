@@ -1183,14 +1183,14 @@ export function PdfReader() {
         <PdfFind opened={opened} language={settings.language} blocked={leaving || guardSaving || !!pendingLeave || sourceOpen}
           onMatch={(match) => { pendingSearchPosition.current = undefined; setSearchMatch(match); }}
           onNavigate={(page) => { jump(page); pendingSearchPosition.current = { pageNumber: page, intent: intentEpoch.current }; }} />
-        <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={sidebarAttached || inlineNotes} aria-controls={inlineNotes ? "pdf-notes" : undefined}
-          onClick={openNotes}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
         <div className="pdf-more" ref={moreMenu}>
           <button className="quiet icon-button" ref={moreTrigger} aria-label={t("更多", "More")} title={t("更多", "More")}
             aria-expanded={moreOpen} aria-controls="pdf-more-menu" disabled={leaving || guardSaving}
             onClick={() => setMoreOpen((open) => !open)}><Icon name="more" /></button>
           {moreOpen && <div className="pdf-more-menu" id="pdf-more-menu" aria-label={t("更多阅读器操作", "More reader actions")}>
             <div className="pdf-more-zoom">{zoomControls}</div>
+            {!sidebarAttached && !inlineNotes && <button onClick={() => { openNotes(); setMoreOpen(false); }}>
+              <Icon name="note" />{t("查看标注", "View annotations")}</button>}
             <button className="pdf-more-page" disabled={locked || pageNumber <= 1} onClick={() => { jump(pageNumber - 1); setMoreOpen(false); }}>
               <Icon name="chevron" />{t("上一页", "Previous page")}</button>
             <button className="pdf-more-page" disabled={locked || pageNumber >= opened.document.numPages} onClick={() => { jump(pageNumber + 1); setMoreOpen(false); }}>

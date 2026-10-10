@@ -113,8 +113,7 @@ async function editNote(reader: Page, record: Annotation, draft: string) {
 }
 async function openPdfSidebar(reader: Page) {
   await activeTab(reader);
-  await reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
-  await activeTab(reader);
+  await expect(reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true })).toHaveCount(0);
   await expect(control.locator(".pdf-sidebar")).toBeVisible();
   await expect(reader.locator(".pdf-notes")).toBeHidden();
   await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
@@ -559,8 +558,8 @@ test("the 320px dark reader keeps its toolbar usable while the synthetic sidepan
   await control.setViewportSize({ width: 320, height: 640 });
   await openLocal(reader, fixturePdf(40), "long-paper.pdf");
   const toolbar = reader.locator(".pdf-toolbar");
-  for (const name of ["笔记", "更多"])
-    await expect(toolbar.getByRole("button", { name, exact: true })).toBeVisible();
+  await expect(toolbar.getByRole("button", { name: "笔记", exact: true })).toHaveCount(0);
+  await expect(toolbar.getByRole("button", { name: "更多", exact: true })).toBeVisible();
   await expectToolbarBounds(reader, 320);
   await expect(reader.getByLabel("页码", { exact: true })).toBeVisible();
   await expect(toolbar.getByRole("button", { name: "下一页", exact: true })).toBeHidden();
