@@ -49,7 +49,8 @@ export function PdfSidebar({ tabId, language }: { tabId?: number; language: Lang
           replayDrafts.current = false;
           for (const [id, value] of Object.entries(next)) client.send({
             type: "command", commandId: value.commandId, pageUrl: message.state.pageUrl, sessionId: message.state.sessionId,
-            command: { type: "draft", id, draft: value.draft, resolveConflict: value.resolveConflict },
+            command: { type: "draft", id, draft: value.draft,
+              resolveConflict: value.resolveConflict && value.draft?.base.revision === message.state.records.find((record) => record.id === id)?.revision },
           });
         }
       }

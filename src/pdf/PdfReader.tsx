@@ -993,7 +993,11 @@ export function PdfReader() {
       switch (command.type) {
         case "focus": if (record) { jump(record.target.pageNumber); setPicked(record); } break;
         case "draft":
-          if (record || draftsRef.current[command.id]) updateDraft(command.id, command.draft, command.resolveConflict);
+          if (record || draftsRef.current[command.id]) {
+            updateDraft(command.id, command.draft, command.resolveConflict);
+            if (record && command.draft && command.draft.base.revision !== record.revision)
+              setNoteConflicts((old) => ({ ...old, [command.id]: true }));
+          }
           break;
         case "save": {
           const draft = draftsRef.current[command.id];

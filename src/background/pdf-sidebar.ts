@@ -103,7 +103,11 @@ function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarComma
   // An existing stale draft keeps its original revision; resolving a conflict
   // must deliberately adopt the current reader-owned record instead.
   const base = JSON.stringify(draft.base);
-  if (base !== JSON.stringify(record) && (value.resolveConflict || base !== JSON.stringify(cachedDraft?.base))) return;
+  const recoveredBase = record && draft.base.revision < record.revision &&
+    draft.base.kind === record.kind && draft.base.createdAt === record.createdAt &&
+    JSON.stringify(draft.base.target) === JSON.stringify(record.target);
+  if (base !== JSON.stringify(record) &&
+    (value.resolveConflict || (base !== JSON.stringify(cachedDraft?.base) && !recoveredBase))) return;
   return { type: "draft", id: value.id, draft, ...(value.resolveConflict === undefined ? {} : { resolveConflict: value.resolveConflict }) };
 }
 function closePort(port: chrome.runtime.Port): void {

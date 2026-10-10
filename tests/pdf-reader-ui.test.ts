@@ -297,6 +297,28 @@ describe("PDF reader workspace", () => {
     expect(unloadBlocked()).toBe(true);
   });
 
+  it("preserves an older sidebar draft as a conflict before any database write", async () => {
+    const old = baseRecord();
+    records = [{ ...old, revision: 4, note: "Updated elsewhere" }];
+    const outgoing: any[] = [];
+    const listeners = new Set<(message: any) => void>();
+    Object.assign(chrome.runtime, { id: "test", connect: () => ({
+      postMessage: (message: any) => outgoing.push(message),
+      onMessage: { addListener: (listener: (message: any) => void) => listeners.add(listener), removeListener: (listener: (message: any) => void) => listeners.delete(listener) },
+      onDisconnect: { addListener() {} }, disconnect() {},
+    }) });
+    await mount();
+    const state = outgoing.filter((message) => message.type === "state").at(-1).state;
+    await act(async () => { for (const listener of listeners) listener({ type: "command", commandId: "replayed", pageUrl: state.pageUrl, sessionId: state.sessionId,
+      command: { type: "draft", id: old.id, draft: { note: "Recovered typed input", color: old.color, tags: "", base: old, editing: true } } }); });
+    await settle();
+    const recovered = outgoing.filter((message) => message.type === "state").at(-1).state;
+    expect(recovered.drafts[old.id].note).toBe("Recovered typed input");
+    expect(recovered.conflicts[old.id]).toBe(true);
+    expect(unloadBlocked()).toBe(true);
+    expect(puts()).toHaveLength(0);
+  });
+
   it("opens the existing Chrome sidebar instead of a second notes rail", async () => {
     records = [baseRecord()];
     const openedPanels: number[] = [];

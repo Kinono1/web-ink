@@ -368,6 +368,17 @@ describe("PDF sidebar command boundary", () => {
     expect(pdf.messages).toHaveLength(count);
   });
 
+  it("retains a disconnected draft from an older revision without allowing implicit conflict resolution", () => {
+    const pdf = reader(), panel = sidebar(7);
+    const newer = { ...record(), revision: 2, note: "Updated elsewhere" };
+    pdf.receive({ type: "state", state: state({ records: [newer] }) });
+    panel.receive(command({ type: "draft", id: "note-1", draft: draft() }));
+    expect(pdf.messages.at(-1)).toEqual(command({ type: "draft", id: "note-1", draft: draft() }));
+    const count = pdf.messages.length;
+    panel.receive(command({ type: "draft", id: "note-1", draft: draft(), resolveConflict: true }));
+    expect(pdf.messages).toHaveLength(count);
+  });
+
   it("keeps an existing stale draft editable while requiring the current record for conflict resolution", () => {
     const pdf = reader(), panel = sidebar(7);
     const current = { ...record(), revision: 2, note: "Updated elsewhere" };
