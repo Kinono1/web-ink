@@ -354,6 +354,9 @@ export function createPdfHandoffHandler() {
       }
       throw new PdfNavigationError("INVALID_INPUT", "Unsupported PDF request.");
     } catch (error) {
+      if (error instanceof PdfNavigationError && error.code === "FORBIDDEN") {
+        error.message += ` [diagnostic: own=${sender.id === chrome.runtime.id}; sidebar=${ownPage(sender.url, "sidepanel.html")}; reader=${ownPage(sender.url, "pdf.html")}; frame=${sender.frameId ?? "absent"}; document=${sender.documentId ? "present" : "absent"}; lifecycle=${sender.documentLifecycle ?? "absent"}]`;
+      }
       return {
         ok: false,
         code: error instanceof PdfNavigationError ? error.code : "CONTEXT_UNAVAILABLE",
