@@ -350,7 +350,7 @@ test("abandoned readers retain one return session per tab and closing reclaims i
   await expect.poll(sessions).toEqual([]);
 });
 
-test("adding a note opens the synthetic sidepanel editor with focus after a deliberate text selection", async () => {
+test("adding a note opens a ready synthetic sidepanel editor after a deliberate text selection", async () => {
   const reader = await readerPage();
   await openLocal(reader);
   await selectText(reader);
@@ -361,7 +361,11 @@ test("adding a note opens the synthetic sidepanel editor with focus after a deli
   await expect(reader.locator(".pdf-notes")).toBeHidden();
   await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
   const editor = control.locator(".pdf-note").getByRole("textbox", { name: "笔记", exact: true });
-  await expect(editor).toBeFocused();
+  // This surface is a background extension tab, not the native side panel.
+  // Keep the reader active for context routing; test native focus separately.
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeEnabled();
+  expect(await reader.evaluate(async () => (await chrome.tabs.getCurrent())?.active)).toBe(true);
   await editor.fill("Synthetic note draft");
   expect((await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]?.note).toBe("");
 });
