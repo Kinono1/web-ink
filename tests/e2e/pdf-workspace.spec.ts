@@ -272,10 +272,16 @@ test("synthetic IEEE wrapper exposes visible PDF choices and does not guess an a
 test("actual Chrome PDF viewer context opens the intercepted public PDF in the same tab", async () => {
   await context.route(source, (route) => route.fulfill({ contentType: "application/pdf", body: fixturePdf() }));
   const original = await context.newPage();
-  await original.goto(source);
+  const response = await original.goto(source);
+  expect(response?.status()).toBe(200);
+  expect(response?.headers()["content-type"]).toBe("application/pdf");
   const viewer = "chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/";
-  // Only frame URL metadata is observed; the protected viewer DOM is not read.
-  await expect.poll(() => original.frames().some((frame) => frame.url().startsWith(viewer))).toBe(true);
+  // Chrome 125 renders the native viewer through a generated PDF embed without
+  // exposing its extension frame to Playwright. Inspect only the outer wrapper.
+  await expect.poll(async () =>
+    original.frames().some((frame) => frame.url().startsWith(viewer)) ||
+    await original.locator('body > embed[type="application/pdf"][internalid][src="about:blank"]').count() === 1,
+  ).toBe(true);
   const tabId = await activeTab(original);
   const detected = await rpc<PdfTabContext>(control, { type: "pdf.context.get", tabId, expectedUrl: source });
   expect(detected).toMatchObject({ kind: "direct", currentReader: false });
@@ -284,6 +290,10 @@ test("actual Chrome PDF viewer context opens the intercepted public PDF in the s
   expect(opened).toMatchObject({ navigation: "same-tab", tabId, sourceUrl: source });
   await expect(original).toHaveURL(opened.readerUrl);
   await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  expect(context.pages().length).toBe(before);
+  await original.getByRole("button", { name: "返回原阅读器", exact: true }).click();
+  await expect(original).toHaveURL(source);
+  expect(await activeTab(original)).toBe(tabId);
   expect(context.pages().length).toBe(before);
   observations.push({ sourceEvidence: "intercepted bytes rendered by Chrome's real PDF viewer", detected, opened });
 });
