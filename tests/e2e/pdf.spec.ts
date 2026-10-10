@@ -572,24 +572,52 @@ test("a reader that switches files is not reused for its previous source", async
 });
 
 
-test("oversized images fail visibly without permitting partial-page annotations", async () => {
-  await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
-    name: "oversized-image.pdf", mimeType: "application/pdf",
-    buffer: fixturePdf(2, "Image resource gate.", { oversizedImage: true }),
+test("oversized images fail visibly without permitting partial-page annotations", async ({}, testInfo) => {
+  const diagnostics: Array<Record<string, unknown>> = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning" || message.type() === "error") {
+      diagnostics.push({
+        type: `console.${message.type()}`,
+        text: message.text(),
+        location: message.location(),
+      });
+    }
   });
-  const failedPage = page.locator(".pdf-page").first();
-  await expect(failedPage.getByRole("alert")).toContainText("图片过大");
-  await expect(failedPage.getByRole("alert")).toContainText("原阅读器");
-  await expect(failedPage).toHaveAttribute("data-ready", "false");
-  await expect(failedPage.locator(".textLayer span")).toHaveCount(0);
-  await moreAction("区域标注");
-  await expect(failedPage.locator(".pdf-area-capture")).toHaveCount(0);
-  expect(await rpc({ type: "annotations.list" })).toHaveLength(0);
-  expect(await failedPage.locator("canvas").evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
-  await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
-  await open(fixturePdf(), "healthy-after-failure.pdf");
-  await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
-  await expect(page.locator(".pdf-page").getByRole("alert")).toHaveCount(0);
+  page.on("pageerror", (error) => diagnostics.push({ type: "pageerror", text: error.message }));
+
+  try {
+    await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
+      name: "oversized-image.pdf", mimeType: "application/pdf",
+      buffer: fixturePdf(2, "Image resource gate.", { oversizedImage: true }),
+    });
+    const failedPage = page.locator(".pdf-page").first();
+    await expect(failedPage.getByRole("alert")).toContainText("图片过大");
+    await expect(failedPage.getByRole("alert")).toContainText("原阅读器");
+    await expect(failedPage).toHaveAttribute("data-ready", "false");
+    await expect(failedPage.locator(".textLayer span")).toHaveCount(0);
+    await moreAction("区域标注");
+    await expect(failedPage.locator(".pdf-area-capture")).toHaveCount(0);
+    expect(await rpc({ type: "annotations.list" })).toHaveLength(0);
+    expect(await failedPage.locator("canvas").evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
+    await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
+
+    await open(fixturePdf(), "healthy-after-failure.pdf");
+    await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
+    await expect(page.locator(".pdf-page").getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(".textLayer").first()).toContainText("Web Ink PDF highlights survive a return visit.");
+
+    expect(diagnostics.filter((entry) =>
+      entry.type === "console.warning" && /image exceeded maximum allowed size and was removed/i.test(String(entry.text)),
+    )).toEqual([]);
+    expect(diagnostics.filter((entry) => entry.type !== "console.warning")).toEqual([]);
+  } finally {
+    const receipt = testInfo.outputPath("oversized-image-console.json");
+    await writeFile(receipt, JSON.stringify(diagnostics, null, 2));
+    await testInfo.attach("oversized-image-console", {
+      path: receipt,
+      contentType: "application/json",
+    });
+  }
 });
 
 test("reader page controls enforce navigation boundaries and validate explicit zoom percentages", async () => {
