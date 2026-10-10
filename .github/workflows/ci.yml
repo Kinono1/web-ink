@@ -57,7 +57,15 @@ jobs:
           # Use a real ignored directory so its clean-source identity stays true.
           mkdir "$BASELINE_WORKTREE/node_modules"
           cp -a "$GITHUB_WORKSPACE/node_modules/." "$BASELINE_WORKTREE/node_modules/"
-          (cd "$BASELINE_WORKTREE" && npm run build)
+          # Keep the historical commit's checked-in icons and notices: the
+          # current Linux encoder changes their bytes and dirties that source.
+          (
+            cd "$BASELINE_WORKTREE"
+            node scripts/pdf-assets.mjs
+            node scripts/build-info.mjs
+            npm run build --ignore-scripts
+            node scripts/seal-runtime.mjs
+          )
           git -C "$BASELINE_WORKTREE" status --porcelain --untracked-files=normal
           cat "$BASELINE_WORKTREE/.output/chrome-mv3/build-info.json"
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
