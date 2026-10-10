@@ -110,7 +110,7 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(
       async () =>
@@ -584,7 +584,7 @@ test("SPA URL changes and streaming updates do not trigger cross-page errors", a
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #4ade80", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #7cc868", exact: true }).click();
   await expect
     .poll(
       async () =>
@@ -733,7 +733,7 @@ test("dismissed background errors stay quiet while failed saves retain retry con
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect(page.locator(".toast.error")).toContainText("保存失败");
   await expect(
     page.getByRole("button", { name: "重试保存", exact: true }),

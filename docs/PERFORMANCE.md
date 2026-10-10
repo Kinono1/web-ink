@@ -7,6 +7,8 @@ Baseline `4e74a0f` and the source hashes in
 this comparison. The public 11-page MICCAI PDF contains 836,561 bytes. This uses
 disposable, preauthorized Chromium profiles and interface timing, without
 Computer Use or screenshots; it is separate from native Chrome acceptance.
+These startup timings precede the subsequent highlight-compositing and palette
+changes; they identify the measured source, not every later candidate build.
 
 | Observation | Baseline | Candidate |
 | --- | --- | --- |

@@ -157,6 +157,39 @@ Alerts name a failure, retain existing work, and offer bounded recovery.
 
 ## Production reference boundary
 
+### Annotation palette (2026-10-11)
+
+The shared color choices use the local Apple AnnotationKit theme's
+`themes.<name>.highlight_color.default` RGB values. PDF paper stays white in
+both UI themes, so the framework's night colors are not substituted.
+
+| Color | RGB | Stored HEX |
+| --- | --- | --- |
+| Yellow | 250, 205, 90 | `#facd5a` |
+| Green | 124, 200, 104 | `#7cc868` |
+| Blue | 105, 176, 241 | `#69b0f1` |
+| Pink | 251, 92, 137 | `#fb5c89` |
+| Purple | 200, 133, 218 | `#c885da` |
+
+Observed source:
+`/System/Library/PrivateFrameworks/AnnotationKit.framework/Versions/A/Resources/AKAnnotationTheme.plist`.
+Its SHA-256 was
+`9341d39319ccdf58d45cb417e01dee1f1f1bceef6959a8a56b4b33d1e1911968`;
+Preview 11.0 (1147) links this framework. These are verified framework values,
+not a claim of measured Preview pixels or of Preview's final palette overrides.
+The native control request timed out; the user approved this palette while
+leaving the actual Preview comparison pending. No Apple source code, image,
+or resource file is redistributed.
+
+Web and PDF creation, the library editor and default-color controls consume the
+same `COLORS`. A new installation defaults to the new yellow. Existing defaults,
+custom colors, the removed orange default, record colors and JSON exports
+retain their saved values: a stored HEX cannot distinguish an old stock choice
+from a custom choice with the same value. Existing users can choose a new
+default explicitly in Settings; no color migration or new preference is added.
+Changing the default in Settings updates the next PDF annotation as well.
+
+
 `docs/design/v032-prototype.html` is static synthetic prototype material. This
 document is grounded in `src/ui/theme.ts`, `src/ui/page-theme.ts`, management and
 side-panel CSS, and `src/pdf/pdf.css`. Candidate synthetic-browser and package

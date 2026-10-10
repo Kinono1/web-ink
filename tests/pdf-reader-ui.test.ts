@@ -278,6 +278,21 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("uses a changed default color for the next annotation without recoloring saved marks", async () => {
+    const listeners = runtimeListeners();
+    records = [baseRecord()];
+    await mount();
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "settings.get"
+      ? Promise.resolve({ ok: true, data: { ...DEFAULT_SETTINGS, defaultColor: "#7cc868" } }) : send(message)) as typeof send;
+    await act(async () => { for (const listener of listeners) listener({ type: "settings.changed" }); });
+    await settle();
+    await selectPage();
+    await click("添加笔记");
+    expect(puts()[0]?.annotation.color).toBe("#7cc868");
+    expect(records.find(record => record.id === "saved-highlight")?.color).toBe("#facc15");
+  });
+
   it("loads saved annotations while PDF parsing is pending, and publishes both together", async () => {
     const parsing = deferred<unknown>();
     const annotations = deferred<unknown>();
@@ -602,7 +617,7 @@ describe("PDF reader workspace", () => {
     await click("更多");
     await click("隐藏标注");
     await selectPage();
-    await click("高亮 #facc15");
+    await click("高亮 #facd5a");
     expect(puts()).toHaveLength(1);
     expect(messages.some((message) => message.type === "page.mode.put")).toBe(false);
     expect(host.querySelector("[data-pdf-annotation]")).toBeNull();
@@ -612,7 +627,7 @@ describe("PDF reader workspace", () => {
     await mount();
     await selectPage();
     putGate = deferred();
-    await click("高亮 #facc15");
+    await click("高亮 #facd5a");
     expect(host.querySelector(".pdf-selection")).toBeTruthy();
     expect(unloadBlocked()).toBe(true);
     const sent = puts()[0]!;

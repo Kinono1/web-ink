@@ -121,7 +121,7 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
       s.addRange(r);
       element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(async () => (await rpc({ type: "annotations.list" })).length)
     .toBe(1);
@@ -170,7 +170,7 @@ test("PDF mark removal is explicit and does not return after reselecting the sam
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(async () => (await rpc({ type: "annotations.list" })).length)
     .toBe(1);
@@ -223,7 +223,7 @@ test("PDF undo restore keeps the deleted annotation fields and revision-safe ide
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(
       async () => ((await rpc({ type: "annotations.list" })) as any[]).length,
@@ -354,7 +354,7 @@ test("PDF notes load beyond 50 and keep an edited draft when the list reorders",
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const [base] = (await rpc({ type: "annotations.list" })) as any[];
   const annotations = Array.from({ length: 55 }, (_, index) => ({
     ...base,
@@ -461,7 +461,7 @@ test("Chinese multicolumn text uses packaged CMaps and remains separate from are
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
     });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(async () => (await rpc({ type: "annotations.list" })).length)
     .toBe(1);
@@ -663,7 +663,7 @@ test("fit width uses the PDF viewport and rotating preserves annotation coordina
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const [annotation] = (await rpc({ type: "annotations.list" })) as any[];
   const targetBefore = annotation.target.rects;
   const pageBefore = await page.locator(".pdf-page").first().boundingBox();
@@ -687,7 +687,7 @@ test("Ctrl or Cmd F searches text without changing saved annotations or renderin
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const ids = ((await rpc({ type: "annotations.list" })) as any[]).map((annotation) => annotation.id);
   await page.keyboard.press("Control+f");
   const find = page.getByRole("search", { name: "PDF 文内搜索", exact: true });

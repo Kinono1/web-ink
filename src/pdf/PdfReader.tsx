@@ -339,7 +339,6 @@ export function PdfReader() {
   useEffect(() => {
     void request<Settings>({ type: "settings.get" }).then((next) => {
       setSettings(next);
-      setColor(next.defaultColor);
       setSettingsReady(true);
     }).catch((cause) => setError(errorText(cause)));
     const listener = (m: { type?: string }) => {
@@ -349,6 +348,9 @@ export function PdfReader() {
     chrome.runtime.onMessage.addListener(listener);
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, []);
+  useEffect(() => {
+    setColor(settings.defaultColor);
+  }, [settings.defaultColor]);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {

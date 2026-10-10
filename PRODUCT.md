@@ -37,7 +37,7 @@ The product must make three boundaries legible:
 - Preserve the existing annotation database and JSON backup schema.
 - Keep normalized PDF geometry and virtual page layout; this documentation
   does not propose a replacement reader engine.
-- Keep system fonts, existing dependencies, existing annotation colors, and
+- Keep system fonts, existing dependencies, saved annotation colors, and
   local-only data. No remote asset, new dependency, or production behavior is
   introduced by the Stage A prototype.
 - “Current PDF”, handoff, restore, and error controls shown in the prototype

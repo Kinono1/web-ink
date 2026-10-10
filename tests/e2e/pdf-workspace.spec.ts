@@ -99,7 +99,7 @@ async function selectText(reader: Page) {
 }
 async function highlight(reader: Page) {
   await selectText(reader);
-  await reader.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await reader.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" })).length).toBe(1);
   return (await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]!;
 }
@@ -345,10 +345,10 @@ test("selection and copy events create no record and color selection works immed
   await selectText(reader);
   await reader.evaluate(() => document.dispatchEvent(new ClipboardEvent("copy", { bubbles: true })));
   expect(await rpc(control, { type: "annotations.list" })).toEqual([]);
-  await reader.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await reader.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" })).length).toBe(1);
   const [record] = await rpc<Annotation[]>(control, { type: "annotations.list" });
-  expect(record).toMatchObject({ kind: "pdf-text", color: "#facc15", target: { exact: "Web Ink PDF highlights survive a return visit.", pageNumber: 1 } });
+  expect(record).toMatchObject({ kind: "pdf-text", color: "#facd5a", target: { exact: "Web Ink PDF highlights survive a return visit.", pageNumber: 1 } });
   await expect.poll(() => reader.evaluate(() => getSelection()?.toString())).toBe("");
 });
 
@@ -437,7 +437,7 @@ test("synthetic sidepanel restores saved notes and focuses the same reader tab w
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await reader.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await reader.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" })).length).toBe(1);
   const record = (await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]!;
   expect(record.target).toMatchObject({ pageNumber: 2 });
