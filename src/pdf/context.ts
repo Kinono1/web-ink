@@ -203,7 +203,7 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
     let url: URL;
     try { url = new URL(item.url, raw); } catch { continue; }
     const known = getPdfContext(url.href);
-    if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf" && !wrapper) continue;
+    if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf") continue;
     embedded = true;
     const source = known?.kind === "remote" ? known.sourceUrl : publicPdfSource(url.href);
     if (source) {

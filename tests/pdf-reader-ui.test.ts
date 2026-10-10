@@ -95,6 +95,7 @@ let readGate: ReturnType<typeof deferred<Record<string, unknown>>> | undefined;
 let putGate: ReturnType<typeof deferred<unknown>> | undefined;
 let putError = "";
 let returnError = "";
+let returnErrorCode: string | undefined;
 let prefFailure = false;
 let frames: Map<number, FrameRequestCallback>;
 let frameId = 0;
@@ -127,6 +128,7 @@ beforeEach(() => {
   putGate = undefined;
   putError = "";
   returnError = "";
+  returnErrorCode = "CONTEXT_UNAVAILABLE";
   prefFailure = false;
   frames = new Map();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -169,7 +171,7 @@ beforeEach(() => {
           case "annotations.query": return { ok: true, data: { items: [] } };
           case "page.mode.get": return { ok: true, data: { enabled: false } };
           case "pdf.handoff.get": return { ok: true, data: handoff };
-          case "pdf.returnOriginal": return returnError ? { ok: false, error: returnError, code: "CONTEXT_UNAVAILABLE" } : { ok: true, data: { tabId: 8, url: publicSource } };
+          case "pdf.returnOriginal": return returnError ? { ok: false, error: returnError, code: returnErrorCode } : { ok: true, data: { tabId: 8, url: publicSource } };
           case "annotations.put": {
             if (putGate) return putGate.promise;
             if (putError) return { ok: false, error: putError, code: "CONFLICT" };
@@ -574,6 +576,37 @@ describe("PDF reader workspace", () => {
     await mount(`?handoff=${TOKEN}&source=${encodeURIComponent(publicSource)}`, false);
     expect(host.textContent).toContain("打开 PDF 来源");
     expect(messages.some((message) => message.type === "pdf.returnOriginal")).toBe(false);
+  });
+
+  it.each(["NAVIGATION_FAILED", "STORAGE_UNAVAILABLE", "CONTEXT_UNAVAILABLE", "PAGE_CHANGED", undefined])(
+    "keeps the original return action retryable after %s", async code => {
+      await mount(`?handoff=${TOKEN}`);
+      const readerUrl = location.href;
+      returnError = "Temporary return failure";
+      returnErrorCode = code;
+      await click("返回原阅读器");
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Temporary return failure");
+      expect(location.href).toBe(readerUrl);
+      expect(button("返回原阅读器").disabled).toBe(false);
+
+      returnError = "";
+      await click("返回原阅读器");
+      expect(messages.filter(message => message.type === "pdf.returnOriginal")).toEqual([
+        { type: "pdf.returnOriginal", token: TOKEN }, { type: "pdf.returnOriginal", token: TOKEN },
+      ]);
+    },
+  );
+
+  it.each(["PDF_SOURCE_UNAVAILABLE", "FORBIDDEN"])("replaces an invalid return session with explicit recovery after %s", async code => {
+    await mount(`?handoff=${TOKEN}`);
+    returnError = "Return session is invalid";
+    returnErrorCode = code;
+    await click("返回原阅读器");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Return session is invalid");
+    expect([...host.querySelectorAll("button")].some(node => node.getAttribute("aria-label") === "返回原阅读器" || node.textContent?.trim() === "返回原阅读器")).toBe(false);
+    await click("重新选择 PDF");
+    expect(host.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("打开其他 PDF");
+    expect(messages.filter(message => message.type === "pdf.returnOriginal")).toEqual([{ type: "pdf.returnOriginal", token: TOKEN }]);
   });
 
   it("shows an oversized-image failure on its page while preserving notes and the return path", async () => {

@@ -87,8 +87,8 @@ async function mount(mode: "sidepanel" | "library") {
   const host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
+  await act(async () => root!.render(createElement(ManagementApp, { mode })));
   await act(async () => {
-    root!.render(createElement(ManagementApp, { mode }));
     await new Promise((resolve) => setTimeout(resolve, 30));
   });
   return host;
@@ -140,6 +140,42 @@ describe("management UI", () => {
     } finally {
       if (width) Object.defineProperty(window, "innerWidth", width);
       if (scrollY) Object.defineProperty(window, "scrollY", scrollY);
+      if (scrollTo) Object.defineProperty(window, "scrollTo", scrollTo);
+    }
+  });
+
+  it("returns a narrow library to its list when the selected record is deleted", async () => {
+    const width = Object.getOwnPropertyDescriptor(window, "innerWidth");
+    const scrollTo = Object.getOwnPropertyDescriptor(window, "scrollTo");
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 320 });
+    Object.defineProperty(window, "scrollTo", { configurable: true, value: vi.fn() });
+    const second = { ...record, id: "web-2", target: { ...record.target, exact: "Another saved annotation" } };
+    try {
+      installChrome((message) => {
+        if (message.type === "settings.get") return { ok: true, data: settings };
+        if (message.type === "annotations.query") return { ok: true, data: { items: [record, second] } };
+        if (message.type === "annotations.delete") return { ok: true, data: { id: message.id, deleted: true } };
+        return { ok: true, data: true };
+      });
+      const host = await mount("library");
+      await act(async () => {
+        (host.querySelector(".annotation-row") as HTMLButtonElement).click();
+      });
+      await act(async () => {
+        [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")]
+          .find((button) => button.textContent === "删除")!
+          .click();
+      });
+      await act(async () => {
+        [...host.querySelectorAll<HTMLButtonElement>(".confirm-delete button")]
+          .find((button) => button.textContent === "确认删除")!
+          .click();
+      });
+      const browser = host.querySelector<HTMLElement>(".annotation-browser")!;
+      expect(browser.classList.contains("detail-open")).toBe(false);
+      expect(browser.querySelectorAll(".annotation-row")).toHaveLength(1);
+    } finally {
+      if (width) Object.defineProperty(window, "innerWidth", width);
       if (scrollTo) Object.defineProperty(window, "scrollTo", scrollTo);
     }
   });
@@ -420,11 +456,13 @@ describe("management UI", () => {
     expect(tagInput.value).toBe("already, research");
   });
 
-  it("sends a freely entered tag filter even when the current results have no matching tag", async () => {
+  it("keeps current-result tag suggestions while a free tag filter has no match", async () => {
     const sent = installChrome((message) => {
       if (message.type === "settings.get") return { ok: true, data: settings };
-      if (message.type === "annotations.query")
-        return { ok: true, data: { items: [record] } };
+      if (message.type === "annotations.query") {
+        const query = message.query as { tag?: string } | undefined;
+        return { ok: true, data: { items: query?.tag === "res" ? [] : [record] } };
+      }
       return { ok: true, data: true };
     });
     const host = await mount("library");
@@ -439,13 +477,14 @@ describe("management UI", () => {
     expect(tagFilter).not.toBeNull();
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!
-        .set!.call(tagFilter, "unloaded-tag");
+        .set!.call(tagFilter, "res");
       tagFilter!.dispatchEvent(new Event("input", { bubbles: true }));
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
+    expect(host.querySelector(".filter-tag-suggestions")?.textContent).toContain("research");
     expect(sent).toHaveBeenCalledWith(expect.objectContaining({
       type: "annotations.query",
-      query: expect.objectContaining({ tag: "unloaded-tag" }),
+      query: expect.objectContaining({ tag: "res" }),
     }));
   });
 

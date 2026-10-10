@@ -98,11 +98,23 @@ export function createPdfHandoffHandler() {
   const flights = new Map<number, { key: string; task: Promise<unknown> }>();
   const epoch = (tabId: number) => epochs.get(tabId) ?? 0;
   const activation = (windowId: number) => activations.get(windowId) ?? 0;
+  const removeTabHandoffs = async (tabId: number) => {
+    const entries = await chrome.storage.session.get(null);
+    const keys = Object.keys(entries).filter(key => {
+      const value = entries[key];
+      return key.startsWith("pdf.handoff.") && value !== null && typeof value === "object" &&
+        "tabId" in value && value.tabId === tabId;
+    });
+    if (keys.length) await chrome.storage.session.remove(keys);
+  };
   // Native PDF viewers cannot be probed. Loading events also catch same-URL refreshes.
   chrome.tabs.onUpdated.addListener((tabId, change) => {
     if (change.url || change.status === "loading") epochs.set(tabId, epoch(tabId) + 1);
   });
-  chrome.tabs.onRemoved.addListener(tabId => { epochs.set(tabId, epoch(tabId) + 1); });
+  chrome.tabs.onRemoved.addListener(tabId => {
+    epochs.set(tabId, epoch(tabId) + 1);
+    void removeTabHandoffs(tabId).catch(() => undefined);
+  });
   chrome.tabs.onActivated.addListener(({ windowId }) => { activations.set(windowId, activation(windowId) + 1); });
   const changed = () => new PdfNavigationError("PAGE_CHANGED", "The tab or document changed. Try again on the current page.");
   const getTab = async (tabId: number) => {
@@ -327,7 +339,12 @@ export function createPdfHandoffHandler() {
     const reader = new URL(buildPdfOpenUrl(base, source ? { kind: "remote", sourceUrl: source } : undefined));
     reader.searchParams.set("handoff", token);
     await guard(actor, snapshot);
-    try { await chrome.storage.session.set({ [`pdf.handoff.${token}`]: handoff }); }
+    try {
+      // A new source document cannot use an older return token for this tab.
+      // Bound retained recovery state to one handoff per live tab.
+      await removeTabHandoffs(actor.tabId);
+      await chrome.storage.session.set({ [`pdf.handoff.${token}`]: handoff });
+    }
     catch { throw new PdfNavigationError("STORAGE_UNAVAILABLE", "Return context could not be saved. Reader navigation was not started."); }
     try { await guard(actor, snapshot); }
     catch (error) {

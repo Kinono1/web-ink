@@ -104,7 +104,15 @@ export function FilterPopover({
   clear: () => void;
 }) {
   const colors = [...new Set(records.map((record) => record.color))].sort();
-  const tags = [...new Set(records.flatMap((record) => record.tags))].sort();
+  const [tagSourceRecords, setTagSourceRecords] = useState(records);
+  useEffect(() => {
+    // Keep the latest non-empty current result while an exact tag query is
+    // pending or empty, so a prefix can still be completed from this result.
+    if (!tag || records.length) setTagSourceRecords(records);
+  }, [records, tag]);
+  const tags = [
+    ...new Set((tag ? tagSourceRecords : records).flatMap((record) => record.tags)),
+  ].sort();
   const tagSuggestions = tag
     ? tags.filter(
         (value) =>
@@ -230,6 +238,9 @@ export function AnnotationBrowser({
   onOpenPdf,
 }: BrowserProps) {
   const selected = records.find((record) => record.id === selectedId);
+  useEffect(() => {
+    if (!compact && detailOpen && !selected) onBack?.();
+  }, [compact, detailOpen, onBack, selected]);
   const detailProps = (record: Annotation): DetailProps => ({
     record,
     state: states[record.id],

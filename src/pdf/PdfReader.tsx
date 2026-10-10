@@ -782,7 +782,8 @@ export function PdfReader() {
       }
       setPendingLeave(undefined);
     } catch (cause) {
-      if (action.kind === "return") setHandoff(null);
+      if (action.kind === "return" && cause instanceof RequestError &&
+        (cause.code === "PDF_SOURCE_UNAVAILABLE" || cause.code === "FORBIDDEN")) setHandoff(null);
       setError(errorText(cause));
     } finally { setLeaving(false); }
   }

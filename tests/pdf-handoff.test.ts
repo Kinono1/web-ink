@@ -14,6 +14,7 @@ let updates: Array<{ tabId: number; url?: string }>;
 let created: string[];
 let onUpdated: Array<(tabId: number, info: { url?: string; status?: string }) => void>;
 let onActivated: Array<(info: { tabId: number; windowId: number }) => void>;
+let onRemoved: Array<(tabId: number) => void>;
 let documentId: string;
 let failStorage: boolean;
 let failUpdate: boolean;
@@ -70,7 +71,7 @@ const open = (extra: object = {}) => rpc<PdfOpenResult>({ type: 'pdf.openCurrent
 
 beforeEach(async () => {
   tabs = new Map(); contexts = [context(-1, UI.url!, UI.documentId!, 'SIDE_PANEL')];
-  session = {}; updates = []; created = []; onUpdated = []; onActivated = []; failStorage = false; failUpdate = false; afterWrite = undefined; afterRead = undefined;
+  session = {}; updates = []; created = []; onUpdated = []; onActivated = []; onRemoved = []; failStorage = false; failUpdate = false; afterWrite = undefined; afterRead = undefined;
   document.body.replaceChildren(); setUrl(ORIGINAL);
   vi.stubGlobal('defineBackground', (main: () => void) => ({ main }));
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ version: '0.3.2', commit: 'a'.repeat(40), dirty: false }) }));
@@ -87,7 +88,8 @@ beforeEach(async () => {
         (!filter.tabIds || filter.tabIds.includes(entry.tabId))),
     },
     storage: { session: {
-      get: async (keys: string | string[]) => {
+      get: async (keys: string | string[] | null) => {
+        if (keys === null) return { ...session };
         const result = Object.fromEntries((Array.isArray(keys) ? keys : [keys]).map(key => [key, session[key]]));
         if (typeof keys === 'string' && keys.startsWith('pdf.handoff.')) await afterRead?.();
         return result;
@@ -127,7 +129,8 @@ beforeEach(async () => {
         return tabs.get(tabId);
       },
       create: async ({ url }: { url: string }) => { created.push(url); loadedReader(9, url); return tabs.get(9); },
-      onUpdated: { addListener: (next: typeof onUpdated[number]) => onUpdated.push(next) }, onRemoved: event(),
+      onUpdated: { addListener: (next: typeof onUpdated[number]) => onUpdated.push(next) },
+      onRemoved: { addListener: (next: typeof onRemoved[number]) => onRemoved.push(next) },
       onActivated: { addListener: (next: typeof onActivated[number]) => onActivated.push(next) },
     },
     sidePanel: { setPanelBehavior: async () => {} },
@@ -316,8 +319,8 @@ describe('observed PDF sources', () => {
 
   it('uses the observed IEEE stamp iframe URL without inventing a download endpoint', async () => {
     setUrl('https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123');
-    visibleEmbeds('<iframe src="/visible-download?document=123"></iframe>');
-    expect(value(await inspect())).toMatchObject({ kind: 'wrapper', candidates: [{ url: 'https://ieeexplore.ieee.org/visible-download?document=123', via: 'iframe' }] });
+    visibleEmbeds('<iframe src="/visible-download.pdf?document=123"></iframe>');
+    expect(value(await inspect())).toMatchObject({ kind: 'wrapper', candidates: [{ url: 'https://ieeexplore.ieee.org/visible-download.pdf?document=123', via: 'iframe' }] });
   });
 
   it('keeps an inaccessible IEEE stamp wrapper classified as manual source fallback', async () => {
@@ -473,6 +476,41 @@ describe('same-tab navigation authority', () => {
     expect(updates).toHaveLength(0); expect(tabs.get(7)!.url).toBe(ORIGINAL);
     failStorage = false; failUpdate = true;
     expect(await open()).toMatchObject({ ok: false, code: 'NAVIGATION_FAILED' });
+    expect(tabs.get(7)!.url).toBe(ORIGINAL);
+  });
+
+  it('replaces abandoned return sessions on repeated same-tab opens', async () => {
+    session['ui.unrelated'] = { keep: true };
+    let previous: string | undefined;
+    for (let index = 0; index < 5; index++) {
+      setUrl(ORIGINAL, `source-${index}`);
+      const opened = value(await open());
+      expect(handoffs()).toHaveLength(1);
+      if (previous) expect(session[`pdf.handoff.${previous}`]).toBeUndefined();
+      previous = opened.token;
+    }
+    expect(session['ui.unrelated']).toEqual({ keep: true });
+  });
+
+  it('reclaims a closed tab return session without removing another tab or preferences', async () => {
+    const opened = value(await open());
+    session['pdf.handoff.other-tab'] = { tabId: 8, returnUrl: ORIGINAL };
+    session['ui.unrelated'] = { keep: true };
+    tabs.delete(7);
+    for (const callback of onRemoved) callback(7);
+    await vi.waitFor(() => expect(session[`pdf.handoff.${opened.token}`]).toBeUndefined());
+    expect(session['pdf.handoff.other-tab']).toMatchObject({ tabId: 8 });
+    expect(session['ui.unrelated']).toEqual({ keep: true });
+  });
+
+  it('does not navigate or accumulate a second token when abandoned-session cleanup fails', async () => {
+    const prior = value(await open());
+    setUrl(ORIGINAL, 'reopened-source');
+    chrome.storage.session.remove = (async () => { throw Error('Temporary cleanup failure'); }) as typeof chrome.storage.session.remove;
+    expect(await open()).toMatchObject({ ok: false, code: 'STORAGE_UNAVAILABLE' });
+    expect(handoffs()).toHaveLength(1);
+    expect(session[`pdf.handoff.${prior.token}`]).toBeDefined();
+    expect(updates).toHaveLength(1);
     expect(tabs.get(7)!.url).toBe(ORIGINAL);
   });
 

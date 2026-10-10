@@ -313,6 +313,22 @@ test("selection and copy events create no record and color selection works immed
   await expect.poll(() => reader.evaluate(() => getSelection()?.toString())).toBe("");
 });
 
+test("abandoned readers retain one return session per tab and closing reclaims it", async () => {
+  const { reader, tabId } = await openCurrent();
+  const sessions = () => control.evaluate(async () => Object.entries(await chrome.storage.session.get(null))
+    .filter(([key, value]) => key.startsWith("pdf.handoff.") && (value as PdfHandoff).tabId === tabId),
+  );
+  for (let index = 0; index < 3; index++) {
+    await reader.goto(source);
+    const opened = await rpc<PdfOpenResult>(control, { type: "pdf.openCurrent", tabId, expectedUrl: source });
+    await expect(reader).toHaveURL(opened.readerUrl);
+    await expect(reader.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+    expect(await sessions()).toHaveLength(1);
+  }
+  await reader.close();
+  await expect.poll(sessions).toEqual([]);
+});
+
 test("adding a note opens its editor with focus after a deliberate text selection", async () => {
   const reader = await readerPage();
   await openLocal(reader);
