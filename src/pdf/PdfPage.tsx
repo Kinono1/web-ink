@@ -4,7 +4,7 @@ import type {
   RenderTask,
 } from "pdfjs-dist/types/src/display/api";
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
-import type { PdfRect } from "../core/model";
+import type { Language, PdfRect } from "../core/model";
 import { fromPdfRect, toPdfRect } from "./geometry";
 import {
   errorText,
@@ -15,6 +15,7 @@ import {
   type SelectionPreview,
 } from "./types";
 export function PdfPage({
+  language = "zh-CN",
   opened,
   number,
   zoom,
@@ -29,6 +30,7 @@ export function PdfPage({
   onDimensions,
   onError,
 }: {
+  language?: Language;
   opened: OpenDocument;
   number: number;
   zoom: number;
@@ -43,6 +45,9 @@ export function PdfPage({
   onDimensions: (generation: number, w: number, h: number) => void;
   onError: (e: string) => void;
 }) {
+  const t = (zh: string, en: string) => language === "zh-CN" ? zh : en;
+  const [ready, setReady] = useState(false);
+  const [failure, setFailure] = useState<"image-too-large" | "render-failed">();
   const root = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
     text = useRef<HTMLDivElement>(null),
@@ -63,6 +68,9 @@ export function PdfPage({
       render: RenderTask | undefined,
       layer: InstanceType<PdfApi["TextLayer"]> | undefined;
     setGeometry(undefined);
+    setReady(false);
+    setFailure(undefined);
+    text.current?.replaceChildren();
     if (root.current) root.current.dataset.ready = "false";
     void (async () => {
       try {
@@ -109,7 +117,10 @@ export function PdfPage({
           viewport,
         });
         await layer.render();
-        if (!dead && pageRoot.isConnected) pageRoot.dataset.ready = "true";
+        if (!dead && pageRoot.isConnected) {
+          pageRoot.dataset.ready = "true";
+          setReady(true);
+        }
       } catch (cause) {
         if (
           !dead &&
@@ -117,8 +128,17 @@ export function PdfPage({
             cause instanceof Error &&
             cause.name === "RenderingCancelledException"
           )
-        )
-          callbacks.current.onError(errorText(cause));
+        ) {
+          // A rejected render can leave a partial canvas. Never present it as
+          // a complete page or allow annotations against stale text/geometry.
+          if (canvas.current) {
+            canvas.current.width = 0;
+            canvas.current.height = 0;
+          }
+          text.current?.replaceChildren();
+          setFailure(errorText(cause).includes("Image exceeded maximum allowed size")
+            ? "image-too-large" : "render-failed");
+        }
       } finally {
         if (dead) page?.cleanup();
       }
@@ -138,7 +158,7 @@ export function PdfPage({
     };
   }, [opened, number, zoom, rotation, measurementGeneration]);
   function capture(event: React.MouseEvent<HTMLDivElement>) {
-    if (area || !geometry || !text.current || !root.current) return;
+    if (area || !ready || !geometry || !text.current || !root.current) return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
       const page = root.current.getBoundingClientRect();
@@ -235,7 +255,14 @@ export function PdfPage({
     >
       <canvas ref={canvas} aria-label={`PDF ${number}`} />
       <div className="textLayer" ref={text} />
-      {geometry && (
+      {failure && <div className="pdf-page-error" role="alert">
+        <h2>{t(`第 ${number} 页无法完整显示`, `Page ${number} could not be displayed completely`)}</h2>
+        <p>{failure === "image-too-large"
+          ? t("图片过大，已停止显示以保护内存。", "An image is too large to display safely.")
+          : t("这页暂时无法显示，请重新打开 PDF。", "This page could not be displayed. Reopen the PDF to try again.")}</p>
+        <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
+      </div>}
+      {ready && geometry && (
         <svg
           className="pdf-marks"
           width={geometry.viewport.width}
@@ -265,7 +292,7 @@ export function PdfPage({
           )}
         </svg>
       )}
-      {area && geometry && (
+      {area && ready && geometry && (
         <div
           className="pdf-area-capture"
           onPointerDown={(e) => {

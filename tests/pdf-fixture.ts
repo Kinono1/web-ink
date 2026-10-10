@@ -2,6 +2,8 @@
 export type PdfFixtureOptions = {
   /** Optional valid trailing PDF comment bytes, useful for bounded-read tests. */
   paddingBytes?: number;
+  /** Declares a 25M-pixel image; the resource gate rejects it before decoding. */
+  oversizedImage?: boolean;
   /** Per-page MediaBox dimensions; omitted entries retain the default letter page. */
   pageSizes?: Array<{ width: number; height: number }>;
 };
@@ -28,6 +30,9 @@ export function fixturePdf(
     unicode
       ? `<${Array.from(value, (c) => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}>`
       : `(${value.replace(/[\\()]/g, "\\$&")})`;
+  const imageId = options.oversizedImage
+    ? objects.push("<< /Type /XObject /Subtype /Image /Width 5000 /Height 5000 /ColorSpace /DeviceGray /BitsPerComponent 8 /Length 1 >>\nstream\n0\nendstream")
+    : undefined;
   const kids: number[] = [];
   for (let i = 0; i < pages; i++) {
     const pageId = objects.length + 1,
@@ -35,11 +40,12 @@ export function fixturePdf(
     kids.push(pageId);
     const size = options.pageSizes?.[i] ?? { width: 612, height: 792 };
     objects.push(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${size.width} ${size.height}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${contentId} 0 R >>`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${size.width} ${size.height}] /Resources << /Font << /F1 ${font} 0 R >>${imageId ? ` /XObject << /LargeImage ${imageId} 0 R >>` : ""} >> /Contents ${contentId} 0 R >>`,
     );
     const content = `BT /F1 18 Tf 48 730 Td ${encoded(text)} Tj 0 -30 Td ${encoded(`Synthetic reading fixture - page ${i + 1}`)} Tj ET\nBT /F1 12 Tf 330 640 Td ${encoded(unicode ? "右栏独立的研究结果" : "Second column, separate finding.")} Tj ET\n0.15 0.4 0.8 rg 70 420 180 120 re f\n`;
+    const stream = content + (imageId ? "q 180 0 0 120 70 420 cm /LargeImage Do Q\n" : "");
     objects.push(
-      `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}endstream`,
+      `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
     );
   }
   objects[1] = `<< /Type /Pages /Count ${pages} /Kids [${kids.map((n) => `${n} 0 R`).join(" ")}] >>`;

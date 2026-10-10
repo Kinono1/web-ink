@@ -595,6 +595,7 @@ export function PdfReader() {
         wasmUrl: chrome.runtime.getURL("/pdfjs/wasm/"),
         iccUrl: chrome.runtime.getURL("/pdfjs/iccs/"),
         enableXfa: false,
+        stopAtErrors: true,
         maxImageSize: 16777216,
         canvasMaxAreaInBytes: 67108864,
       });
@@ -1060,7 +1061,7 @@ export function PdfReader() {
                 width: dimensions.current.get(number)?.width || (rotation % 180 ? 792 : 612) * zoom,
                 height: dimensions.current.get(number)?.height || (rotation % 180 ? 612 : 792) * zoom,
               }}>
-                <PdfPage opened={opened} number={number} zoom={zoom} rotation={rotation} records={showMarks ? recordsByPage.get(number) ?? [] : []}
+                <PdfPage language={settings.language} opened={opened} number={number} zoom={zoom} rotation={rotation} records={showMarks ? recordsByPage.get(number) ?? [] : []}
                   area={area && !locked} color={color} measurementGeneration={measurementGeneration}
                   onSelection={(next) => { if (!unsavedRef.current && !annotationWrites.current.size) { setSelection(next); setPicked(undefined); } }}
                   onPick={(record) => { setPicked(record); if (!unsavedRef.current) setSelection(undefined); }}

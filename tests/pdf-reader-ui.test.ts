@@ -9,6 +9,9 @@ const io = vi.hoisted(() => ({
   pageCount: 1000,
   remoteReads: [] as string[],
   pagesRead: [] as number[],
+  documentOptions: [] as Record<string, unknown>[],
+  rejectOversizedImage: false,
+  renderGates: {} as Record<number, Promise<unknown> | undefined>,
 }));
 vi.mock("../src/pdf/source", async (original) => {
   const actual = await original<typeof import("../src/pdf/source")>();
@@ -24,31 +27,41 @@ vi.mock("../src/pdf/source", async (original) => {
 });
 vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   GlobalWorkerOptions: { workerSrc: "" },
-  getDocument: () => ({
-    destroy: async () => undefined,
-    promise: Promise.resolve({
-      numPages: io.pageCount,
-      getPage: async (number: number) => {
-        io.pagesRead.push(number);
-        const width = 600;
-        const height = number === 500 ? 480 : 800;
-        return {
-          rotate: 0,
-          view: [0, 0, width, height],
-          getViewport: ({ scale, rotation }: { scale: number; rotation: number }) => ({
-            width: (rotation % 180 ? height : width) * scale,
-            height: (rotation % 180 ? width : height) * scale,
-            scale,
-            convertToPdfPoint: (x: number, y: number) => [x / scale, height - y / scale],
-            convertToViewportPoint: (x: number, y: number) => [x * scale, (height - y) * scale],
-          }),
-          render: () => ({ promise: Promise.resolve(), cancel: () => undefined }),
-          streamTextContent: () => undefined,
-          cleanup: () => undefined,
-        };
-      },
-    }),
-  }),
+  getDocument: (options: Record<string, unknown>) => {
+    io.documentOptions.push(options);
+    return {
+      destroy: async () => undefined,
+      promise: Promise.resolve({
+        numPages: io.pageCount,
+        getPage: async (number: number) => {
+          io.pagesRead.push(number);
+          const width = 600;
+          const height = number === 500 ? 480 : 800;
+          return {
+            rotate: 0,
+            view: [0, 0, width, height],
+            getViewport: ({ scale, rotation }: { scale: number; rotation: number }) => ({
+              width: (rotation % 180 ? height : width) * scale,
+              height: (rotation % 180 ? width : height) * scale,
+              scale,
+              convertToPdfPoint: (x: number, y: number) => [x / scale, height - y / scale],
+              convertToViewportPoint: (x: number, y: number) => [x * scale, (height - y) * scale],
+            }),
+            render: () => {
+              // PDF.js skips oversized images by default but rejects the page when stopAtErrors is enabled.
+              const oversizedImage = number === 1 && io.rejectOversizedImage && options.stopAtErrors === true;
+              const promise = io.renderGates[number] ?? (oversizedImage
+                ? Promise.reject(new Error("Image exceeded maximum allowed size and was removed."))
+                : Promise.resolve());
+              return { promise, cancel: () => undefined };
+            },
+            streamTextContent: () => undefined,
+            cleanup: () => undefined,
+          };
+        },
+      }),
+    };
+  },
   TextLayer: class {
     constructor(private options: { container: HTMLElement }) {}
     async render() {
@@ -101,6 +114,9 @@ beforeEach(() => {
   io.pageCount = 1000;
   io.remoteReads = [];
   io.pagesRead = [];
+  io.documentOptions = [];
+  io.rejectOversizedImage = false;
+  io.renderGates = {};
   records = [];
   messages = [];
   writes = [];
@@ -558,6 +574,78 @@ describe("PDF reader workspace", () => {
     await mount(`?handoff=${TOKEN}&source=${encodeURIComponent(publicSource)}`, false);
     expect(host.textContent).toContain("打开 PDF 来源");
     expect(messages.some((message) => message.type === "pdf.returnOriginal")).toBe(false);
+  });
+
+  it("shows an oversized-image failure on its page while preserving notes and the return path", async () => {
+    io.pageCount = 2;
+    io.rejectOversizedImage = true;
+    records = [{ ...baseRecord(), note: "keep this saved note" }];
+
+    await mount(`?handoff=${TOKEN}`);
+
+    expect(io.documentOptions.at(-1)).toMatchObject({
+      maxImageSize: 16777216,
+      canvasMaxAreaInBytes: 67108864,
+      stopAtErrors: true,
+    });
+    const failedPage = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
+    const healthyPage = host.querySelector<HTMLElement>('[data-page="2"] .pdf-page')!;
+    expect(failedPage.dataset.ready).toBe("false");
+    expect(failedPage.querySelector('[role="alert"]')?.textContent).toContain("第 1 页");
+    expect(failedPage.querySelector('[role="alert"]')?.textContent).toContain("图片过大");
+    expect(failedPage.querySelector("svg")).toBeNull();
+    expect(failedPage.querySelector(".pdf-area-capture")).toBeNull();
+    expect(healthyPage.dataset.ready).toBe("true");
+
+    await click("笔记");
+    expect(host.querySelector(".pdf-notes")?.textContent).toContain("keep this saved note");
+    expect(button("返回原阅读器")).toBeTruthy();
+    expect(records.map((record) => record.id)).toEqual(["saved-highlight"]);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("clears old selectable text and reports an ordinary zoom render failure", async () => {
+    await mount();
+    const page = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
+    expect(page.dataset.ready).toBe("true");
+    expect(page.querySelector(".textLayer span")).toBeTruthy();
+
+    const rerender = deferred<void>();
+    io.renderGates[1] = rerender.promise;
+    await click("放大");
+    expect(page.dataset.ready).toBe("false");
+    expect(page.querySelector(".textLayer span")).toBeNull();
+
+    const technicalError = "internal PDF.js raster worker failure";
+    await act(async () => rerender.reject(new Error(technicalError)));
+    await settle();
+
+    const alert = page.querySelector<HTMLElement>('[role="alert"]');
+    expect(alert?.textContent).toContain("第 1 页");
+    expect(alert?.textContent).toMatch(/失败|无法|错误/);
+    expect(alert?.textContent).not.toContain(technicalError);
+    expect(page.dataset.ready).toBe("false");
+    expect(page.querySelector("canvas")?.width).toBe(0);
+    expect(page.querySelector("canvas")?.height).toBe(0);
+    expect(page.querySelector(".textLayer")?.childElementCount).toBe(0);
+  });
+
+  it("waits for page rendering before showing the area capture layer", async () => {
+    io.pageCount = 1;
+    const render = deferred<void>();
+    io.renderGates[1] = render.promise;
+
+    await mount();
+    const page = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
+    expect(page.dataset.ready).toBe("false");
+    await click("更多");
+    await click("区域标注");
+    expect(page.querySelector(".pdf-area-capture")).toBeNull();
+
+    await act(async () => render.resolve());
+    await settle();
+    expect(page.dataset.ready).toBe("true");
+    expect(page.querySelector(".pdf-area-capture")).toBeTruthy();
   });
 });
 
