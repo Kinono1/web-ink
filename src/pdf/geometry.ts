@@ -1,4 +1,41 @@
 import type { PdfRect } from "../core/model";
+/** Join text fragments in unrotated coordinates; keep scripts and column gaps. */
+export function mergePdfTextRects(rects: PdfRect[], box: number[]): PdfRect[] {
+  const rows: { anchor: PdfRect; fragments: PdfRect[] }[] = [];
+  for (const rect of [...rects].sort((a, b) => a.y - b.y || a.x - b.x)) {
+    let row: typeof rows[number] | undefined;
+    // Anchors are sorted by y; earlier lines beyond this window cannot match.
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const candidate = rows[i]!, anchor = candidate.anchor;
+      if (rect.y - anchor.y > rect.height * 0.12) break;
+      const tolerance = Math.min(anchor.height, rect.height) * 0.12;
+      if (Math.abs(anchor.y - rect.y) <= tolerance &&
+        Math.abs(anchor.height - rect.height) <= tolerance) {
+        row = candidate;
+        break;
+      }
+    }
+    if (row) row.fragments.push(rect);
+    else rows.push({ anchor: rect, fragments: [rect] });
+  }
+  const pageWidth = box[2]! - box[0]!, pageHeight = box[3]! - box[1]!;
+  return rows.flatMap(({ anchor, fragments }) => {
+    const merged: PdfRect[] = [];
+    for (const rect of fragments.sort((a, b) => a.x - b.x)) {
+      const previous = merged.at(-1);
+      // Use the original line height, not the growing envelope, to avoid
+      // gradually bridging distinct lines or increasing whitespace tolerance.
+      const gap = Math.min(1, Math.min(anchor.height, rect.height) * pageHeight * 0.15) / pageWidth;
+      if (previous && rect.x <= previous.x + previous.width + gap) {
+        previous.width = Math.max(previous.x + previous.width, rect.x + rect.width) - previous.x;
+        const bottom = Math.max(previous.y + previous.height, rect.y + rect.height);
+        previous.y = Math.min(previous.y, rect.y);
+        previous.height = bottom - previous.y;
+      } else merged.push({ ...rect });
+    }
+    return merged;
+  });
+}
 export interface PdfViewport {
   width: number;
   height: number;

@@ -174,6 +174,44 @@ function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas"
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
 
 describe("PdfPage staged rendering", () => {
+  it("composites all fragments of one legacy text annotation at a single opacity", async () => {
+    const record = props.records[0]!;
+    const fragments = [record.target.rects[0]!, { ...record.target.rects[0]!, x: 0.15, y: 0.702 }];
+    record.target.rects = fragments;
+    await paint();
+    const mark = host.querySelector(`[data-pdf-annotation="${record.id}"]`)!;
+    const layer = mark.closest("g");
+    expect(layer?.getAttribute("opacity")).toBe(".32");
+    expect(layer?.querySelectorAll("rect")).toHaveLength(1);
+    expect(mark.getAttribute("fill-opacity")).toBeNull();
+    expect(record.target.rects).toBe(fragments);
+    expect(record.target.rects).toHaveLength(2);
+  });
+
+  it("keeps distinct annotations independent and area outlines at full opacity", async () => {
+    const original = props.records[0]!;
+    props.records = [original, { ...original, id: "second-mark" }, { ...original, id: "area-mark", kind: "pdf-area" }];
+    await paint();
+    const groups = [...host.querySelectorAll(".pdf-marks > g")];
+    expect(groups).toHaveLength(3);
+    expect(groups.map(g => g.getAttribute("opacity"))).toEqual([".32", ".32", null]);
+    expect(groups[2]?.querySelector("rect")?.getAttribute("fill")).toBe("none");
+    expect(groups[2]?.querySelector("rect")?.getAttribute("stroke")).toBe(original.color);
+  });
+
+  it("opens a highlight when its newly filled small gap is clicked", async () => {
+    const record = props.records[0]!;
+    record.target.rects = [
+      { x: 0.1, y: 0.7, width: 0.05, height: 0.05 },
+      { x: 0.151, y: 0.7, width: 0.05, height: 0.05 },
+    ];
+    await paint({ zoom: 3 });
+    await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true, clientX: 271, clientY: 660,
+    })));
+    expect(props.onPick).toHaveBeenCalledWith(record);
+  });
+
   it("keeps the committed page visible until the new raster and text both finish", async () => {
     await paint();
     const canvas = visibleCanvas();

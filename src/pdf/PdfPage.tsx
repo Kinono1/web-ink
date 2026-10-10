@@ -6,7 +6,7 @@ import type {
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { Language, PdfRect } from "../core/model";
 import type { PdfSearchMatch } from "./search";
-import { fromPdfRect, toPdfRect } from "./geometry";
+import { fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
 import {
   errorText,
   type OpenDocument,
@@ -253,7 +253,7 @@ export function PdfPage({
       const x = event.clientX - page.left,
         y = event.clientY - page.top;
       const picked = [...records].reverse().find((record) =>
-        record.target.rects.some((rect) => {
+        (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box) : record.target.rects).some((rect) => {
           const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
           return (
             x >= bounds.x &&
@@ -362,19 +362,20 @@ export function PdfPage({
           height={geometry.viewport.height}
           aria-hidden="true"
         >
-          {records.flatMap((r) =>
-            r.target.rects.map((rect, i) => (
-              <rect
-                key={`${r.id}-${i}`}
-                data-pdf-annotation={r.id}
-                {...fromPdfRect(rect, geometry.viewport, geometry.box)}
-                fill={r.kind === "pdf-text" ? r.color : "none"}
-                fillOpacity=".32"
-                stroke={r.kind === "pdf-area" ? r.color : "none"}
-                strokeWidth="2"
-              />
-            )),
-          )}
+          {records.map((r) => (
+            <g key={r.id} opacity={r.kind === "pdf-text" ? ".32" : undefined}>
+              {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box) : r.target.rects).map((rect, i) => (
+                <rect
+                  key={`${r.id}-${i}`}
+                  data-pdf-annotation={r.id}
+                  {...fromPdfRect(rect, geometry.viewport, geometry.box)}
+                  fill={r.kind === "pdf-text" ? r.color : "none"}
+                  stroke={r.kind === "pdf-area" ? r.color : "none"}
+                  strokeWidth="2"
+                />
+              ))}
+            </g>
+          ))}
           {preview && (
             <rect
               {...fromPdfRect(preview, geometry.viewport, geometry.box)}
