@@ -20,7 +20,7 @@ test('real PDF.js rejects incomplete operator lists while healthy pages remain r
       const task = api.getDocument({
         data: new Uint8Array(fixturePdf(1, 'Image resource gate', { oversizedImage })),
         standardFontDataUrl: `${path.resolve('node_modules/pdfjs-dist/standard_fonts')}/`,
-        stopAtErrors: true, maxImageSize: 16777216,
+        stopAtErrors: true, maxImageSize: 16777216, verbosity: api.VerbosityLevel.ERRORS,
       });
       tasks.push(task);
       const page = await (await task.promise).getPage(1);

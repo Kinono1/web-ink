@@ -95,6 +95,22 @@ async function mount(mode: "sidepanel" | "library") {
 }
 
 describe("management UI", () => {
+  it("finishes management listener cleanup when Reload invalidates Chrome events", async () => {
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      return { ok: true, data: true };
+    });
+    await mount("library");
+    const removes = [chrome.runtime.onMessage, chrome.tabs.onActivated, chrome.tabs.onUpdated]
+      .map((event) => vi.mocked(event.removeListener));
+    for (const remove of removes) remove.mockImplementation(() => { throw new Error("Extension context invalidated."); });
+    const current = root!;
+    root = undefined;
+    await expect(act(async () => current.unmount())).resolves.toBeUndefined();
+    for (const remove of removes) expect(remove).toHaveBeenCalled();
+  });
+
   it("keeps the initial library records collapsed until the reader chooses one", async () => {
     installChrome((message) => {
       if (message.type === "settings.get") return { ok: true, data: settings };

@@ -2,8 +2,8 @@ import { PageLayoutIndex } from "./layout";
 
 const READING_POSITION_PREFIX = "ui.pdfReadingPosition.";
 const HASH_PATTERN = /^[0-9a-f]{64}$/i;
-const MIN_ZOOM = 0.5;
-const MAX_ZOOM = 3;
+export const PDF_MIN_ZOOM = 0.1;
+export const PDF_MAX_ZOOM = 5;
 
 export type PdfRotation = 0 | 90 | 180 | 270;
 
@@ -45,8 +45,8 @@ function isReadingPosition(value: unknown): value is PdfReadingPosition {
     isFiniteRatio(record.pageOffsetRatio) &&
     typeof record.zoom === "number" &&
     Number.isFinite(record.zoom) &&
-    record.zoom >= MIN_ZOOM &&
-    record.zoom <= MAX_ZOOM &&
+    record.zoom >= PDF_MIN_ZOOM &&
+    record.zoom <= PDF_MAX_ZOOM &&
     isRotation(record.rotation)
   );
 }

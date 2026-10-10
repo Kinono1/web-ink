@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { Annotation, Settings } from "../../src/core/model";
+import { fixturePdf } from "../pdf-fixture";
 
 const expectedId = "cmllmmnfiefikhcbelokclankodgcdog";
 const origins = ["http://*/*", "https://*/*"];
@@ -23,6 +24,7 @@ const newBuild = path.resolve(process.env.WEB_INK_BUILD || ".build-output/chrome
 
 type BuildInfo = { version: string; commit: string; dirty: boolean };
 type RuntimeHealth = BuildInfo & { generation: string };
+type CapturePhase = { build: "old" | "new"; round: number };
 
 async function readBuild(folder: string, label: string) {
   let manifest;
@@ -93,6 +95,71 @@ async function pageRuntime(manager: Page, tabId: number) {
   }, tabId);
 }
 
+async function extensionRuntimeErrors(context: BrowserContext) {
+  const extensions = await context.newPage();
+  try {
+    await extensions.goto("chrome://extensions");
+    const card = extensions.locator("extensions-item").filter({ hasText: "Web Ink" });
+    const cardCount = await card.count();
+    expect(cardCount, "The real extension card must be observable before checking its errors").toBe(1);
+    const snapshot = await card.evaluate((item) => {
+      const runtimeErrors: Array<Record<string, string>> = [];
+      const controls: Array<Record<string, string>> = [];
+      const visit = (root: Document | ShadowRoot | Element) => {
+        if (root instanceof HTMLElement && root.shadowRoot) visit(root.shadowRoot);
+        for (const element of root.querySelectorAll<HTMLElement>("*")) {
+          const tag = element.tagName.toLowerCase();
+          const identity = `${tag} ${element.id} ${element.className} ${element.getAttribute("aria-label") ?? ""}`;
+          const value = {
+            tag,
+            id: element.id,
+            className: String(element.className),
+            ariaLabel: element.getAttribute("aria-label") ?? "",
+            text: (element.innerText || element.textContent || "").trim(),
+          };
+          if (/error|runtime/i.test(identity)) runtimeErrors.push(value);
+          if (tag === "button") controls.push(value);
+          if (element.shadowRoot) visit(element.shadowRoot);
+        }
+      };
+      visit(item);
+      return { cardText: (item as HTMLElement).innerText, runtimeErrors, controls };
+    });
+    const errorsButton = card.locator("#errors-button");
+    const errorsButtonCount = await errorsButton.count();
+    let details: object | undefined;
+    if (errorsButtonCount) {
+      await errorsButton.first().click();
+      details = await extensions.evaluate(() => {
+        const entries: Array<Record<string, string>> = [];
+        const visit = (root: Document | ShadowRoot | Element) => {
+          if (root instanceof HTMLElement && root.shadowRoot) visit(root.shadowRoot);
+          for (const element of root.querySelectorAll<HTMLElement>("*")) {
+            const tag = element.tagName.toLowerCase();
+            const identity = `${tag} ${element.id} ${element.className} ${element.getAttribute("aria-label") ?? ""}`;
+            const text = (element.innerText || element.textContent || "").trim();
+            if (/error|warning/i.test(identity) || /error|warning/i.test(text)) {
+              entries.push({
+                tag,
+                id: element.id,
+                className: String(element.className),
+                ariaLabel: element.getAttribute("aria-label") ?? "",
+                text,
+              });
+            }
+            if (element.shadowRoot) visit(element.shadowRoot);
+          }
+        };
+        visit(document);
+        return { url: location.href, entries };
+      });
+    }
+    return { cardCount, ...snapshot, errorsButtonCount, details };
+  } finally {
+    await extensions.close();
+  }
+}
+
 async function palettePoint(page: Page) {
   return page.locator(".web-ink-palette-toggle").evaluate((button) => ({
     left: Number.parseFloat((button as HTMLElement).style.left),
@@ -133,11 +200,33 @@ test("in-place extension Reload replaces old runtimes three times without naviga
   const installInode = (await stat(extension)).ino;
   const rounds: object[] = [];
   const healthResponses: object[] = [];
+  const runtimeErrors: object[] = [];
+  const extensionErrorCards: object[] = [];
+  const disposableManifestMutations: object[] = [];
+  let capturePhase: CapturePhase = { build: "old", round: 0 };
   let context: BrowserContext | undefined;
   let browserVersion: string | undefined;
   let browserUserAgent: string | undefined;
   let manager: Page;
   let worker: Worker;
+
+  const observePageErrors = (page: Page, surface: string) => {
+    page.on("console", (message) => {
+      if (message.type() === "error") runtimeErrors.push({
+        ...capturePhase,
+        surface,
+        type: "console.error",
+        text: message.text(),
+        location: message.location(),
+      });
+    });
+    page.on("pageerror", (error) => runtimeErrors.push({
+      ...capturePhase,
+      surface,
+      type: "pageerror",
+      text: error.message,
+    }));
+  };
 
   // Only this disposable copy receives pre-granted hosts. Production manifests
   // and the user's loaded directory remain read-only; native approval is separate.
@@ -146,12 +235,19 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await rm(path.join(extension, name), { recursive: true, force: true });
     await cp(source, extension, { recursive: true });
     const manifest = JSON.parse(await readFile(path.join(extension, "manifest.json"), "utf8"));
+    disposableManifestMutations.push({
+      build: source === oldBuild ? "old" : source === newBuild ? "new" : "unknown",
+      originalHostPermissions: manifest.host_permissions ?? null,
+      removedOptionalHostPermissions: manifest.optional_host_permissions ?? null,
+      temporaryHostPermissions: origins,
+    });
     manifest.host_permissions = origins;
+    delete manifest.optional_host_permissions;
     await writeFile(path.join(extension, "manifest.json"), JSON.stringify(manifest));
     expect((await stat(extension)).ino).toBe(installInode);
   };
   const reload = async () => {
-    await manager.close();
+    const previousManager = manager;
     const previous = worker;
     const next = context!.waitForEvent("serviceworker", {
       predicate: (value) => value !== previous && new URL(value.url()).host === expectedId,
@@ -168,7 +264,11 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     ]);
     worker = replacement;
     expect(new URL(worker.url()).host).toBe(expectedId);
+    // Keep the old extension surface alive until Chrome has actually completed
+    // runtime.reload(); closing it earlier hides lifecycle-related errors.
+    await previousManager.close();
     manager = await context!.newPage();
+    observePageErrors(manager, "manager");
     await manager.goto(`chrome-extension://${expectedId}/library.html`);
   };
 
@@ -200,6 +300,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     )).toBe(true);
     await extensions.close();
     manager = await context.newPage();
+    observePageErrors(manager, "manager");
     await manager.goto(`chrome-extension://${expectedId}/library.html`);
     browserVersion = context.browser()?.version();
     browserUserAgent = await manager.evaluate(() => navigator.userAgent);
@@ -248,8 +349,10 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     });
 
     const enabled = await context.newPage();
+    observePageErrors(enabled, "enabled-fixture");
     await enabled.goto("http://127.0.0.1:4173/article?reload=enabled");
     const disabled = await context.newPage();
+    observePageErrors(disabled, "disabled-fixture");
     await disabled.goto("http://127.0.0.1:4173/article?reload=disabled");
     await expect(enabled.locator(".web-ink-palette-toggle")).toBeEnabled();
     await enabled.locator(".web-ink-palette-toggle").click();
@@ -312,6 +415,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     });
     const generations = new Set<string>();
     for (let round = 0; round < 3; round++) {
+      capturePhase = { build: "old", round: round + 1 };
       if (round > 0) {
         // Restore the real old files and Reload within this same browser/profile.
         // Each candidate transition is therefore old -> new, not new -> new.
@@ -321,6 +425,11 @@ test("in-place extension Reload replaces old runtimes three times without naviga
         await expect(enabled.locator(".web-ink-palette-toggle")).toBeEnabled();
         await expect(enabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
       }
+      const oldCard = await extensionRuntimeErrors(context);
+      extensionErrorCards.push({ ...capturePhase, snapshot: oldCard });
+      expect(oldCard.errorsButtonCount).toBe(0);
+      expect(oldCard.runtimeErrors).toEqual([]);
+      expect(runtimeErrors).toEqual([]);
       await expect.poll(() => pageRuntime(manager, tabIds[0]!)).toMatchObject({
         health: null, engineLoaded: true, engineGeneration: null, engineStyles: 1,
       });
@@ -332,6 +441,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
         (await chrome.storage.session.get("ui.runtimeGeneration"))["ui.runtimeGeneration"] ?? null,
       );
       await copyInPlace(newBuild);
+      capturePhase = { build: "new", round: round + 1 };
       await reload();
       const response = await manager.evaluate(() => chrome.runtime.sendMessage({ type: "runtime.health" }));
       healthResponses.push({ round: round + 1, response });
@@ -347,6 +457,27 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       expect(await manager.evaluate(async () =>
         (await chrome.storage.session.get("ui.runtimeGeneration"))["ui.runtimeGeneration"],
       )).toBe(health.generation);
+      // Keep real extension reader and sidepanel documents alive through the
+      // following Reload. Their listeners reveal lifecycle errors from either
+      // surface; neither is manually closed between rounds.
+      const reader = await context.newPage();
+      observePageErrors(reader, "candidate-pdf-reader");
+      await reader.goto(`chrome-extension://${expectedId}/pdf.html`);
+      await reader.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
+        name: `reload-reader-${round + 1}.pdf`,
+        mimeType: "application/pdf",
+        buffer: fixturePdf(2, `Reload reader fixture ${round + 1}`),
+      });
+      await expect(reader.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+      const sidepanel = await context.newPage();
+      observePageErrors(sidepanel, "candidate-sidepanel");
+      await sidepanel.goto(`chrome-extension://${expectedId}/sidepanel.html`);
+      await expect(sidepanel.locator(".ink-app")).toBeVisible();
+      const newCard = await extensionRuntimeErrors(context);
+      extensionErrorCards.push({ ...capturePhase, snapshot: newCard });
+      expect(newCard.errorsButtonCount).toBe(0);
+      expect(newCard.runtimeErrors).toEqual([]);
+      expect(runtimeErrors).toEqual([]);
       for (const [index, page] of pages.entries()) {
         await expect(page.locator("web-ink-ui")).toHaveCount(1);
         await expect(page.locator(".web-ink-palette-toggle")).toHaveCount(1);
@@ -384,6 +515,11 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await expect(enabled.locator(".web-ink-palette-toggle")).toHaveCount(1);
       expect((await pageRuntime(manager, tabIds[0]!)).engineStyles).toBe(1);
       expect(navigationCounts).toEqual([0, 0]);
+      const afterOperationsCard = await extensionRuntimeErrors(context);
+      extensionErrorCards.push({ ...capturePhase, stage: "after-operations", snapshot: afterOperationsCard });
+      expect(afterOperationsCard.errorsButtonCount).toBe(0);
+      expect(afterOperationsCard.runtimeErrors).toEqual([]);
+      expect(runtimeErrors).toEqual([]);
       rounds.push({
         round: round + 1,
         transition: "old -> new",
@@ -410,6 +546,9 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       fixedInstallPath: extension,
       installInode,
       healthResponses,
+      runtimeErrors,
+      extensionErrorCards,
+      disposableManifestMutations,
       rounds,
     }, null, 2));
     await testInfo.attach("reload-observations", {
@@ -419,5 +558,6 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     await rm(root, { recursive: true, force: true });
     expect(await fingerprint(oldBuild), "The old build source must remain unchanged").toBe(sourceHashes.old);
     expect(await fingerprint(newBuild), "The new build source must remain unchanged").toBe(sourceHashes.new);
+    expect(runtimeErrors, "Errors during the final operations and page teardown must also fail Reload validation").toEqual([]);
   }
 });

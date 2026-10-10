@@ -1,3 +1,5 @@
+import { PdfFind } from "./PdfFind";
+import type { PdfSearchMatch } from "./search";
 import { PdfPage } from "./PdfPage";
 import { PdfNote, type PdfNoteDraft } from "./PdfNote";
 import { connectPdfSidebar } from "./sidebar-connection";
@@ -17,7 +19,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { request, RequestError } from "../core/client";
+import { request, RequestError, releaseChromeListener } from "../core/client";
 import {
   COLORS,
   DEFAULT_SETTINGS,
@@ -35,6 +37,8 @@ import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
 import {
+  PDF_MIN_ZOOM,
+  PDF_MAX_ZOOM,
   readPdfReadingPosition,
   createPdfReadingPositionWriter,
   capturePdfReadingPosition,
@@ -93,6 +97,13 @@ export function PdfReader() {
   const [zoom, setZoom] = useState(1),
     [rotation, setRotation] = useState<PdfRotation>(0),
     [pageNumber, setPageNumber] = useState(1);
+  const [searchMatch, setSearchMatch] = useState<PdfSearchMatch>();
+  const pendingSearchPosition = useRef<{ pageNumber: number; intent: number } | undefined>(undefined);
+  const [zoomText, setZoomText] = useState("100%");
+  const [fitWidth, setFitWidth] = useState(false);
+  const intrinsicDimensions = useRef(new Map<number, { width: number; height: number }>());
+  const currentView = useRef({ zoom, rotation });
+  currentView.current = { zoom, rotation };
   const [selection, setSelection] = useState<SelectionPreview>();
   const selectionBar = useRef<HTMLDivElement>(null);
   const [selectionStyle, setSelectionStyle] = useState<React.CSSProperties>({});
@@ -163,7 +174,9 @@ export function PdfReader() {
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
   const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
   useEffect(() => {
-    void chrome.tabs?.getCurrent?.().then((tab) => { readerTab.current = tab?.id; });
+    void chrome.tabs?.getCurrent?.()
+      .then((tab) => { readerTab.current = tab?.id; })
+      .catch((cause) => setError(errorText(cause)));
     if (!chrome.runtime.connect) return;
     const client = connectPdfSidebar("web-ink-pdf-reader", (message) => {
       if (message.type === "attached") {
@@ -328,13 +341,13 @@ export function PdfReader() {
       setSettings(next);
       setColor(next.defaultColor);
       setSettingsReady(true);
-    });
+    }).catch((cause) => setError(errorText(cause)));
     const listener = (m: { type?: string }) => {
       if (m.type === "settings.changed")
-        void request<Settings>({ type: "settings.get" }).then(setSettings);
+        void request<Settings>({ type: "settings.get" }).then(setSettings).catch((cause) => setError(errorText(cause)));
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, []);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
@@ -410,7 +423,7 @@ export function PdfReader() {
       }
     };
     chrome.runtime.onMessage.addListener(listener);
-    return () => chrome.runtime.onMessage.removeListener(listener);
+    return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, [key, documentSession, refresh]);
   useLayoutEffect(() => {
     if (!opened) return;
@@ -427,10 +440,16 @@ export function PdfReader() {
     setMeasurementGeneration(layoutGeneration.current);
     const fallback = (rotation % 180 ? 612 : 792) * zoom;
     layoutIndex.current.reset(opened.document.numPages, fallback);
+    dimensions.current.clear();
+    for (const [page, size] of intrinsicDimensions.current) {
+      const width = (rotation % 180 ? size.height : size.width) * zoom;
+      const height = (rotation % 180 ? size.width : size.height) * zoom;
+      dimensions.current.set(page, { width, height });
+      layoutIndex.current.update(page, height);
+    }
     pendingScrollAdjustment.current = scroller
       ? layoutIndex.current.offsetBefore(anchor) + relative + padding - oldScroll
       : 0;
-    dimensions.current.clear();
     setLayoutEpoch((value) => value + 1);
   }, [documentSession, zoom, rotation]);
   useEffect(() => {
@@ -439,6 +458,11 @@ export function PdfReader() {
   const onPageDimensions = useCallback(
     (page: number, generation: number, width: number, height: number) => {
       if (generation !== layoutGeneration.current) return;
+      const view = currentView.current;
+      intrinsicDimensions.current.set(page, {
+        width: (view.rotation % 180 ? height : width) / view.zoom,
+        height: (view.rotation % 180 ? width : height) / view.zoom,
+      });
       pendingMeasures.current.set(page, { width, height });
       if (measureFrame.current) return;
       measureFrame.current = requestAnimationFrame(() => {
@@ -533,7 +557,22 @@ export function PdfReader() {
       setPageWindow((old) =>
         old.start === start && old.end === end ? old : { start, end },
       );
-      setPageNumber(first + 1);
+      setPageNumber((current) => {
+        let chosen = first + 1, largest = -1;
+        for (let page = first + 1; page <= Math.min(opened.document.numPages, last + 1); page++) {
+          const start = layoutIndex.current.offsetBefore(page);
+          const height = layoutIndex.current.pageHeight(page) ?? 0;
+          const visible = Math.max(0, Math.min(position + scroller.clientHeight, start + height) - Math.max(position, start));
+          const fraction = height > 0 ? visible / height : 0;
+          // A short final page cannot always align to the viewport top. Keep
+          // an equally visible requested page rather than selecting its gap.
+          if (fraction > largest + 0.0001 || (Math.abs(fraction - largest) < 0.0001 && page === current)) {
+            chosen = page;
+            largest = fraction;
+          }
+        }
+        return chosen;
+      });
       savePosition();
     };
     const scroll = () => {
@@ -585,6 +624,8 @@ export function PdfReader() {
     positionSession.current?.writer.dispose();
     positionSession.current = undefined;
     setOpened(undefined);
+    setSearchMatch(undefined);
+    pendingSearchPosition.current = undefined;
     setSelection(undefined);
     setPicked(undefined);
     setUndoRecord(undefined);
@@ -596,6 +637,8 @@ export function PdfReader() {
     setNotesOpen(false);
     setSourceOpen(false);
     setPositionError("");
+    setFitWidth(false);
+    intrinsicDimensions.current.clear();
     setZoom(1);
     setRotation(0);
     setPageNumber(1);
@@ -638,6 +681,8 @@ export function PdfReader() {
         wasmUrl: chrome.runtime.getURL("/pdfjs/wasm/"),
         iccUrl: chrome.runtime.getURL("/pdfjs/iccs/"),
         enableXfa: false,
+        // Font fallbacks are recoverable; page failures still reject and show an alert.
+        verbosity: api.VerbosityLevel.ERRORS,
         stopAtErrors: true,
         maxImageSize: 16777216,
         canvasMaxAreaInBytes: 67108864,
@@ -1011,11 +1056,59 @@ export function PdfReader() {
     };
     void handle().catch(() => undefined).finally(() => setSidebarAck(commandId));
   };
-  function changeZoom(delta: number) {
+  function applyView(nextZoom: number, nextRotation: PdfRotation = rotation) {
+    if (nextZoom === zoom && nextRotation === rotation) return;
+    const anchor = positionSession.current?.pending ?? currentPosition();
     userIntent();
+    const active = positionSession.current;
+    if (active && anchor) {
+      active.intent = intentEpoch.current;
+      active.pending = { ...anchor, zoom: nextZoom, rotation: nextRotation };
+      setPageWindow({ start: Math.max(0, anchor.pageNumber - 2), end: Math.min(opened?.document.numPages ?? 0, anchor.pageNumber + 2) });
+    }
     setSelection(undefined);
-    setZoom((value) => Math.max(0.5, Math.min(3, value + delta)));
+    setPicked(undefined);
+    getSelection()?.removeAllRanges();
+    setZoom(nextZoom);
+    setRotation(nextRotation);
   }
+  function changeZoom(delta: number) {
+    setFitWidth(false);
+    applyView(Math.max(PDF_MIN_ZOOM, Math.min(PDF_MAX_ZOOM, Math.round((zoom + delta) * 1000) / 1000)));
+  }
+  function commitZoom(raw: string) {
+    const value = /^\d+(?:\.\d+)?\s*%?$/.test(raw.trim()) ? Number(raw.trim().replace(/%$/, "").trim()) / 100 : NaN;
+    if (Number.isFinite(value) && value >= PDF_MIN_ZOOM && value <= PDF_MAX_ZOOM) {
+      setFitWidth(false);
+      applyView(value);
+      setZoomText(`${Math.round(value * 100)}%`);
+    } else {
+      setZoomText(`${Math.round(zoom * 100)}%`);
+      tell(t("请输入 10%～500% 的缩放比例。", "Enter a zoom percentage between 10% and 500%."));
+    }
+  }
+  useEffect(() => { setZoomText(`${Math.round(zoom * 100)}%`); }, [zoom]);
+  useEffect(() => {
+    const scroller = container.current;
+    if (!fitWidth || !opened || !scroller) return;
+    let dead = false, request = 0;
+    const fit = async () => {
+      const token = ++request;
+      try {
+        const page = await opened.document.getPage(pageNumber);
+        if (dead || token !== request) return;
+        const viewport = page.getViewport({ scale: 1, rotation: (page.rotate + rotation) % 360 });
+        const style = getComputedStyle(scroller);
+        const available = (scroller.clientWidth || scroller.getBoundingClientRect().width) - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+        const value = Math.max(PDF_MIN_ZOOM, Math.min(PDF_MAX_ZOOM, available / viewport.width));
+        if (Number.isFinite(value) && Math.abs(value - zoom) > 0.0001) applyView(value);
+      } catch (cause) { if (!dead) setError(errorText(cause)); }
+    };
+    void fit();
+    const resize = new ResizeObserver(() => void fit());
+    resize.observe(scroller);
+    return () => { dead = true; resize.disconnect(); };
+  }, [opened, fitWidth, pageNumber, rotation, zoom]);
   function dialogKeys(event: React.KeyboardEvent<HTMLElement>) {
     if (event.key !== "Tab") return;
     const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')];
@@ -1025,10 +1118,16 @@ export function PdfReader() {
   }
   const zoomControls = <>
     <button className="quiet icon-button" aria-label={t("缩小", "Zoom out")} title={t("缩小", "Zoom out")}
-      disabled={locked || zoom <= 0.5} onClick={() => changeZoom(-0.25)}><Icon name="minus" /></button>
-    <span className="pdf-zoom">{Math.round(zoom * 100)}%</span>
+      disabled={locked || zoom <= PDF_MIN_ZOOM} onClick={() => changeZoom(-0.25)}><Icon name="minus" /></button>
+    <input className="pdf-zoom" aria-label={t("缩放比例", "Zoom percentage")} inputMode="decimal" value={zoomText} disabled={locked}
+      onChange={(event) => { setFitWidth(false); userIntent(); setZoomText(event.target.value); }}
+      onBlur={(event) => commitZoom(event.currentTarget.value)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter") { event.preventDefault(); commitZoom(event.currentTarget.value); }
+        if (event.key === "Escape") { event.stopPropagation(); setZoomText(`${Math.round(zoom * 100)}%`); }
+      }} />
     <button className="quiet icon-button" aria-label={t("放大", "Zoom in")} title={t("放大", "Zoom in")}
-      disabled={locked || zoom >= 3} onClick={() => changeZoom(0.25)}><Icon name="plus" /></button>
+      disabled={locked || zoom >= PDF_MAX_ZOOM} onClick={() => changeZoom(0.25)}><Icon name="plus" /></button>
   </>;
   const backLabel = handoff ? t("返回原阅读器", "Return to original reader") : publicUrl
     ? t("打开 PDF 来源", "Open PDF source") : t("重新选择 PDF", "Choose PDF again");
@@ -1068,11 +1167,22 @@ export function PdfReader() {
         <button className="quiet icon-button pdf-back" aria-label={backLabel} title={backLabel}
           disabled={leaving || !handoffReady} onClick={() => requestLeave(backAction)}><Icon name="chevron" /></button>
         <span className="pdf-name" title={opened.fileName}>{opened.fileName}</span>
+        <button className="quiet icon-button pdf-previous pdf-page-action" aria-label={t("上一页", "Previous page")} title={t("上一页", "Previous page")}
+          disabled={locked || pageNumber <= 1} onClick={() => jump(pageNumber - 1)}><Icon name="chevron" /></button>
         <label className="pdf-page-field"><input aria-label={t("页码", "Page number")} type="number" min="1"
           max={opened.document.numPages} value={pageNumber} disabled={locked}
           onChange={(event) => { const number = event.target.valueAsNumber; if (Number.isInteger(number)) jump(number); }} />
           <span>/ {opened.document.numPages}</span></label>
+        <button className="quiet icon-button pdf-page-action" aria-label={t("下一页", "Next page")} title={t("下一页", "Next page")}
+          disabled={locked || pageNumber >= opened.document.numPages} onClick={() => jump(pageNumber + 1)}><Icon name="chevron" /></button>
         <div className="pdf-zoom-controls">{zoomControls}</div>
+        <button className="quiet icon-button pdf-view-action" aria-label={t("适合宽度", "Fit to width")} title={t("适合宽度", "Fit to width")} aria-pressed={fitWidth}
+          disabled={locked} onClick={() => { userIntent(); setFitWidth(true); }}><Icon name="fitWidth" /></button>
+        <button className="quiet icon-button pdf-view-action" aria-label={t("旋转页面", "Rotate page")} title={t("旋转页面", "Rotate page")}
+          disabled={locked} onClick={() => applyView(zoom, ((rotation + 90) % 360) as PdfRotation)}><Icon name="rotate" /></button>
+        <PdfFind opened={opened} language={settings.language} blocked={leaving || guardSaving || !!pendingLeave || sourceOpen}
+          onMatch={(match) => { pendingSearchPosition.current = undefined; setSearchMatch(match); }}
+          onNavigate={(page) => { jump(page); pendingSearchPosition.current = { pageNumber: page, intent: intentEpoch.current }; }} />
         <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={sidebarAttached || inlineNotes} aria-controls={inlineNotes ? "pdf-notes" : undefined}
           onClick={openNotes}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
         <div className="pdf-more" ref={moreMenu}>
@@ -1081,7 +1191,13 @@ export function PdfReader() {
             onClick={() => setMoreOpen((open) => !open)}><Icon name="more" /></button>
           {moreOpen && <div className="pdf-more-menu" id="pdf-more-menu" aria-label={t("更多阅读器操作", "More reader actions")}>
             <div className="pdf-more-zoom">{zoomControls}</div>
-            <button disabled={locked} onClick={() => { userIntent(); setSelection(undefined); setRotation((value) => ((value + 90) % 360) as PdfRotation); setMoreOpen(false); }}>
+            <button className="pdf-more-page" disabled={locked || pageNumber <= 1} onClick={() => { jump(pageNumber - 1); setMoreOpen(false); }}>
+              <Icon name="chevron" />{t("上一页", "Previous page")}</button>
+            <button className="pdf-more-page" disabled={locked || pageNumber >= opened.document.numPages} onClick={() => { jump(pageNumber + 1); setMoreOpen(false); }}>
+              <Icon name="chevron" />{t("下一页", "Next page")}</button>
+            <button className="pdf-more-view" disabled={locked} aria-pressed={fitWidth} onClick={() => { userIntent(); setFitWidth(true); setMoreOpen(false); }}>
+              <Icon name="fitWidth" />{t("适合宽度", "Fit to width")}</button>
+            <button className="pdf-more-view" disabled={locked} onClick={() => { applyView(zoom, ((rotation + 90) % 360) as PdfRotation); setMoreOpen(false); }}>
               <Icon name="rotate" />{t("旋转页面", "Rotate page")}</button>
             <button aria-pressed={area} disabled={locked} onClick={() => { userIntent(); setArea((value) => !value); setSelection(undefined); setMoreOpen(false); }}>
               <Icon name="highlight" />{area ? t("文字选择", "Select text") : t("区域标注", "Mark area")}</button>
@@ -1145,6 +1261,15 @@ export function PdfReader() {
                 height: dimensions.current.get(number)?.height || (rotation % 180 ? 612 : 792) * zoom,
               }}>
                 <PdfPage language={settings.language} opened={opened} number={number} zoom={zoom} rotation={rotation} records={showMarks ? recordsByPage.get(number) ?? [] : []}
+                  searchRanges={searchMatch?.pageNumber === number ? searchMatch.itemRanges : undefined}
+                  onSearchPosition={(top) => {
+                    const pending = pendingSearchPosition.current;
+                    const scroller = container.current;
+                    if (!pending || pending.pageNumber !== number || pending.intent !== intentEpoch.current || !scroller) return;
+                    pendingSearchPosition.current = undefined;
+                    const start = layoutIndex.current.offsetBefore(number) + pagesPadding();
+                    scroller.scrollTo({ top: Math.max(start, start + top - scroller.clientHeight / 4), behavior: "instant" });
+                  }}
                   area={area && !locked} color={color} measurementGeneration={measurementGeneration}
                   onSelection={(next) => { if (!unsavedRef.current && !annotationWrites.current.size) { setSelection(next); setPicked(undefined); } }}
                   onPick={(record) => { setPicked(record); if (!unsavedRef.current) setSelection(undefined); }}

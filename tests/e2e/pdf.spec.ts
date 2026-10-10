@@ -103,6 +103,11 @@ async function moreAction(name: string) {
   await page.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true }).click();
   await page.locator(".pdf-more-menu").getByRole("button", { name, exact: true }).click();
 }
+async function viewAction(name: "旋转页面" | "适合宽度") {
+  const toolbarAction = page.locator(".pdf-toolbar").getByRole("button", { name, exact: true });
+  if (await toolbarAction.isVisible()) await toolbarAction.click();
+  else await moreAction(name);
+}
 test("PDF text and area annotations survive reselect, zoom and rotation without storing bytes", async () => {
   await open();
   await expect(page.getByRole("button", { name: /^(开启标注|关闭标注)$/ })).toHaveCount(0);
@@ -123,7 +128,7 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
     .toBe(1);
   await expect(page.locator("[data-pdf-annotation]")).toHaveCount(1);
   await page.getByRole("button", { name: "放大", exact: true }).click();
-  await moreAction("旋转页面");
+  await viewAction("旋转页面");
   await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
   await expect(page.locator("[data-pdf-annotation]")).toHaveCount(1);
   await moreAction("区域标注");
@@ -322,7 +327,7 @@ test("500 and 1000 page mixed-size PDFs jump, zoom, and rotate within the virtua
     page.locator('[data-page="250"] .pdf-page[data-ready=true]'),
   ).toBeVisible();
   await page.getByRole("button", { name: "放大", exact: true }).click();
-  await moreAction("旋转页面");
+  await viewAction("旋转页面");
   await expect(
     page.locator('[data-page="250"] .pdf-page[data-ready=true]'),
   ).toBeVisible();
@@ -567,22 +572,187 @@ test("a reader that switches files is not reused for its previous source", async
 });
 
 
-test("oversized images fail visibly without permitting partial-page annotations", async () => {
-  await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
-    name: "oversized-image.pdf", mimeType: "application/pdf",
-    buffer: fixturePdf(2, "Image resource gate.", { oversizedImage: true }),
+test("oversized images fail visibly without permitting partial-page annotations", async ({}, testInfo) => {
+  const diagnostics: Array<Record<string, unknown>> = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning" || message.type() === "error") {
+      diagnostics.push({
+        type: `console.${message.type()}`,
+        text: message.text(),
+        location: message.location(),
+      });
+    }
   });
-  const failedPage = page.locator(".pdf-page").first();
-  await expect(failedPage.getByRole("alert")).toContainText("图片过大");
-  await expect(failedPage.getByRole("alert")).toContainText("原阅读器");
-  await expect(failedPage).toHaveAttribute("data-ready", "false");
-  await expect(failedPage.locator(".textLayer span")).toHaveCount(0);
-  await moreAction("区域标注");
-  await expect(failedPage.locator(".pdf-area-capture")).toHaveCount(0);
-  expect(await rpc({ type: "annotations.list" })).toHaveLength(0);
-  expect(await failedPage.locator("canvas").evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
-  await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
-  await open(fixturePdf(), "healthy-after-failure.pdf");
-  await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
-  await expect(page.locator(".pdf-page").getByRole("alert")).toHaveCount(0);
+  page.on("pageerror", (error) => diagnostics.push({ type: "pageerror", text: error.message }));
+
+  try {
+    await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
+      name: "oversized-image.pdf", mimeType: "application/pdf",
+      buffer: fixturePdf(2, "Image resource gate.", { oversizedImage: true }),
+    });
+    const failedPage = page.locator(".pdf-page").first();
+    await expect(failedPage.getByRole("alert")).toContainText("图片过大");
+    await expect(failedPage.getByRole("alert")).toContainText("原阅读器");
+    await expect(failedPage).toHaveAttribute("data-ready", "false");
+    await expect(failedPage.locator(".textLayer span")).toHaveCount(0);
+    await moreAction("区域标注");
+    await expect(failedPage.locator(".pdf-area-capture")).toHaveCount(0);
+    expect(await rpc({ type: "annotations.list" })).toHaveLength(0);
+    expect(await failedPage.locator("canvas").evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
+    await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
+
+    await open(fixturePdf(), "healthy-after-failure.pdf");
+    await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
+    await expect(page.locator(".pdf-page").getByRole("alert")).toHaveCount(0);
+    await expect(page.locator(".textLayer").first()).toContainText("Web Ink PDF highlights survive a return visit.");
+
+    expect(diagnostics.filter((entry) =>
+      entry.type === "console.warning" && /image exceeded maximum allowed size and was removed/i.test(String(entry.text)),
+    )).toEqual([]);
+    expect(diagnostics.filter((entry) => entry.type !== "console.warning")).toEqual([]);
+  } finally {
+    const receipt = testInfo.outputPath("oversized-image-console.json");
+    await writeFile(receipt, JSON.stringify(diagnostics, null, 2));
+    await testInfo.attach("oversized-image-console", {
+      path: receipt,
+      contentType: "application/json",
+    });
+  }
+});
+
+test("reader page controls enforce navigation boundaries and validate explicit zoom percentages", async () => {
+  await open(fixturePdf(3, "Navigation and zoom fixture"), "controls.pdf");
+  const previous = page.getByRole("button", { name: "上一页", exact: true });
+  const next = page.getByRole("button", { name: "下一页", exact: true });
+  const zoom = page.getByLabel("缩放比例", { exact: true });
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeEnabled();
+  await next.click();
+  await expect(page.getByLabel("页码", { exact: true })).toHaveValue("2");
+  await next.click();
+  await expect(page.getByLabel("页码", { exact: true })).toHaveValue("3");
+  await expect(next).toBeDisabled();
+  await previous.click();
+  await expect(page.getByLabel("页码", { exact: true })).toHaveValue("2");
+
+  await zoom.fill("231%");
+  await zoom.press("Enter");
+  await expect(zoom).toHaveValue("231%");
+  await expect(page.locator('[data-page="2"] .pdf-page[data-ready=true]')).toBeVisible();
+  await zoom.fill("501%");
+  await zoom.press("Enter");
+  await expect(zoom).toHaveValue("231%");
+  await expect(page.getByRole("status")).toContainText("10%～500%");
+});
+
+test("fit width uses the PDF viewport and rotating preserves annotation coordinates", async () => {
+  await page.setViewportSize({ width: 640, height: 720 });
+  await open(fixturePdf(1, "Fit width annotation fixture"), "fit.pdf");
+  await viewAction("适合宽度");
+  await expect.poll(() => page.locator(".pdf-page canvas").first().evaluate((canvas) => {
+    const scroller = document.querySelector<HTMLElement>(".pdf-pages")!;
+    const style = getComputedStyle(scroller);
+    return Math.abs(canvas.getBoundingClientRect().width - scroller.clientWidth + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight));
+  })).toBeLessThanOrEqual(2);
+
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  const [annotation] = (await rpc({ type: "annotations.list" })) as any[];
+  const targetBefore = annotation.target.rects;
+  const pageBefore = await page.locator(".pdf-page").first().boundingBox();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(page.locator(".pdf-toolbar").getByRole("button", { name: "旋转页面", exact: true })).toBeVisible();
+  await viewAction("旋转页面");
+  await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
+  const pageAfter = await page.locator(".pdf-page").first().boundingBox();
+  expect((await rpc({ type: "annotations.list" }))[0].target.rects).toEqual(targetBefore);
+  await expect(page.locator(`[data-pdf-annotation="${annotation.id}"]`)).toBeVisible();
+  expect(pageBefore!.width).not.toBeCloseTo(pageAfter!.width, 0);
+});
+
+test("Ctrl or Cmd F searches text without changing saved annotations or rendering every page", async () => {
+  await open(fixturePdf(30, "Search target appears once per page"), "search.pdf");
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  const ids = ((await rpc({ type: "annotations.list" })) as any[]).map((annotation) => annotation.id);
+  await page.keyboard.press("Control+f");
+  const find = page.getByRole("search", { name: "PDF 文内搜索", exact: true });
+  await expect(find).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Meta+f");
+  await expect(find).toBeVisible();
+  await find.getByRole("textbox", { name: "搜索 PDF 文字", exact: true }).fill("Search target");
+  await expect(find.getByRole("status")).toHaveText("1 / 30");
+  await expect(page.locator(".pdf-search-match")).toHaveCount(1);
+  await find.getByRole("button", { name: "下一处", exact: true }).click();
+  await expect(find.getByRole("status")).toHaveText("2 / 30");
+  await find.getByRole("button", { name: "上一处", exact: true }).click();
+  await expect(find.getByRole("status")).toHaveText("1 / 30");
+  expect(((await rpc({ type: "annotations.list" })) as any[]).map((annotation) => annotation.id)).toEqual(ids);
+  expect(await page.locator(".pdf-page canvas").count()).toBeLessThan(10);
+});
+
+test("rapid zoom keeps a non-empty blue fixture bitmap while a new render is pending", async () => {
+  await open(fixturePdf(1, "Blue rectangle render fixture"), "no-flash.pdf");
+  await page.evaluate(() => {
+    const samples: Array<{ width: number; height: number; pixel: number[] }> = [];
+    let frame = 0;
+    const sample = () => {
+      for (const root of document.querySelectorAll<HTMLElement>('.pdf-page[data-rendering="true"]')) {
+        const canvas = root.querySelector<HTMLCanvasElement>("canvas");
+        const box = canvas?.getBoundingClientRect();
+        if (!canvas || !box || box.width <= 0 || box.height <= 0) continue;
+        const context = canvas.getContext("2d");
+        if (!context || canvas.width <= 0 || canvas.height <= 0) {
+          samples.push({ width: canvas.width, height: canvas.height, pixel: [] });
+          continue;
+        }
+        const pixel = context.getImageData(Math.floor(canvas.width * 0.2), Math.floor(canvas.height * 0.4), 1, 1).data;
+        samples.push({ width: canvas.width, height: canvas.height, pixel: [...pixel] });
+      }
+    };
+    const frameLoop = () => {
+      sample();
+      frame = requestAnimationFrame(frameLoop);
+    };
+    const observer = new MutationObserver(sample);
+    observer.observe(document.body, { subtree: true, attributes: true, attributeFilter: ["data-rendering", "style", "width", "height"] });
+    frameLoop();
+    (window as any).__pdfZoomSamples = { samples, stop: () => { cancelAnimationFrame(frame); observer.disconnect(); } };
+  });
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  await page.getByRole("button", { name: "放大", exact: true }).click();
+  await expect(page.locator('.pdf-page[data-rendering="false"]')).toBeVisible();
+  const samples = await page.evaluate(async () => {
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const sampler = (window as any).__pdfZoomSamples;
+    sampler.stop();
+    return sampler.samples as Array<{ width: number; height: number; pixel: number[] }>;
+  });
+  expect(samples.length).toBeGreaterThan(0);
+  for (const sample of samples) {
+    expect(sample.width).toBeGreaterThan(0);
+    expect(sample.height).toBeGreaterThan(0);
+    expect(sample.pixel).toHaveLength(4);
+    expect(sample.pixel[3]!).toBeGreaterThan(0);
+    expect(sample.pixel[2]!).toBeGreaterThan(sample.pixel[0]! + 50);
+    expect(sample.pixel[2]!).toBeGreaterThan(sample.pixel[1]! + 50);
+  }
+  await expect(page.getByLabel("缩放比例", { exact: true })).toHaveValue("150%");
+  await expect.poll(() => page.locator(".pdf-page canvas").first().evaluate((canvas) => canvas.getBoundingClientRect().width)).toBeCloseTo(918, 0);
+  await expect(page.locator(".pdf-page canvas")).toHaveCount(1);
 });

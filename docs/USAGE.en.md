@@ -48,6 +48,9 @@ PDF support covers baseline text and area annotations. Coordinates are normalize
 - HTTPS reading uses exact-site authorization and fetches with `credentials: 'omit'`, `cache: 'no-store'`, and `redirect: 'error'`. Redirects are rejected in the MVP: use the final direct PDF URL or download the file and select it locally.
 - Only SHA-256, file name, optional source URL, page number, text anchors, and area geometry are stored. **PDF bytes are never stored.**
 - Select the original local PDF again to restore its annotations and reading position. Changed file content keeps old annotations separate rather than applying them to the new file.
+- The toolbar offers previous/next page, page-number navigation, 10%–500% zoom entry, fit to width, rotation, and text search. Narrow windows move some actions into **More**.
+- Use **⌘/Ctrl+F** to search PDF text, Enter/Shift+Enter to navigate matches, and Escape to close search. Search markers are temporary and do not create annotations. Scans without searchable text still support area annotations.
+- Zoom retains the last completed page until the new image and text layer are ready. Annotation capture pauses while the page is repainting.
 - Page, within-page position, zoom and rotation are local preferences keyed by file content, outside JSON backups. Authorized public sources can reopen after refresh; local files need selection again and their bytes are not retained.
 - Return sessions may expire after browser restart or extension Reload. Public documents then offer **Open PDF source**; local documents offer file selection.
 - No OCR, authenticated-page retrieval, cookie/credential forwarding, or PDF write-back/editing is provided. Encrypted or protected documents may not load.

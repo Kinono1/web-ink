@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { request } from "../core/client";
+import { request, releaseChromeListener } from "../core/client";
 import type { Language, StorageStats } from "../core/model";
 
 export function formatBytes(bytes: number): string {
@@ -57,7 +57,7 @@ export function StoragePanel({ language }: { language: Language }) {
     return () => {
       active.current = false;
       clearTimeout(timer);
-      chrome.runtime.onMessage.removeListener(listener);
+      releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
   }, [refresh]);
   const tooLarge =

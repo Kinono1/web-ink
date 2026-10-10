@@ -72,6 +72,13 @@ describe("PDF reading positions", () => {
     await expect(readPdfReadingPosition("not-a-document-hash")).resolves.toBeUndefined();
   });
 
+  it.each([0.1, 0.375, 5])("restores a reading percentage supported by the toolbar: %s", async (zoom) => {
+    const key = `ui.pdfReadingPosition.${HASH_A}`;
+    const saved = { ...position(), zoom };
+    installStorage({ [key]: saved });
+    await expect(readPdfReadingPosition(HASH_A)).resolves.toEqual(saved);
+  });
+
   it("round-trips against the actual page height and clamps a gap to the page end", () => {
     const layout = new PageLayoutIndex();
     layout.reset(2, 100, 20);

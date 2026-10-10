@@ -27,6 +27,7 @@ vi.mock("../src/pdf/source", async (original) => {
 });
 vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   GlobalWorkerOptions: { workerSrc: "" },
+  VerbosityLevel: { ERRORS: 0 },
   getDocument: (options: Record<string, unknown>) => {
     io.documentOptions.push(options);
     return {
@@ -55,7 +56,10 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
                 : Promise.resolve());
               return { promise, cancel: () => undefined };
             },
-            streamTextContent: () => undefined,
+            streamTextContent: () => new ReadableStream({ start(controller) {
+              controller.enqueue({ items: [{ str: "A selected scientific passage." }] });
+              controller.close();
+            } }),
             cleanup: () => undefined,
           };
         },
@@ -63,11 +67,15 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
     };
   },
   TextLayer: class {
+    textDivs: HTMLElement[] = [];
+    textContentItemsStr: string[] = [];
     constructor(private options: { container: HTMLElement }) {}
     async render() {
       const span = document.createElement("span");
       span.textContent = "A selected scientific passage.";
       this.options.container.append(span);
+      this.textDivs = [span];
+      this.textContentItemsStr = [span.textContent!];
     }
     cancel() {}
   },
@@ -138,6 +146,7 @@ beforeEach(() => {
     return id;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({ drawImage() {} } as unknown as CanvasRenderingContext2D);
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("matchMedia", () => ({ matches: false, addEventListener() {}, removeEventListener() {} }));
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
@@ -190,6 +199,7 @@ afterEach(async () => {
   root = undefined;
   window.getSelection()?.removeAllRanges();
   document.body.replaceChildren();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -711,6 +721,7 @@ describe("PDF reader workspace", () => {
       maxImageSize: 16777216,
       canvasMaxAreaInBytes: 67108864,
       stopAtErrors: true,
+      verbosity: 0,
     });
     const failedPage = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
     const healthyPage = host.querySelector<HTMLElement>('[data-page="2"] .pdf-page')!;
@@ -728,7 +739,138 @@ describe("PDF reader workspace", () => {
     expect(puts()).toHaveLength(0);
   });
 
-  it("clears old selectable text and reports an ordinary zoom render failure", async () => {
+  it("handles tab lookup invalidation during reader startup without an unhandled promise", async () => {
+    Object.defineProperty(chrome, "tabs", { configurable: true, value: {
+      getCurrent: async () => { throw new Error("Extension context invalidated."); },
+    } });
+    await mount("", false);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Extension context invalidated");
+  });
+
+  it("reports a failed initial settings request instead of leaving an unhandled Reload rejection", async () => {
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "settings.get"
+      ? Promise.reject(new Error("Extension context invalidated.")) : send(message)) as typeof send;
+    await mount("", false);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Extension context invalidated");
+  });
+
+  it("releases reader listeners and canvas resources when Reload invalidates listener cleanup", async () => {
+    await mount();
+    const canvas = host.querySelector("canvas")!;
+    chrome.runtime.onMessage.removeListener = () => { throw new Error("Extension context invalidated."); };
+    const current = root!;
+    root = undefined;
+    await expect(act(async () => current.unmount())).resolves.toBeUndefined();
+    expect(canvas.width).toBe(0);
+    expect(canvas.height).toBe(0);
+    expect(frames.size).toBe(0);
+  });
+
+  it("opens PDF search with Cmd+F and closes it with Escape", async () => {
+    await mount();
+    await act(async () => document.dispatchEvent(new KeyboardEvent("keydown", { key: "f", metaKey: true, bubbles: true, cancelable: true })));
+    await settle();
+    const input = host.querySelector<HTMLInputElement>('[aria-label="搜索 PDF 文字"]');
+    expect(input).toBeTruthy();
+    expect(document.activeElement).toBe(input);
+    await act(async () => input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await settle();
+    expect(host.querySelector('[aria-label="搜索 PDF 文字"]')).toBeNull();
+  });
+
+  it("searches document text and navigates matches without saving annotations", async () => {
+    vi.useFakeTimers();
+    io.pageCount = 3;
+    await mount();
+    await click("搜索 PDF");
+    const input = host.querySelector<HTMLInputElement>('[aria-label="搜索 PDF 文字"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "scientific");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      await vi.advanceTimersByTimeAsync(200);
+    });
+    await settle();
+    expect(host.querySelector('.pdf-find-count')?.textContent).toBe("1 / 3");
+    expect(host.querySelectorAll(".pdf-search-match")).toHaveLength(1);
+    await click("下一处");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("2");
+    await click("上一处");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("1");
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("offers bounded previous and next page actions", async () => {
+    io.pageCount = 3;
+    await mount();
+    expect(button("上一页").disabled).toBe(true);
+    await click("下一页");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("2");
+    await click("下一页");
+    expect(button("下一页").disabled).toBe(true);
+    await click("上一页");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("2");
+  });
+
+  it("keeps the requested last page when browser scroll clamping leaves a preceding page gap visible", async () => {
+    io.pageCount = 3;
+    await mount();
+    await click("下一页");
+    await click("下一页");
+    const scroller = host.querySelector<HTMLElement>(".pdf-pages")!;
+    await act(async () => { scroller.scrollTop = 1632; scroller.dispatchEvent(new Event("scroll")); });
+    await settle();
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("3");
+    expect(button("下一页").disabled).toBe(true);
+  });
+
+  it("accepts an explicit percentage and rejects invalid zoom without changing the document", async () => {
+    await mount();
+    const input = host.querySelector<HTMLInputElement>('[aria-label="缩放比例"]');
+    expect(input).toBeTruthy();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "231%");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle();
+    expect(input!.value).toBe("231%");
+    expect(host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')?.style.width).toBe("1386px");
+    await act(async () => {
+      setter.call(input, "900%");
+      input!.dispatchEvent(new Event("input", { bubbles: true }));
+      input!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    await settle();
+    expect(input!.value).toBe("231%");
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("fits the current page width and exposes rotation in the toolbar", async () => {
+    Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 300 });
+    await mount();
+    await click("适合宽度");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="缩放比例"]')?.value).toBe("50%");
+    expect(host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')?.style.width).toBe("300px");
+    expect(host.querySelector('.pdf-toolbar [aria-label="旋转页面"]')).toBeTruthy();
+    await click("旋转页面");
+    expect(host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')?.style.width).toBe("300px");
+  });
+
+  it("retains the same page and relative reading position during zoom", async () => {
+    io.pageCount = 3;
+    await mount();
+    const scroller = host.querySelector<HTMLElement>(".pdf-pages")!;
+    await act(async () => { scroller.scrollTop = 400; scroller.dispatchEvent(new Event("scroll")); });
+    await settle();
+    await click("放大");
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("1");
+    expect(scroller.scrollTop).toBeCloseTo(500);
+  });
+
+  it("keeps the previous zoom frame while rendering and blocks a failed page", async () => {
     await mount();
     const page = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
     expect(page.dataset.ready).toBe("true");
@@ -738,7 +880,9 @@ describe("PDF reader workspace", () => {
     io.renderGates[1] = rerender.promise;
     await click("放大");
     expect(page.dataset.ready).toBe("false");
-    expect(page.querySelector(".textLayer span")).toBeNull();
+    expect(page.querySelector(".textLayer span")).toBeTruthy();
+    expect(page.dataset.rendering).toBe("true");
+    expect(page.querySelector("canvas")!.width).toBeGreaterThan(0);
 
     const technicalError = "internal PDF.js raster worker failure";
     await act(async () => rerender.reject(new Error(technicalError)));
@@ -810,7 +954,9 @@ describe("PDF reading position integration", () => {
     scroller.scrollTop = 827;
     await act(async () => scroller.dispatchEvent(new Event("scroll")));
     await settle();
-    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')!.value).toBe("1");
+    // The toolbar shows the most visible page; the scroll anchor remains at
+    // the preceding page's end while the storage read is still pending.
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')!.value).toBe("2");
     await click("放大");
     expect(scroller.scrollTop).toBe(827);
   });
@@ -822,7 +968,7 @@ describe("PDF reading position integration", () => {
     await act(async () => readGate!.resolve({ [`ui.pdfReadingPosition.${HASH}`]: bookmark }));
     await settle();
     expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')!.value).toBe("500");
-    expect(host.querySelector(".pdf-zoom")?.textContent).toBe("150%");
+    expect(host.querySelector<HTMLInputElement>(".pdf-zoom")?.value).toBe("150%");
     expect(new Set(io.pagesRead).size).toBeLessThan(20);
     await new Promise((resolve) => setTimeout(resolve, 550));
     const latest = writes.at(-1)?.[`ui.pdfReadingPosition.${HASH}`] as PdfReadingPosition;
@@ -842,14 +988,14 @@ describe("PDF reading position integration", () => {
     await act(async () => readGate!.resolve({ [`ui.pdfReadingPosition.${HASH}`]: bookmark }));
     await settle();
     expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')!.value).toBe("1");
-    expect(host.querySelector(".pdf-zoom")?.textContent).toBe(intent === "zoom" ? "125%" : "100%");
+    expect(host.querySelector<HTMLInputElement>(".pdf-zoom")?.value).toBe(intent === "zoom" ? "125%" : "100%");
   });
 
   it("uses the matching historical target page at top, retaining same-hash zoom/rotation", async () => {
     storedPosition = bookmark;
     await mount(`?document=${HASH}&page=4`);
     expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')!.value).toBe("4");
-    expect(host.querySelector(".pdf-zoom")?.textContent).toBe("150%");
+    expect(host.querySelector<HTMLInputElement>(".pdf-zoom")?.value).toBe("150%");
     expect(new URL(location.href).searchParams.has("page")).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 550));
     expect(writes.at(-1)?.[`ui.pdfReadingPosition.${HASH}`]).toMatchObject({ pageNumber: 4, pageOffsetRatio: 0 });
