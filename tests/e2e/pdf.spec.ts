@@ -93,8 +93,7 @@ async function open(buffer = fixturePdf(), name = "reading.pdf") {
 }
 async function openPdfSidebar(reader = page) {
   await activeTab(reader);
-  await reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
-  await activeTab(reader);
+  await expect(reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true })).toHaveCount(0);
   await expect(control.locator(".pdf-sidebar")).toBeVisible();
   await expect(reader.locator(".pdf-notes")).toBeHidden();
   await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);

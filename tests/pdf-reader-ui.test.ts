@@ -235,6 +235,10 @@ async function click(label: string) {
   await act(async () => button(label).click());
   await settle();
 }
+async function openNotes() {
+  await click("更多");
+  await click("查看标注");
+}
 async function selectPage(number = 1) {
   const page = host.querySelector<HTMLElement>(`[data-page="${number}"] .pdf-page`)!;
   expect(page).toBeTruthy();
@@ -254,7 +258,7 @@ function unloadBlocked() {
   return event.defaultPrevented;
 }
 async function editNote(value: string) {
-  await click("笔记");
+  await openNotes();
   await click("编辑");
   const textarea = host.querySelector<HTMLTextAreaElement>(".pdf-note-editor textarea")!;
   const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
@@ -332,13 +336,26 @@ describe("PDF reader workspace", () => {
   it("opens the existing Chrome sidebar instead of a second notes rail", async () => {
     records = [baseRecord()];
     const openedPanels: number[] = [];
+    const listeners = new Set<(message: any) => void>();
+    Object.assign(chrome.runtime, { id: "test", connect: () => ({
+      postMessage() {},
+      onMessage: { addListener: (listener: (message: any) => void) => listeners.add(listener), removeListener: (listener: (message: any) => void) => listeners.delete(listener) },
+      onDisconnect: { addListener() {} }, disconnect() {},
+    }) });
     Object.assign(chrome, {
       tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) },
       sidePanel: { open: async ({ tabId }: { tabId: number }) => { openedPanels.push(tabId); } },
     });
     await mount();
-    await click("笔记");
+    expect(host.querySelector('.pdf-toolbar button[aria-label="笔记"]')).toBeNull();
+    await click("更多");
+    await click("查看标注");
     expect(openedPanels).toEqual([8]);
+    await act(async () => { for (const listener of listeners) listener({ type: "attached", attached: true }); });
+    await click("更多");
+    expect(host.querySelector(".pdf-more-menu")?.textContent).not.toContain("查看标注");
+    await act(async () => { for (const listener of listeners) listener({ type: "attached", attached: false }); });
+    expect(button("查看标注")).toBeTruthy();
     expect(host.querySelector(".pdf-workspace")?.classList.contains("notes-open")).toBe(false);
     expect(host.querySelector<HTMLElement>(".pdf-notes")?.hidden ?? true).toBe(true);
     expect(records).toHaveLength(1);
@@ -374,7 +391,7 @@ describe("PDF reader workspace", () => {
     });
     await settle();
     const textarea = host.querySelector<HTMLTextAreaElement>("textarea")!;
-    if (notes === "closed") await click("笔记");
+    if (notes === "closed") await click("关闭笔记");
     await click("返回原阅读器");
     const keep = button("继续编辑");
     keep.focus();
@@ -445,7 +462,7 @@ describe("PDF reader workspace", () => {
     expect(orphan?.textContent).toContain("原标注已被删除");
     expect(orphan?.textContent).not.toContain("载入最新版本");
     expect(host.querySelector(".pdf-notes h2 span")?.textContent).toBe("55");
-    await click("笔记");
+    await click("关闭笔记");
     await click("返回原阅读器");
     await click("继续编辑");
     expect(host.querySelector(".pdf-notes")?.hasAttribute("hidden")).toBe(false);
@@ -604,7 +621,7 @@ describe("PDF reader workspace", () => {
   it("keeps clean editors and bookmark timers out of beforeunload, but observes note writes in flight", async () => {
     records = [baseRecord()];
     await mount();
-    await click("笔记");
+    await openNotes();
     await click("编辑");
     expect(unloadBlocked()).toBe(false);
     putGate = deferred();
@@ -732,7 +749,7 @@ describe("PDF reader workspace", () => {
     expect(failedPage.querySelector(".pdf-area-capture")).toBeNull();
     expect(healthyPage.dataset.ready).toBe("true");
 
-    await click("笔记");
+    await openNotes();
     expect(host.querySelector(".pdf-notes")?.textContent).toContain("keep this saved note");
     expect(button("返回原阅读器")).toBeTruthy();
     expect(records.map((record) => record.id)).toEqual(["saved-highlight"]);
