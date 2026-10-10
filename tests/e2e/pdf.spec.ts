@@ -540,10 +540,11 @@ test("PDF handoff failure explains the local file fallback", async () => {
   await open();
 });
 
-test("PDF entry reuses a reader and keeps its current document", async () => {
+test("library PDF entry reuses a reader and keeps its current document", async () => {
   await open();
   const panel = await context.newPage();
-  await panel.goto(`chrome-extension://${id}/sidepanel.html`);
+  // Exercise the generic entry, not the sidepanel's current-tab handoff.
+  await panel.goto(`chrome-extension://${id}/library.html`);
   const before = context.pages().length;
   await panel.getByRole("button", { name: "打开 PDF", exact: true }).first().click();
   await expect.poll(() => context.pages().length).toBe(before);
