@@ -53,7 +53,10 @@ jobs:
           BASELINE_COMMIT=d37555855f4d3f8cec0bbd27d28de8afa12f49fc
           BASELINE_WORKTREE="$RUNNER_TEMP/webink-reload-baseline"
           git worktree add --detach "$BASELINE_WORKTREE" "$BASELINE_COMMIT"
-          ln -s "$GITHUB_WORKSPACE/node_modules" "$BASELINE_WORKTREE/node_modules"
+          # The pinned baseline ignores directories, not dependency symlinks.
+          # Use a real ignored directory so its clean-source identity stays true.
+          mkdir "$BASELINE_WORKTREE/node_modules"
+          cp -a "$GITHUB_WORKSPACE/node_modules/." "$BASELINE_WORKTREE/node_modules/"
           (cd "$BASELINE_WORKTREE" && npm run build)
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
