@@ -34,6 +34,8 @@ type Actor = {
   windowId?: number;
   activationEpoch?: number;
   documentId?: string;
+  contextDocumentId?: string;
+  contextId?: string;
   sender: chrome.runtime.MessageSender;
 };
 type Snapshot = {
@@ -124,17 +126,26 @@ export function createPdfHandoffHandler() {
     }
     return { tab, url, readerDocumentId };
   };
-  const ownContext = async (sender: chrome.runtime.MessageSender, name: string): Promise<chrome.runtime.ExtensionContext> => {
+  const ownContext = async (sender: chrome.runtime.MessageSender, name: string, pinned?: Actor): Promise<chrome.runtime.ExtensionContext> => {
     if (
-      sender.id !== chrome.runtime.id || !ownPage(sender.url, name) || !sender.documentId ||
-      (sender.frameId !== undefined && sender.frameId !== 0) ||
+      sender.id !== chrome.runtime.id || !ownPage(sender.url, name) ||
+      (sender.frameId !== undefined && sender.frameId !== 0 && !(name === "sidepanel.html" && sender.frameId === -1)) ||
       (sender.documentLifecycle && sender.documentLifecycle !== "active")
     )
       throw new PdfNavigationError("FORBIDDEN", "This PDF action is not available from this page.");
     let contexts: chrome.runtime.ExtensionContext[];
-    try { contexts = await chrome.runtime.getContexts({ documentIds: [sender.documentId] }); }
+    // Native side panels may omit sender document/frame metadata. Resolve once
+    // from Chrome's contexts, then retain that document across asynchronous work.
+    const documentId = pinned?.contextDocumentId ?? sender.documentId;
+    try { contexts = await chrome.runtime.getContexts(documentId ? { documentIds: [documentId] } : { documentUrls: [sender.url!] }); }
     catch { throw new PdfNavigationError("CONTEXT_UNAVAILABLE", "The PDF context is unavailable. Try again."); }
-    const matches = contexts.filter(item => item.documentId === sender.documentId && item.frameId === 0 && ownPage(item.documentUrl, name));
+    const matches = contexts.filter(item => {
+      const topTab = item.contextType === "TAB" && item.frameId === 0 && item.tabId >= 0;
+      const sidePanel = name === "sidepanel.html" && item.contextType === "SIDE_PANEL" && (item.frameId === -1 || item.frameId === 0);
+      return item.documentId && item.contextId && item.documentUrl === sender.url &&
+        (!documentId || item.documentId === documentId) &&
+        (!pinned || item.contextId === pinned.contextId) && (topTab || sidePanel);
+    });
     if (matches.length !== 1) throw changed();
     const context = matches[0]!;
     if (sender.tab?.id !== undefined && sender.tab.id !== context.tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
@@ -160,13 +171,13 @@ export function createPdfHandoffHandler() {
       const tabId = await activeTab(context.windowId);
       if (activation(context.windowId) !== activationEpoch) throw changed();
       if (input.tabId !== undefined && input.tabId !== tabId) throw changed();
-      return { kind: "sidebar", tabId, windowId: context.windowId, activationEpoch, sender };
+      return { kind: "sidebar", tabId, windowId: context.windowId, activationEpoch, contextDocumentId: context.documentId, contextId: context.contextId, sender };
     }
     if (ownPage(sender.url, "pdf.html")) {
       const context = await ownContext(sender, "pdf.html");
       if (context.contextType !== "TAB" || context.tabId < 0) throw changed();
       if (input.tabId !== undefined && input.tabId !== context.tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
-      return { kind: "reader", tabId: context.tabId, documentId: context.documentId, sender };
+      return { kind: "reader", tabId: context.tabId, documentId: context.documentId, contextDocumentId: context.documentId, contextId: context.contextId, sender };
     }
     if (
       sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.documentId ||
@@ -181,10 +192,10 @@ export function createPdfHandoffHandler() {
     if (epoch(actor.tabId) !== snapshot.epoch) throw changed();
     if (actor.kind === "sidebar" && activation(actor.windowId!) !== actor.activationEpoch) throw changed();
     if (actor.kind === "sidebar") {
-      const context = await ownContext(actor.sender, "sidepanel.html");
+      const context = await ownContext(actor.sender, "sidepanel.html", actor);
       if (context.windowId !== actor.windowId) throw changed();
       if (await activeTab(actor.windowId!) !== actor.tabId) throw changed();
-    } else if (actor.kind === "reader") await ownContext(actor.sender, "pdf.html");
+    } else if (actor.kind === "reader") await ownContext(actor.sender, "pdf.html", actor);
     const observed = await observeTab(actor.tabId);
     if (observed.url !== snapshot.url || (observed.tab.pendingUrl && pageUrl(observed.tab.pendingUrl) !== snapshot.url)) throw changed();
     if (snapshot.readerDocumentId && snapshot.readerDocumentId !== observed.readerDocumentId) throw changed();

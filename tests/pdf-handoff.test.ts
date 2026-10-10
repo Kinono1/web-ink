@@ -4,7 +4,7 @@ import type { PdfHandoff, PdfOpenResult, PdfTabContext, Result } from '../src/co
 const ID = 'webinkid';
 const READER = `chrome-extension://${ID}/pdf.html`;
 const ORIGINAL = 'https://papers.example.test/paper.pdf#page=3';
-const UI: chrome.runtime.MessageSender = { id: ID, url: `chrome-extension://${ID}/sidepanel.html`, documentId: 'sidebar-document', frameId: 0, documentLifecycle: 'active' };
+const UI: chrome.runtime.MessageSender = { id: ID, url: `chrome-extension://${ID}/sidepanel.html`, documentId: 'sidebar-document', documentLifecycle: 'active' };
 type Listener = (raw: unknown, sender: chrome.runtime.MessageSender, respond: (response: unknown) => void) => unknown;
 let listener: Listener;
 let tabs: Map<number, chrome.tabs.Tab>;
@@ -22,7 +22,7 @@ let afterRead: (() => void | Promise<void>) | undefined;
 
 const event = () => ({ addListener: () => {} });
 function context(tabId: number, url: string, doc: string, contextType: 'TAB' | 'SIDE_PANEL' = 'TAB'): chrome.runtime.ExtensionContext {
-  return { contextId: `context-${doc}`, contextType, documentId: doc, documentUrl: url, documentOrigin: `chrome-extension://${ID}`, frameId: 0, tabId, windowId: 1, incognito: false };
+  return { contextId: `context-${doc}`, contextType, documentId: doc, documentUrl: url, documentOrigin: `chrome-extension://${ID}`, frameId: contextType === 'SIDE_PANEL' ? -1 : 0, tabId, windowId: 1, incognito: false };
 }
 function setUrl(url: string, doc = 'source-document') {
   documentId = doc;
@@ -81,6 +81,8 @@ beforeEach(async () => {
       onMessage: { addListener: (next: Listener) => { listener = next; } },
       getContexts: async (filter: chrome.runtime.ContextFilter) => contexts.filter(entry =>
         (!filter.documentIds || filter.documentIds.includes(entry.documentId!)) &&
+        (!filter.documentUrls || filter.documentUrls.includes(entry.documentUrl!)) &&
+        (!filter.contextIds || filter.contextIds.includes(entry.contextId)) &&
         (!filter.contextTypes || filter.contextTypes.includes(entry.contextType)) &&
         (!filter.tabIds || filter.tabIds.includes(entry.tabId))),
     },
@@ -131,6 +133,82 @@ beforeEach(async () => {
     sidePanel: { setPanelBehavior: async () => {} },
   });
   vi.resetModules(); (await import('../entrypoints/background')).default.main();
+});
+
+describe('native extension UI authority', () => {
+  it.each([
+    ['document present, frame absent', UI.documentId, undefined],
+    ['document present, frame -1', UI.documentId, -1],
+    ['document absent, frame absent', undefined, undefined],
+    ['document absent, frame -1', undefined, -1],
+  ] as const)('accepts native sidebar metadata: %s', async (_label, senderDocumentId, frameId) => {
+    const sender = { ...UI, documentId: senderDocumentId, frameId };
+    expect(value(await rpc<PdfTabContext>({ type: 'pdf.context.get', tabId: 7 }, sender))).toMatchObject({ tabId: 7, kind: 'direct' });
+    expect(value(await rpc<PdfOpenResult>({ type: 'pdf.openCurrent', tabId: 7, expectedUrl: ORIGINAL }, sender))).toMatchObject({ tabId: 7, navigation: 'same-tab' });
+    expect(updates).toHaveLength(1);
+  });
+
+  it('rejects ambiguous sidebar URLs across windows when sender documentId is absent', async () => {
+    contexts.push({ ...context(-1, UI.url!, 'second-sidebar', 'SIDE_PANEL'), windowId: 2 });
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7 }, { ...UI, documentId: undefined })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0); expect(handoffs()).toHaveLength(0);
+  });
+
+  it.each(['documentId', 'contextId'] as const)('rejects a native sidebar without browser %s', async field => {
+    contexts[0] = { ...contexts[0]!, [field]: undefined } as chrome.runtime.ExtensionContext;
+    expect(await rpc({ type: 'pdf.context.get', tabId: 7 }, { ...UI, documentId: undefined })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0);
+  });
+
+  it('matches the complete sender URL when resolving a missing documentId', async () => {
+    contexts[0] = { ...contexts[0]!, documentUrl: `${UI.url}?another-view=1` };
+    expect(await rpc({ type: 'pdf.context.get', tabId: 7 }, { ...UI, documentId: undefined })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+  });
+
+  it('rejects unsupported extension UI context kinds', async () => {
+    contexts[0] = { ...contexts[0]!, contextType: 'POPUP', frameId: 0 };
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7 }, UI)).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0);
+  });
+
+  it('rejects nested own UI and keeps content callers strict', async () => {
+    for (const sender of [
+      { ...UI, frameId: 1, documentId: undefined },
+      { ...UI, id: 'another-extension', documentId: undefined },
+      { ...UI, documentLifecycle: 'cached', documentId: undefined },
+      { ...UI, url: ORIGINAL, tab: tabs.get(7), frameId: 0, documentId: undefined },
+      { ...UI, url: ORIGINAL, tab: tabs.get(7), frameId: -1, documentId },
+    ] satisfies chrome.runtime.MessageSender[]) {
+      expect(await rpc({ type: 'pdf.openCurrent', tabId: 7 }, sender)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    }
+    contexts[0] = { ...contexts[0]!, frameId: 1 };
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7 }, { ...UI, documentId: undefined })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0);
+  });
+
+  it.each(['documentId', 'contextId', 'windowId'] as const)('pins native sidebar %s before asynchronous persistence', async field => {
+    afterWrite = () => {
+      contexts[0] = { ...contexts[0]!, [field]: field === 'windowId' ? 2 : `replacement-${field}` };
+    };
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7, expectedUrl: ORIGINAL }, { ...UI, documentId: undefined })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0); expect(handoffs()).toHaveLength(0);
+    expect(tabs.get(7)!.url).toBe(ORIGINAL);
+  });
+
+  it('binds a documentless reader sender to its browser TAB document and token', async () => {
+    const opened = value(await open());
+    const sender = { ...readerSender(), documentId: undefined };
+    expect(value(await rpc<PdfHandoff | null>({ type: 'pdf.handoff.get', token: opened.token }, sender))).toMatchObject({ tabId: 7, returnUrl: ORIGINAL });
+    expect(value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, sender))).toEqual({ tabId: 7, url: ORIGINAL });
+  });
+
+  it('rejects a documentless reader replaced during session lookup', async () => {
+    const opened = value(await open());
+    const sender = { ...readerSender(), documentId: undefined };
+    afterRead = () => { loadedReader(7, opened.readerUrl, 'replacement-reader-document'); };
+    expect(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, sender)).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(1);
+  });
 });
 afterEach(() => { document.body.replaceChildren(); document.head.replaceChildren(); vi.unstubAllGlobals(); });
 
