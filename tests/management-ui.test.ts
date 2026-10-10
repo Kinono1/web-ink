@@ -42,6 +42,7 @@ const record: Annotation = {
 
 let root: Root | undefined;
 const chromeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+type TabUpdatedListener = (tabId: number, changeInfo: { url?: string }) => void;
 
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -54,13 +55,18 @@ afterEach(async () => {
 
 function installChrome(
   sendMessage: (message: { type: string; [key: string]: unknown }) => unknown,
-  tab: { id: number; url?: string; title?: string } = {
+  tab: { id: number; windowId?: number; url?: string; title?: string } = {
     id: 7,
     url: "https://example.test/article",
     title: "Article",
   },
+  onTabUpdated?: (listener: TabUpdatedListener) => void,
 ) {
   const events = { addListener: vi.fn(), removeListener: vi.fn() };
+  const updated = {
+    addListener: vi.fn((listener: TabUpdatedListener) => onTabUpdated?.(listener)),
+    removeListener: vi.fn(),
+  };
   Object.defineProperty(globalThis, "chrome", {
     configurable: true,
     value: {
@@ -71,7 +77,7 @@ function installChrome(
           `chrome-extension://test/${path.replace(/^\//, "")}`,
       },
       permissions: { contains: async () => true },
-      tabs: { query: async () => [tab], onActivated: events, onUpdated: events },
+      tabs: { query: async () => [tab], onActivated: events, onUpdated: updated },
     },
   });
   return globalThis.chrome.runtime.sendMessage as ReturnType<typeof vi.fn>;
@@ -180,13 +186,14 @@ describe("management UI", () => {
         };
       }
       return { ok: true, data: true };
-    }, { id: 7, url: "https://example.test/reading", title: "Reading" });
+    }, { id: 7, windowId: 1, url: "https://example.test/reading", title: "Reading" });
 
     const host = await mount("sidepanel");
 
     expect(sent).toHaveBeenCalledWith({
       type: "pdf.context.get",
       tabId: 7,
+      windowId: 1,
       expectedUrl: "https://example.test/reading",
     });
     expect(host.querySelector('button[aria-label="打开 PDF"]')).toBeNull();
@@ -201,6 +208,7 @@ describe("management UI", () => {
     expect(sent).toHaveBeenCalledWith({
       type: "pdf.openCurrent",
       tabId: 7,
+      windowId: 1,
       expectedUrl: "https://example.test/reading",
       candidateUrl: "https://example.test/two.pdf",
     });
@@ -234,6 +242,84 @@ describe("management UI", () => {
     expect(host.querySelector(".pdf-local-link")).toBeNull();
     expect(host.querySelector('button[aria-label="打开 PDF"]')).toBeNull();
     expect(sent.mock.calls.filter(([message]) => message.type === "pdf.openCurrent")).toHaveLength(0);
+  });
+
+  it("does not let a late tab context refresh replace the latest window ID", async () => {
+    const originalUrl = "https://example.test/reading";
+    const updatedUrl = "https://example.test/updated-reading";
+    let resolveInitialContext!: (value: unknown) => void;
+    const initialContext = new Promise<unknown>((resolve) => {
+      resolveInitialContext = resolve;
+    });
+    let contextRequestCount = 0;
+    const initialTab = {
+      id: 7,
+      windowId: 1,
+      url: originalUrl,
+      title: "Reading",
+    };
+    let activeTab = initialTab;
+    let fireTabUpdated: TabUpdatedListener | undefined;
+    const contextFor = (url: string): PdfTabContext => ({
+      tabId: 7,
+      url,
+      kind: "direct",
+      currentReader: false,
+      candidates: [{ url, via: "url" }],
+    });
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query")
+        return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        contextRequestCount++;
+        return contextRequestCount === 1
+          ? initialContext
+          : { ok: true, data: contextFor(updatedUrl) };
+      }
+      return { ok: true, data: true };
+    }, initialTab, (listener) => {
+      fireTabUpdated = listener;
+    });
+    Object.defineProperty(chrome.tabs, "query", {
+      configurable: true,
+      value: async () => [activeTab],
+    });
+
+    const host = await mount("sidepanel");
+    expect(fireTabUpdated).toBeDefined();
+
+    activeTab = { ...initialTab, windowId: 2, url: updatedUrl };
+    await act(async () => {
+      fireTabUpdated!(7, { url: updatedUrl });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    resolveInitialContext({ ok: true, data: contextFor(originalUrl) });
+    await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+
+    await act(async () => {
+      (host.querySelector(".pdf-open-current") as HTMLButtonElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.context.get",
+      tabId: 7,
+      windowId: 1,
+      expectedUrl: originalUrl,
+    });
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.context.get",
+      tabId: 7,
+      windowId: 2,
+      expectedUrl: updatedUrl,
+    });
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      windowId: 2,
+      expectedUrl: updatedUrl,
+      candidateUrl: updatedUrl,
+    });
   });
 
   it("closes the side-panel More menu with Escape and returns focus to its trigger", async () => {

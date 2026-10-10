@@ -244,8 +244,8 @@ export type Result<T> =
   | { ok: false; error: string; code?: string };
 export type Request =
   | { type: "runtime.health" }
-  | { type: "pdf.context.get"; tabId?: number; expectedUrl?: string }
-  | { type: "pdf.openCurrent"; tabId?: number; expectedUrl?: string; candidateUrl?: string }
+  | { type: "pdf.context.get"; tabId?: number; windowId?: number; expectedUrl?: string }
+  | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string }
   | { type: "pdf.handoff.get"; token: string }
   | { type: "pdf.returnOriginal"; token: string }
   | { type: "annotations.list"; pageUrl?: string }

@@ -174,13 +174,14 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           ? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]
           : undefined;
       const context: TabContext = nextTab
-        ? { id: nextTab.id, url: nextTab.url, title: nextTab.title }
+        ? { id: nextTab.id, windowId: nextTab.windowId, url: nextTab.url, title: nextTab.title }
         : {};
       const nextPdfContext =
         mode === "sidepanel" && context.id !== undefined
           ? await request<PdfTabContext>({
               type: "pdf.context.get",
               tabId: context.id,
+              ...(context.windowId !== undefined ? { windowId: context.windowId } : {}),
               ...(context.url ? { expectedUrl: context.url } : {}),
             })
           : undefined;
@@ -578,6 +579,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     void request<PdfOpenResult>({
       type: "pdf.openCurrent",
       tabId: tab.id,
+      ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
       ...(tab.url ? { expectedUrl: tab.url } : {}),
       ...(candidateUrl ? { candidateUrl } : {}),
     })

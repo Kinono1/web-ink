@@ -24,6 +24,7 @@ class PdfNavigationError extends Error {
 type Input = {
   type: string;
   tabId?: number;
+  windowId?: number;
   expectedUrl?: string;
   candidateUrl?: string;
   token?: string;
@@ -69,13 +70,14 @@ function parseInput(raw: unknown): Input {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF request.");
   const input = { ...raw } as Input;
   const reader = input.type === "pdf.handoff.get" || input.type === "pdf.returnOriginal";
-  const fields = reader ? ["type", "token"] : ["type", "tabId", "expectedUrl"];
+  const fields = reader ? ["type", "token"] : ["type", "tabId", "windowId", "expectedUrl"];
   if (input.type === "pdf.openCurrent") fields.push("candidateUrl");
   if (Object.keys(raw).some(key => !fields.includes(key))) throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF request fields.");
   if (reader) {
     if (typeof input.token !== "string" || !UUID.test(input.token)) throw new PdfNavigationError("INVALID_INPUT", "Invalid return session.");
   } else {
     if (input.tabId !== undefined && (!Number.isInteger(input.tabId) || input.tabId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid tab.");
+    if (input.windowId !== undefined && (!Number.isInteger(input.windowId) || input.windowId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid window.");
     if (input.expectedUrl !== undefined) {
       if (typeof input.expectedUrl !== "string" || input.expectedUrl.length > 8192) throw new PdfNavigationError("INVALID_INPUT", "Invalid page URL.");
       input.expectedUrl = pageUrl(input.expectedUrl);
@@ -146,7 +148,7 @@ export function createPdfHandoffHandler() {
         (!documentId || item.documentId === documentId) &&
         (!pinned || item.contextId === pinned.contextId) && (topTab || sidePanel);
     });
-    if (matches.length !== 1) throw new PdfNavigationError("PAGE_CHANGED", `The tab or document changed. [diagnostic contexts: ${JSON.stringify(contexts.map(item => ({ type: item.contextType, frame: item.frameId, tab: item.tabId, window: item.windowId, hasDocument: !!item.documentId, hasContext: !!item.contextId, sameUrl: item.documentUrl === sender.url, sameDocument: item.documentId === documentId, matches: matches.length })))}]`);
+    if (matches.length !== 1) throw changed();
     const context = matches[0]!;
     if (sender.tab?.id !== undefined && sender.tab.id !== context.tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
     return context;
@@ -166,12 +168,21 @@ export function createPdfHandoffHandler() {
       throw new PdfNavigationError("FORBIDDEN", "Return to the original page from its PDF reader.");
     if (ownPage(sender.url, "sidepanel.html")) {
       const context = await ownContext(sender, "sidepanel.html");
-      if (context.windowId < 0) throw new PdfNavigationError("PAGE_CHANGED", `The sidebar window is unavailable. [diagnostic window=${context.windowId}; type=${context.contextType}; frame=${context.frameId}]`);
-      const activationEpoch = activation(context.windowId);
-      const tabId = await activeTab(context.windowId);
-      if (activation(context.windowId) !== activationEpoch) throw changed();
+      // Native SIDE_PANEL contexts can report windowId -1. Bind the UI's
+      // observed tab/window pair instead of guessing the last focused window.
+      let windowId = context.windowId;
+      if (windowId === -1 && context.contextType === "SIDE_PANEL") {
+        if (input.tabId === undefined || input.windowId === undefined)
+          throw new PdfNavigationError("CONTEXT_UNAVAILABLE", "Refresh the sidebar to identify the current tab.");
+        windowId = input.windowId;
+      } else if (windowId < 0) throw changed();
+      if (input.windowId !== undefined && input.windowId !== windowId) throw changed();
+      const activationEpoch = activation(windowId);
+      const tabId = await activeTab(windowId);
+      if (activation(windowId) !== activationEpoch) throw changed();
       if (input.tabId !== undefined && input.tabId !== tabId) throw changed();
-      return { kind: "sidebar", tabId, windowId: context.windowId, activationEpoch, contextDocumentId: context.documentId, contextId: context.contextId, sender };
+      if ((await getTab(tabId)).windowId !== windowId) throw changed();
+      return { kind: "sidebar", tabId, windowId, activationEpoch, contextDocumentId: context.documentId, contextId: context.contextId, sender };
     }
     if (ownPage(sender.url, "pdf.html")) {
       const context = await ownContext(sender, "pdf.html");
@@ -186,6 +197,7 @@ export function createPdfHandoffHandler() {
     )
       throw new PdfNavigationError("FORBIDDEN", "This PDF action is not available from this page.");
     if (input.tabId !== undefined && input.tabId !== sender.tab.id) throw new PdfNavigationError("FORBIDDEN", "This PDF action belongs to another tab.");
+    if (input.windowId !== undefined && input.windowId !== sender.tab.windowId) throw new PdfNavigationError("FORBIDDEN", "This PDF action belongs to another window.");
     return { kind: "content", tabId: sender.tab.id, documentId: sender.documentId, sender };
   };
   const guard = async (actor: Actor, snapshot: Snapshot) => {
@@ -193,10 +205,11 @@ export function createPdfHandoffHandler() {
     if (actor.kind === "sidebar" && activation(actor.windowId!) !== actor.activationEpoch) throw changed();
     if (actor.kind === "sidebar") {
       const context = await ownContext(actor.sender, "sidepanel.html", actor);
-      if (context.windowId !== actor.windowId) throw changed();
+      if (context.windowId !== actor.windowId && !(context.contextType === "SIDE_PANEL" && context.windowId === -1)) throw changed();
       if (await activeTab(actor.windowId!) !== actor.tabId) throw changed();
     } else if (actor.kind === "reader") await ownContext(actor.sender, "pdf.html", actor);
     const observed = await observeTab(actor.tabId);
+    if (actor.kind === "sidebar" && observed.tab.windowId !== actor.windowId) throw changed();
     if (observed.url !== snapshot.url || (observed.tab.pendingUrl && pageUrl(observed.tab.pendingUrl) !== snapshot.url)) throw changed();
     if (snapshot.readerDocumentId && snapshot.readerDocumentId !== observed.readerDocumentId) throw changed();
     if (snapshot.documentId && !snapshot.readerDocumentId && actor.kind !== "reader") {
@@ -268,7 +281,7 @@ export function createPdfHandoffHandler() {
     return { context, snapshot };
   };
   const singleFlight = (actor: Actor, input: Input, run: () => Promise<unknown>) => {
-    const key = JSON.stringify([input.type, actor.kind, actor.sender.documentId, input.expectedUrl, input.candidateUrl, input.token]);
+    const key = JSON.stringify([input.type, actor.kind, actor.windowId, actor.contextDocumentId ?? actor.sender.documentId, input.expectedUrl, input.candidateUrl, input.token]);
     const existing = flights.get(actor.tabId);
     if (existing) {
       if (existing.key !== key) throw changed();
@@ -354,9 +367,6 @@ export function createPdfHandoffHandler() {
       }
       throw new PdfNavigationError("INVALID_INPUT", "Unsupported PDF request.");
     } catch (error) {
-      if (error instanceof PdfNavigationError && error.code === "FORBIDDEN") {
-        error.message += ` [diagnostic: own=${sender.id === chrome.runtime.id}; sidebar=${ownPage(sender.url, "sidepanel.html")}; reader=${ownPage(sender.url, "pdf.html")}; frame=${sender.frameId ?? "absent"}; document=${sender.documentId ? "present" : "absent"}; lifecycle=${sender.documentLifecycle ?? "absent"}]`;
-      }
       return {
         ok: false,
         code: error instanceof PdfNavigationError ? error.code : "CONTEXT_UNAVAILABLE",

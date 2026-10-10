@@ -136,6 +136,53 @@ beforeEach(async () => {
 });
 
 describe('native extension UI authority', () => {
+  it.each([UI.documentId, undefined])('uses the observed UI window when Chrome omits native sidebar window metadata (%s)', async senderDocumentId => {
+    contexts[0] = { ...contexts[0]!, frameId: 0, windowId: -1 };
+    const sender = { ...UI, documentId: senderDocumentId };
+    expect(value(await rpc<PdfTabContext>({ type: 'pdf.context.get', tabId: 7, windowId: 1 }, sender))).toMatchObject({ tabId: 7, kind: 'direct' });
+    expect(value(await rpc<PdfOpenResult>({ type: 'pdf.openCurrent', tabId: 7, windowId: 1, expectedUrl: ORIGINAL }, sender))).toMatchObject({ tabId: 7, navigation: 'same-tab' });
+    expect(updates).toHaveLength(1);
+  });
+
+  it('requires an observed tab and window instead of guessing a windowless sidebar owner', async () => {
+    contexts[0] = { ...contexts[0]!, frameId: 0, windowId: -1 };
+    for (const fields of [{ tabId: 7 }, { windowId: 1 }, {}])
+      expect(await rpc({ type: 'pdf.openCurrent', ...fields })).toMatchObject({ ok: false, code: 'CONTEXT_UNAVAILABLE' });
+    expect(updates).toHaveLength(0); expect(handoffs()).toHaveLength(0);
+  });
+
+  it('rejects a stale window before native sidebar navigation', async () => {
+    contexts[0] = { ...contexts[0]!, frameId: 0, windowId: -1 };
+    tabs.set(7, { ...tabs.get(7)!, windowId: 2 });
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7, windowId: 1 })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0); expect(handoffs()).toHaveLength(0);
+  });
+
+  it('rechecks the source window after the final active-tab query', async () => {
+    contexts[0] = { ...contexts[0]!, frameId: 0, windowId: -1 };
+    afterWrite = () => {
+      const originalGet = chrome.tabs.get;
+      chrome.tabs.get = (async (tabId: number) => {
+        tabs.set(7, { ...tabs.get(7)!, windowId: 2 });
+        return originalGet(tabId);
+      }) as typeof chrome.tabs.get;
+    };
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7, windowId: 1, expectedUrl: ORIGINAL })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0); expect(handoffs()).toHaveLength(0);
+    expect(tabs.get(7)!.url).toBe(ORIGINAL);
+  });
+
+  it('rejects a window that contradicts the browser-provided own UI context', async () => {
+    expect(await rpc({ type: 'pdf.openCurrent', tabId: 7, windowId: 2 })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0);
+  });
+
+  it('rejects a content caller that supplies a foreign window', async () => {
+    const sender: chrome.runtime.MessageSender = { id: ID, url: ORIGINAL, frameId: 0, documentId, tab: tabs.get(7) };
+    expect(await rpc({ type: 'pdf.openCurrent', windowId: 2 }, sender)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+  });
+
   it.each([
     ['document present, frame absent', UI.documentId, undefined],
     ['document present, frame -1', UI.documentId, -1],
