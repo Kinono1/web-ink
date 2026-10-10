@@ -1,12 +1,46 @@
-# Web Ink v0.3.2 — candidate validation checkpoint
+# Web Ink v0.3.2 — validation checkpoint
 
-This is a local candidate record, not a release or proof that the user's Chrome is running v0.3.2. Native Chrome acceptance is pending because the Mac was locked during computer-use checks. The installed main checkout remains v0.3.1 at `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`.
+Updated 2026-10-10 (Asia/Shanghai). This record separates the current native Chrome acceptance from earlier synthetic-browser and package evidence. The current observed runtime is v0.3.2 at `6efd02da4da459ecd1cbc37b9182790a501f26c3`; this is a candidate checkpoint, not a release or post-merge validation.
 
-## Automated checkpoint — 2026-10-10, Asia/Shanghai
+## Current native Chrome acceptance — 2026-10-10
 
-Clean source/build: `6df483c80c995dc8ceab5fa1029c103928c509e3`, version `0.3.2`, `dirty:false`. Node 26.5.0; Playwright 1.63.0; isolated Chrome for Testing 153.0.8010.12.
+The user’s existing Chrome 154.0.8037.98 window was kept open. The existing extension ID `cmllmmnfiefikhcbelokclankodgcdog` was unchanged. The loaded directory `/Users/kino/Files/work_projects/code/web-ink/.output/chrome-mv3` was reloaded with the v0.3.2 build at `6efd02d` (`dirty:false`). Its `build-info.json` SHA-256 is `c60adac8e07638521c11e2911c0cc2acd6978a05da9b69f1c6648a67acabbf01`. The observed runtime identity was `v0.3.2 · 6efd02d`, generation `953439d3-d086-4e19-83bd-71dbec390cdc`.
 
-| Check | Actual result |
+The native side panel reported Chrome’s `SIDE_PANEL` context with `windowId = -1`. The candidate handled this context successfully. From the Google Scholar PDF Reader page for public MICCAI paper 3466, the side panel opened the extension reader in the same tab. A real text selection was highlighted, a note was explicitly added and saved, and the note and highlight remained after refreshing on page 3. The reader’s return action went back to the original Scholar URL.
+
+The three local artificial PDFs were identified by SHA-256 and exercised in the existing Chrome window:
+
+| Fixture | SHA-256 | Observed result |
+| --- | --- | --- |
+| `中文多栏原版.pdf` | `f22ab5b9e585a652844ef267c319fbf16d87ccef19264f606229c1dc78a24bbc` | Created a green highlight. After refresh, the reader asked to reselect the local file; selecting the same file restored page 2 and its annotation. |
+| `中文多栏内容变更.pdf` | `9259b30e1deb53219c400c5399fd2355ca6a6d7fe0053457c2c47872b4636d6f` | The prior annotation remained stored, while the changed document showed zero annotations. |
+| `原创图像扫描样例.pdf` | `5e2317f95a0405c28f7d3ab03a518839e4b12d766612e44230010feaef08ba23` | The scan displayed correctly and area mode opened. A native drag did not create a selection, so native area annotation is **not verified**. |
+
+The profile already had site access set to “On all sites”; this run did not change personal permissions and did not exercise native allow/deny prompts. The browser was not restarted, to preserve the user’s existing window. These observations are limited to the flows listed above.
+
+The local artifacts remain outside the repository under `/private/tmp/web-ink-v032-native-fixtures/`. The local update receipt (`.superpowers/sdd/2026-10-09-web-ink-v032/scratch/current-chrome-acceptance/window-update.log`, excluded from Git) records the synchronized build, output path, extension ID, and file count. The older local `current-chrome-acceptance/native-first-pass.json` records the pre-fix `6aaefff` failure and is superseded by this `6efd02d` acceptance. No personal notes, profile data, or screenshots were added to this repository.
+
+## Current automated regression checkpoint — 6efd02d
+
+The integration checkout is on `feat/pdf-workspace` at `6efd02da4da459ecd1cbc37b9182790a501f26c3`. The focused regression for the native `windowId = -1` context and its UI message handling passed along with the following checks:
+
+| Check | Result |
+| --- | --- |
+| Focused PDF handoff and management UI tests | 77 passed / 2 files |
+| Ordinary unit suite | 308 passed / 27 files |
+| Type check (`npm run check`) | Passed, exit code 0 |
+| Large-data suite | 3 passed / 2 files |
+| Release/installation tools | 30 passed |
+
+Local receipts are under `.superpowers/sdd/2026-10-09-web-ink-v032/scratch/native-context-fix/`: `window-green.log`, `window-unit.log`, `window-check.log`, `window-bulk.log`, and `window-release.log`. They are excluded from Git. The full Playwright suite was **not** rerun on `6efd02d` in this checkpoint.
+
+## Earlier synthetic-browser and package evidence — historical
+
+These results belong to earlier builds and remain useful only for those recorded builds; they are not a full-suite result for `6efd02d` and are not native-profile proof. Earlier PDF automation and visual receipts on `b0c4765` and the `cfdc565` visual repair are retained as historical evidence.
+
+The earlier clean `6df483c80c995dc8ceab5fa1029c103928c509e3` build was v0.3.2 with `dirty:false`, tested with Node 26.5.0, Playwright 1.63.0, and Chrome for Testing 153.0.8010.12:
+
+| Check | Earlier result on 6df |
 | --- | --- |
 | Type check | Passed |
 | Ordinary unit suite | 285 passed / 27 files |
@@ -16,26 +50,20 @@ Clean source/build: `6df483c80c995dc8ceab5fa1029c103928c509e3`, version `0.3.2`,
 | Full browser suite | 57 passed / 5 files; 69.854 seconds |
 | Release-mode local ZIP | Passed; 227 runtime files matched after extraction |
 
-The full browser run includes text/image creation and recovery, deletion/undo and conflicts, PDF selection/save/failed retry, same-tab handoff and token/return behavior, hash-bound bookmarks, bounded 500/1000-page rendering, browser restart, three in-place extension Reload transitions, and the old-version upgrade. Functional host tests use synthetic responses and disposable pre-granted manifests. They do not establish native permission approval, actual IEEE access or Scholar coexistence.
+That CFT run exercised text/image creation and recovery, deletion/undo and conflicts, PDF selection/save/failed retry, same-tab handoff and return, hash-bound bookmarks, bounded large-PDF rendering, synthetic browser restart, three extension Reload transitions, and the old-version upgrade. Its functional host fixtures used synthetic responses and disposable pre-granted manifests. They do not establish native prompt behavior or access to external publisher content. The CFT run included area-mode coverage; that remains synthetic evidence and does not change the incomplete native area drag result above.
 
-The first full 8af checkpoint had three failures caused by old theme/initial-detail assumptions; these were corrected without dropping data/undo assertions. Rebuilding also exposed an exact PDF CTA selector mismatch, fixed in `6df483c`. No browser test was skipped.
+The prior public v0.3.0 ZIP used as the upgrade baseline had SHA-256 `d8298aca8ff085ad282595cef898d96bfaef7657e2ec8f4e28110aeb72dfe9a2`; the separate historical v0.3.1 Reload baseline was `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`. The earlier 6df local ZIP had SHA-256 `0617b8bc488801af293701336c18ca5607c58ce2574e271e16ab4bea9b467008`; an independent extraction audit found no missing, extra, or changed files. These are historical package receipts, not a ZIP built from `6efd02d`.
 
-## Independent checks and evidence boundaries
+The earlier package audit confirmed the existing extension ID, required PDF.js and implementation-reference notices, and absence of test profiles, artificial PDFs, source maps, or common credential patterns in the ZIP. Pinned snippets, adapted contracts, retained Web Ink logic, and license boundaries are recorded in [OPEN_SOURCE_REFERENCES.md](OPEN_SOURCE_REFERENCES.md). No runtime dependency, annotation database/backup schema, or extension identity change was introduced in those earlier checkpoints.
 
-The v0.3.0 upgrade baseline is the public ZIP with SHA-256 `d8298aca8ff085ad282595cef898d96bfaef7657e2ec8f4e28110aeb72dfe9a2`; the separate Reload baseline is clean v0.3.1 commit `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`. Upgrade assertions retain all four annotation types, ID/body/note/color/tags/revision/target, settings and local preferences, and JSON export/import.
+Earlier CFT visual captures measured the 52px reader bar, 320px notes rail/overlay, light and dark surfaces, real 200% tab zoom, 320px side panel, saved Chinese highlight/note, and bounded canvas counts. Three Management captures with incorrect theme naming, unsettled filtered results, or clipped full-page zoom were excluded and replaced by asserted captures; these were harness errors, not product defects. A later visual review found low-contrast placeholder/selected-label colors and a 24px tag field. `cfdc565d02c6c1d38c027f46d84f892b077e8527` corrected those styles using existing roles and field tokens. The measured CFT contrast ratios were: placeholders 6.77:1 light and 5.61:1 dark; selected labels 14.52:1 light and 10.46:1 dark. These measurements describe the earlier visual-repair captures, not the current native run.
 
-The 6df local ZIP SHA-256 is `0617b8bc488801af293701336c18ca5607c58ce2574e271e16ab4bea9b467008`. An independent extraction audit found zero missing, extra or changed files; the manifest derives the existing extension ID `cmllmmnfiefikhcbelokclankodgcdog`. PDF.js resource notices and the full pinned implementation-reference notices are present. The file/content checks found no test profiles, backup files, artificial PDFs, source maps or common credential patterns. This is a bounded package audit, not a general legal or security determination.
+## Remaining delivery gates
 
-Pinned source snippets, adapted input/output contracts, retained Web Ink logic and license boundaries are documented in [OPEN_SOURCE_REFERENCES.md](OPEN_SOURCE_REFERENCES.md). No runtime dependency, annotation database/backup schema or extension identity change was introduced.
+- Final native Reload verification is incomplete. After the successful PDF and local-file flows, computer-use observations showed blank web content while accessibility still listed controls; webpage toggle clicks had no confirmed effect. The extension manager was recovered through Chrome’s Extensions menu, and another own-extension Reload was clicked, but the ordinary webpage flow remains unverified. The cause of this observation/input failure has not been established. Do not count it as a passing Reload round or merge gate.
+- Native allow/deny prompts remain untested because the existing profile was already allowed on all sites; this work did not alter that setting.
+- A native area selection was not completed. The scan itself displayed and area mode opened; only the earlier synthetic E2E suite verified area-mode interaction.
+- The browser restart gate was not run because the existing user window was preserved.
+- The current candidate’s exact PR-head CI, including Chrome 120 webpage and Chrome 125 PDF checks, remains pending, as do merge to `main`, final `main` CI/build/ZIP, and post-merge installation synchronization and Chrome acceptance.
 
-Actual local synthetic-PDF and Management captures verify the 52px reader bar, 320px notes rail/overlay, light/dark surfaces, real 200% tab zoom, 320px side panel, saved Chinese highlight/note and bounded 3–4 canvases. Three Management captures were invalid evidence (wrong theme filename, unsettled filtered list, clipped full-page zoom capture); they were preserved and replaced with explicitly asserted theme/row/viewport captures. These were harness errors, not proof of production defects.
-
-Fresh visual review identified three concrete CSS issues: light placeholders and selected-label contrast, and a 24px native tag field. `cfdc565d02c6c1d38c027f46d84f892b077e8527` uses existing text roles and the existing 36px/8px field style. Shared theme values and annotation colors stay intact. The affected suite passed 49 tests. Actual Management post-fix measurements show tag fields at 36px / 8px / 14px in both themes, placeholders at 6.77:1 light and 5.61:1 dark, and selected labels at 14.52:1 light and 10.46:1 dark. The actual PDF active More label and public-source placeholder pass at the same respective ratios in both themes; the input was not submitted. Final independent visual scoring remains a separate receipt.
-
-## Gates still pending
-
-- Regular Chrome's native allow/deny prompts; actual built-in viewer and Scholar coexistence; public HTTPS/IEEE accessible and inaccessible paths; local Chinese/image-only/changed-content files.
-- Three actual Chrome Reload-button rounds using one loaded directory and ID, without uninstalling, changing directories, host refresh or browser restart; final user-profile activation. Automated Reload evidence does not replace this gate.
-- Exact PR-head CI including Chrome 120 webpage and Chrome 125 PDF checks; merge commit to main; final main CI/build/ZIP; primary-checkout installation sync and actual runtime health.
-
-No push, PR, merge to main, public Release or tag has been performed at this checkpoint. Ordered native acceptance remains before PR integration. Saved test evidence and temporary profiles are excluded from Git; personal PDFs, notes and browser profiles were not used.
+No push, PR, merge to `main`, public Release, or tag has been performed at this checkpoint. The current native run does not replace the ordered final delivery gate.
