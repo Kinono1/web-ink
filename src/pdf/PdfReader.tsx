@@ -1,5 +1,7 @@
 import { PdfPage } from "./PdfPage";
 import { PdfNote, type PdfNoteDraft } from "./PdfNote";
+import { connectPdfSidebar } from "./sidebar-connection";
+import type { PdfReaderRequest, PdfSidebarState } from "./sidebar-types";
 import {
   errorText,
   type PdfAnnotation,
@@ -100,6 +102,15 @@ export function PdfReader() {
   const moreMenu = useRef<HTMLDivElement>(null);
   const moreTrigger = useRef<HTMLButtonElement>(null);
   const notesRail = useRef<HTMLElement>(null);
+  const readerTab = useRef<number | undefined>(undefined);
+  const supportsSidebar = typeof chrome.sidePanel?.open === "function";
+  const [fallbackNotes, setFallbackNotes] = useState(false);
+  const [sidebarAttached, setSidebarAttached] = useState(false);
+  const sidebarAttachedRef = useRef(false);
+  const sidebarClient = useRef<ReturnType<typeof connectPdfSidebar> | undefined>(undefined);
+  const sidebarHandler = useRef<(message: PdfReaderRequest) => void>(() => {});
+  const sidebarView = useRef<PdfSidebarState | null>(null);
+  const [sidebarAck, setSidebarAck] = useState<string>();
   const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
   const [handoffReady, setHandoffReady] = useState(!handoffToken);
   const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
@@ -132,6 +143,7 @@ export function PdfReader() {
   const [noteSaving, setNoteSaving] = useState<string>();
   const [noteConflicts, setNoteConflicts] = useState<Record<string, boolean>>({});
   const [documentSession, setDocumentSession] = useState(0);
+  const sidebarSession = useMemo(() => crypto.randomUUID(), [documentSession]);
   const container = useRef<HTMLDivElement>(null);
   const session = useRef(new PdfSession());
   const documentSessionRef = useRef(0);
@@ -149,14 +161,45 @@ export function PdfReader() {
   const zh = settings.language === "zh-CN";
   const t = (cn: string, en: string) => (zh ? cn : en);
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
+  const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
+  useEffect(() => {
+    void chrome.tabs?.getCurrent?.().then((tab) => { readerTab.current = tab?.id; });
+    if (!chrome.runtime.connect) return;
+    const client = connectPdfSidebar("web-ink-pdf-reader", (message) => {
+      if (message.type === "attached") {
+        sidebarAttachedRef.current = message.attached;
+        setSidebarAttached(message.attached);
+        if (message.attached) setFallbackNotes(false);
+      } else if (message.type === "command") sidebarHandler.current(message);
+      else if (message.type === "unavailable") {
+        sidebarAttachedRef.current = false;
+        setSidebarAttached(false);
+      }
+    }, () => client.send({ type: "state", state: sidebarView.current }));
+    sidebarClient.current = client;
+    return () => { sidebarClient.current = undefined; client.dispose(); };
+  }, []);
+  function openNotes() {
+    if (!supportsSidebar) { setNotesOpen((open) => !open); return; }
+    setNotesOpen(true);
+    if (readerTab.current === undefined) {
+      setError(t("请点击浏览器工具栏 Web Ink 打开标注侧栏。", "Click Web Ink in the browser toolbar to open annotations."));
+      return;
+    }
+    // Must run on the click, before saving yields the user gesture.
+    void chrome.sidePanel.open({ tabId: readerTab.current }).then(() => setFallbackNotes(false)).catch(() => {
+      if (!sidebarAttachedRef.current) setFallbackNotes(true);
+      setError(t("侧栏暂时无法打开，请重试或点击工具栏 Web Ink。", "The sidebar could not open. Retry or click Web Ink in the toolbar."));
+    });
+  }
   const savedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
   const deletedDrafts = Object.values(noteDrafts).filter(
     (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
   );
   useLayoutEffect(() => {
-    if (notesOpen && deletedDrafts.length && !pendingLeave && !sourceOpen)
+    if (inlineNotes && deletedDrafts.length && !pendingLeave && !sourceOpen)
       notesRail.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
-  }, [notesOpen, deletedDrafts.length, pendingLeave, sourceOpen]);
+  }, [inlineNotes, deletedDrafts.length, pendingLeave, sourceOpen]);
   const sortedNotes = useMemo(
     () =>
       records
@@ -718,7 +761,7 @@ export function PdfReader() {
       tell(t("已保存到本机", "Saved on this device"));
       if (editNote) {
         setNotesOpen(true);
-        setNotesLimit((limit) => Math.max(limit, records.length + 1));
+        if (!supportsSidebar || fallbackNotes) setNotesLimit((limit) => Math.max(limit, records.length + 1));
         updateDraft(stored.id, { note: stored.note, tags: stored.tags.join(", "), color: stored.color, base: stored, editing: true });
       }
       return stored;
@@ -929,6 +972,45 @@ export function PdfReader() {
     });
   }
   const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0;
+  const sidebarState: PdfSidebarState | null = opened && key && !busy ? {
+    sessionId: sidebarSession, pageUrl: key, fileName: opened.fileName,
+    totalCount: records.length,
+    records: sortedNotes.filter((record, index) => index < notesLimit || noteDrafts[record.id]),
+    drafts: noteDrafts, conflicts: noteConflicts,
+    locked: locked || !!pendingLeave || sourceOpen,
+    noteSaving, removing, undoRecord, error, notice,
+  } : null;
+  sidebarView.current = sidebarState;
+  useEffect(() => {
+    sidebarClient.current?.send({ type: "state", state: sidebarState, ack: sidebarAck });
+  }, [opened, key, busy, records, notesLimit, noteDrafts, noteConflicts, locked, pendingLeave, sourceOpen, noteSaving, removing, undoRecord, error, notice, sidebarAck, sidebarSession]);
+  sidebarHandler.current = (message) => {
+    if (message.type !== "command" || message.pageUrl !== key || message.sessionId !== sidebarSession) return;
+    const { command, commandId } = message;
+    const handle = async () => {
+      if (locked || pendingLeave || sourceOpen || annotationWrites.current.size || unsavedRef.current) return;
+      const record = "id" in command ? recordsRef.current.find((record) => record.id === command.id) : undefined;
+      switch (command.type) {
+        case "focus": if (record) { jump(record.target.pageNumber); setPicked(record); } break;
+        case "draft":
+          if (record || draftsRef.current[command.id]) {
+            updateDraft(command.id, command.draft, command.resolveConflict);
+            if (record && command.draft && command.draft.base.revision !== record.revision)
+              setNoteConflicts((old) => ({ ...old, [command.id]: true }));
+          }
+          break;
+        case "save": {
+          const draft = draftsRef.current[command.id];
+          if (draft && !noteConflicts[command.id]) await saveNote(command.id, draft);
+          break;
+        }
+        case "remove": if (record) await remove(record); break;
+        case "undo": await restoreRemoved(); break;
+        case "more": setNotesLimit((limit) => limit + 50); break;
+      }
+    };
+    void handle().catch(() => undefined).finally(() => setSidebarAck(commandId));
+  };
   function changeZoom(delta: number) {
     userIntent();
     setSelection(undefined);
@@ -991,8 +1073,8 @@ export function PdfReader() {
           onChange={(event) => { const number = event.target.valueAsNumber; if (Number.isInteger(number)) jump(number); }} />
           <span>/ {opened.document.numPages}</span></label>
         <div className="pdf-zoom-controls">{zoomControls}</div>
-        <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={notesOpen} aria-controls="pdf-notes"
-          onClick={() => setNotesOpen((open) => !open)}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
+        <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={sidebarAttached || inlineNotes} aria-controls={inlineNotes ? "pdf-notes" : undefined}
+          onClick={openNotes}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
         <div className="pdf-more" ref={moreMenu}>
           <button className="quiet icon-button" ref={moreTrigger} aria-label={t("更多", "More")} title={t("更多", "More")}
             aria-expanded={moreOpen} aria-controls="pdf-more-menu" disabled={leaving || guardSaving}
@@ -1040,7 +1122,7 @@ export function PdfReader() {
             title={`${t("高亮", "Highlight")} ${chosen}`} style={{ background: chosen }} disabled={locked}
             onPointerDown={(event) => event.preventDefault()} onClick={() => mark(selection.target, "pdf-text", chosen)} />)}
           <button disabled={locked} onPointerDown={(event) => event.preventDefault()}
-            onClick={() => mark(selection.target, "pdf-text", color, true)}><Icon name="note" />{t("添加笔记", "Add note")}</button>
+            onClick={() => { openNotes(); mark(selection.target, "pdf-text", color, true); }}><Icon name="note" />{t("添加笔记", "Add note")}</button>
           <button disabled={saving} onClick={() => { setSelection(undefined); getSelection()?.removeAllRanges(); }}>{t("取消", "Cancel")}</button>
         </div>}
         {picked && showMarks && <div className="pdf-mark-menu" role="status">
@@ -1052,7 +1134,7 @@ export function PdfReader() {
           <button disabled={locked} onClick={() => void restoreRemoved()}>{t("撤销移除", "Undo remove")}</button>
           <button disabled={removing} onClick={() => setUndoRecord(undefined)}>{t("关闭", "Close")}</button>
         </div>}
-        <div className={`pdf-workspace${notesOpen ? " notes-open" : ""}`}>
+        <div className={`pdf-workspace${inlineNotes ? " notes-open" : ""}`}>
           <div className="pdf-pages" tabIndex={0} ref={container} aria-label={t("PDF 页面", "PDF pages")}
             onWheelCapture={userIntent} onPointerDownCapture={userIntent}
             onKeyDownCapture={(event) => { if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) userIntent(); }}>
@@ -1073,7 +1155,7 @@ export function PdfReader() {
             ))}
             <div aria-hidden="true" style={{ height: Math.max(0, layoutIndex.current.totalHeight() - layoutIndex.current.offsetBefore(Math.min(pageWindow.end, opened.document.numPages) + 1)) }} />
           </div>
-          <aside className="pdf-notes" id="pdf-notes" ref={notesRail} aria-label={t("本篇笔记", "Document notes")} hidden={!notesOpen}>
+          <aside className="pdf-notes" id="pdf-notes" ref={notesRail} aria-label={t("本篇笔记", "Document notes")} hidden={!inlineNotes}>
             <div className="pdf-notes-header"><h2>{t("本篇标注", "Annotations")} <span>{records.length}</span></h2>
               <button className="quiet icon-button" aria-label={t("关闭笔记", "Close notes")} onClick={() => setNotesOpen(false)}><Icon name="close" /></button></div>
             {!records.length && <p className="pdf-muted">{t("选中文字后选择颜色保存高亮，或用「区域标注」框选图表。", "Select text and choose a color to save it, or use Mark area for a figure.")}</p>}

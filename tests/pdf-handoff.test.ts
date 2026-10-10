@@ -77,6 +77,7 @@ beforeEach(async () => {
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => ({ version: '0.3.2', commit: 'a'.repeat(40), dirty: false }) }));
   vi.stubGlobal('chrome', {
     runtime: {
+      onConnect: { addListener() {} },
       id: ID, getURL: (path: string) => `chrome-extension://${ID}/${path.replace(/^\//, '')}`,
       getManifest: () => ({ version: '0.3.2' }), onInstalled: event(), sendMessage: async () => {},
       onMessage: { addListener: (next: Listener) => { listener = next; } },

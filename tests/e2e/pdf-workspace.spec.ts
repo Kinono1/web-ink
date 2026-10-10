@@ -25,12 +25,19 @@ async function rpc<T>(page: Page, message: object): Promise<T> {
   return response.data;
 }
 async function activeTab(page: Page) {
-  return control.evaluate(async (url) => {
-    const tab = (await chrome.tabs.query({})).find((item) => item.url === url);
+  const ownTabId = await page.evaluate(async () =>
+    location.protocol === "chrome-extension:"
+      ? (await chrome.tabs.getCurrent())?.id
+      : undefined,
+  );
+  return control.evaluate(async ({ ownTabId, url }) => {
+    const tab = ownTabId === undefined
+      ? (await chrome.tabs.query({})).find((item) => item.url === url)
+      : { id: ownTabId };
     if (tab?.id === undefined) throw new Error(`Synthetic fixture tab missing: ${url}`);
     await chrome.tabs.update(tab.id, { active: true });
     return tab.id;
-  }, page.url());
+  }, { ownTabId, url: page.url() });
 }
 async function htmlPage(url: string, body: string) {
   await context.route(url, (route) => route.fulfill({
@@ -58,6 +65,9 @@ async function openCurrent(url = source, bytes = fixturePdf()) {
   });
   await expect(original).toHaveURL(result.readerUrl);
   await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  // The extension page below is a synthetic sidepanel surface. Make the reader
+  // the real active tab so ManagementApp observes its current-PDF context.
+  await activeTab(original);
   return { reader: original, tabId, result };
 }
 async function readerPage(query = "") {
@@ -75,6 +85,7 @@ async function openLocal(reader: Page, bytes = fixturePdf(), name = "reading.pdf
   });
   await expect(reader.locator(".pdf-name")).toHaveText(name);
   await expect(reader.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  await activeTab(reader);
 }
 async function selectText(reader: Page) {
   await reader.locator(".textLayer span").first().evaluate((element) => {
@@ -93,12 +104,20 @@ async function highlight(reader: Page) {
   return (await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]!;
 }
 async function editNote(reader: Page, record: Annotation, draft: string) {
-  await reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
-  const note = reader.locator(`[data-pdf-note="${record.id}"]`);
+  await openPdfSidebar(reader);
+  const note = control.locator(`[data-pdf-note="${record.id}"]`);
   await note.getByRole("button", { name: "编辑", exact: true }).click();
   const input = note.getByRole("textbox", { name: "笔记", exact: true });
   await input.fill(draft);
   return input;
+}
+async function openPdfSidebar(reader: Page) {
+  await activeTab(reader);
+  await reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
+  await activeTab(reader);
+  await expect(control.locator(".pdf-sidebar")).toBeVisible();
+  await expect(reader.locator(".pdf-notes")).toBeHidden();
+  await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
 }
 async function moreAction(reader: Page, name: string) {
   await reader.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true }).click();
@@ -152,6 +171,7 @@ test.afterEach(async ({}, info) => {
     browser: context?.browser()?.version(),
     permissionEvidence: info.title.startsWith("production permission") ? "production manifest; no native grant" : "pre-granted disposable manifest",
     sourceEvidence: "synthetic intercepted responses; not actual IEEE/Scholar content",
+    surfaceEvidence: "sidepanel.html is a synthetic extension page for headless tests, not a native Chrome side panel",
     observations,
   }, null, 2));
   await info.attach("pdf-workspace-observations", { path: receipt, contentType: "application/json" });
@@ -303,6 +323,7 @@ test("selection and copy events create no record and color selection works immed
   await openLocal(reader);
   await expect(reader.getByRole("button", { name: /^(开启标注|关闭标注)$/ })).toHaveCount(0);
   await expect(reader.locator(".pdf-notes")).toBeHidden();
+  await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
   await selectText(reader);
   await reader.evaluate(() => document.dispatchEvent(new ClipboardEvent("copy", { bubbles: true })));
   expect(await rpc(control, { type: "annotations.list" })).toEqual([]);
@@ -329,15 +350,22 @@ test("abandoned readers retain one return session per tab and closing reclaims i
   await expect.poll(sessions).toEqual([]);
 });
 
-test("adding a note opens its editor with focus after a deliberate text selection", async () => {
+test("adding a note opens a ready synthetic sidepanel editor after a deliberate text selection", async () => {
   const reader = await readerPage();
   await openLocal(reader);
   await selectText(reader);
   await reader.getByRole("button", { name: "添加笔记", exact: true }).click();
+  await activeTab(reader);
   await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" })).length).toBe(1);
-  await expect(reader.locator(".pdf-notes")).toBeVisible();
-  const editor = reader.locator(".pdf-note").getByRole("textbox", { name: "笔记", exact: true });
-  await expect(editor).toBeFocused();
+  await expect(control.locator(".pdf-sidebar")).toBeVisible();
+  await expect(reader.locator(".pdf-notes")).toBeHidden();
+  await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
+  const editor = control.locator(".pdf-note").getByRole("textbox", { name: "笔记", exact: true });
+  // This surface is a background extension tab, not the native side panel.
+  // Keep the reader active for context routing; test native focus separately.
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeEnabled();
+  expect(await reader.evaluate(async () => (await chrome.tabs.getCurrent())?.active)).toBe(true);
   await editor.fill("Synthetic note draft");
   expect((await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]?.note).toBe("");
 });
@@ -375,6 +403,44 @@ test("a revision-conflict save keeps the draft and discard returns without overw
   await guard.getByRole("button", { name: "放弃并继续", exact: true }).click();
   await expect(reader).toHaveURL(source);
   expect((await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]?.note).toBe("Newer saved value");
+});
+
+test("synthetic sidepanel restores saved notes and focuses the same reader tab without inline notes", async () => {
+  const bytes = fixturePdf(3, "Sidebar record focus fixture");
+  const reader = await readerPage();
+  await openLocal(reader, bytes, "sidebar-focus.pdf");
+  await reader.getByLabel("页码", { exact: true }).fill("2");
+  await expect(reader.locator('[data-page="2"] .pdf-page[data-ready=true]')).toBeVisible();
+  await reader.locator('[data-page="2"] .textLayer span').first().evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await reader.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" })).length).toBe(1);
+  const record = (await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]!;
+  expect(record.target).toMatchObject({ pageNumber: 2 });
+  await openPdfSidebar(reader);
+  const beforePanels = context.pages().filter((item) => item.url() === `chrome-extension://${id}/sidepanel.html`);
+  expect(beforePanels).toHaveLength(1);
+  const note = control.locator(`[data-pdf-note="${record.id}"]`);
+  await note.getByRole("button", { name: "编辑", exact: true }).click();
+  await note.getByRole("textbox", { name: "笔记", exact: true }).fill("Saved sidebar note");
+  await note.getByRole("button", { name: "保存", exact: true }).click();
+  await expect.poll(async () => (await rpc<Annotation[]>(control, { type: "annotations.list" }))[0]?.note).toBe("Saved sidebar note");
+  await reader.getByLabel("页码", { exact: true }).fill("1");
+  await note.locator(".pdf-note-source").click();
+  await expect(reader.getByLabel("页码", { exact: true })).toHaveValue("2");
+  expect(await activeTab(reader)).toBeGreaterThanOrEqual(0);
+  await reader.reload();
+  await openLocal(reader, bytes, "sidebar-focus-restored.pdf");
+  await expect(control.locator(`[data-pdf-note="${record.id}"]`)).toContainText("Saved sidebar note");
+  await expect(reader.locator(".pdf-notes")).toBeHidden();
+  await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
+  expect(context.pages().filter((item) => item.url() === `chrome-extension://${id}/sidepanel.html`)).toHaveLength(1);
 });
 
 test("mixed-page bookmarks restore after local reselect and explicit pages beat stored positions", async () => {
@@ -455,12 +521,13 @@ test("production permission absence prevents automatic fetch while local-file re
   await openLocal(reader);
 });
 
-test("the 320px dark reader keeps its toolbar usable, notes overlaid and canvases bounded", async () => {
+test("the 320px dark reader keeps its toolbar usable while the synthetic sidepanel shows notes", async () => {
   const reader = await readerPage();
   const settings = await rpc<Settings>(control, { type: "settings.get" });
   await rpc(control, { type: "settings.put", settings: { ...settings, theme: "dark", reduceMotion: true } });
   await reader.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
   await reader.setViewportSize({ width: 320, height: 640 });
+  await control.setViewportSize({ width: 320, height: 640 });
   await openLocal(reader, fixturePdf(40), "long-paper.pdf");
   const toolbar = reader.locator(".pdf-toolbar");
   for (const name of ["笔记", "更多"])
@@ -470,14 +537,14 @@ test("the 320px dark reader keeps its toolbar usable, notes overlaid and canvase
   expect(await reader.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect(await reader.locator(".pdf-app").evaluate((element) => getComputedStyle(element).backgroundColor)).toBe("rgb(17, 19, 24)");
   expect(await reader.locator(".pdf-page canvas").first().evaluate((element) => getComputedStyle(element).filter)).toBe("none");
-  await toolbar.getByRole("button", { name: "笔记", exact: true }).click();
-  await expect(reader.locator(".pdf-notes")).toBeVisible();
-  expect((await reader.locator(".pdf-notes").boundingBox())!.width).toBeLessThanOrEqual(320);
-  await toolbar.getByRole("button", { name: "笔记", exact: true }).click();
+  await openPdfSidebar(reader);
+  await expect(control.locator(".pdf-sidebar")).toBeVisible();
+  expect(await control.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await reader.getByLabel("页码", { exact: true }).fill("35");
   await expect(reader.locator('[data-page="35"] .pdf-page[data-ready=true]')).toBeVisible();
   expect(await reader.locator(".pdf-page canvas").count()).toBeLessThan(12);
   const motion = await toolbar.getByRole("button", { name: "更多", exact: true }).evaluate((element) => ({ transition: getComputedStyle(element).transitionDuration, animation: getComputedStyle(element).animationDuration }));
   expect(motion).toEqual({ transition: "0s", animation: "0s" });
-  await reader.screenshot({ path: test.info().outputPath("pdf-workspace-dark-320.png") });
+  await reader.screenshot({ path: test.info().outputPath("pdf-reader-dark-320.png") });
+  await control.screenshot({ path: test.info().outputPath("pdf-synthetic-sidepanel-dark-320.png") });
 });

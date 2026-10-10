@@ -297,3 +297,15 @@
     padding-left: 4px;
   }
 }
+
+/* PDF notes share this single scrolling sidebar with webpage notes. */
+.pdf-sidebar { display: grid; gap: 8px; min-width: 0; }
+.pdf-sidebar-context { display: grid; gap: 4px; padding: 0 8px 12px; border-bottom: 1px solid var(--ink-separator); }
+.pdf-sidebar-context strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.pdf-sidebar-context span, .pdf-sidebar-empty, .pdf-sidebar-notice { color: var(--ink-secondary); font-size: var(--ink-size-meta); }
+.pdf-sidebar-empty { padding: 12px 8px; }
+.pdf-sidebar-notice { margin: 0; padding: 0 8px; }
+.pdf-sidebar-undo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px; }
+.pdf-sidebar .pdf-note-source { font-family: inherit; }
+.pdf-sidebar .pdf-note-editor :is(textarea, input:not([type="color"])) { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--ink-separator); border-radius: var(--ink-radius-control); color: var(--ink-text); background: var(--ink-fill); font: inherit; }
+.pdf-sidebar .pdf-note-editor input[type="color"] { width: 36px; height: 36px; border: 0; background: transparent; }

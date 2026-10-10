@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', async () => ({ ok: true, json: async () => BUILD }));
   vi.stubGlobal('chrome', {
     runtime: {
+      onConnect: { addListener() {} },
       id: 'web-ink-id', getURL: (path: string) => `chrome-extension://web-ink-id/${path}`,
       getManifest: () => ({ version: BUILD.version }),
       onMessage: { addListener: (listener: MessageListener) => { onMessage = listener; } },
