@@ -1,8 +1,20 @@
 import { defineConfig } from 'wxt';
+import { patchPdfjsRenderErrors } from './scripts/pdfjs-render-errors';
 
 export default defineConfig({
   outDir: '.build-output',
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({
+    plugins: [{
+      name: 'web-ink-pdfjs-render-errors',
+      enforce: 'pre',
+      transform(source, id) {
+        if (id.endsWith('/pdfjs-dist/legacy/build/pdf.mjs')) {
+          return patchPdfjsRenderErrors(source);
+        }
+      },
+    }],
+  }),
   hooks: {
     'build:manifestGenerated': (_wxt, manifest) => {
       // WXT otherwise infers required host access from runtime content-script matches.

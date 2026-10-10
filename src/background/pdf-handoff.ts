@@ -144,7 +144,11 @@ export function createPdfHandoffHandler() {
     const matches = contexts.filter(item => {
       const topTab = item.contextType === "TAB" && item.frameId === 0 && item.tabId >= 0;
       const sidePanel = name === "sidepanel.html" && item.contextType === "SIDE_PANEL" && (item.frameId === -1 || item.frameId === 0);
-      return item.documentId && item.contextId && item.documentUrl === sender.url &&
+      // Chrome keeps MessageSender.url at the loaded URL after replaceState.
+      // Readers add document/position parameters without replacing the document.
+      const samePage = name === "pdf.html" && documentId
+        ? ownPage(item.documentUrl, name) : item.documentUrl === sender.url;
+      return item.documentId && item.contextId && samePage &&
         (!documentId || item.documentId === documentId) &&
         (!pinned || item.contextId === pinned.contextId) && (topTab || sidePanel);
     });

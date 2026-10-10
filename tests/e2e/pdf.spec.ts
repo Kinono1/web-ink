@@ -543,9 +543,9 @@ test("a reader that switches files is not reused for its previous source", async
 test("oversized images fail visibly without permitting partial-page annotations", async () => {
   await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
     name: "oversized-image.pdf", mimeType: "application/pdf",
-    buffer: fixturePdf(1, "This page must not appear complete.", { oversizedImage: true }),
+    buffer: fixturePdf(2, "Image resource gate.", { oversizedImage: true }),
   });
-  const failedPage = page.locator(".pdf-page");
+  const failedPage = page.locator(".pdf-page").first();
   await expect(failedPage.getByRole("alert")).toContainText("图片过大");
   await expect(failedPage.getByRole("alert")).toContainText("原阅读器");
   await expect(failedPage).toHaveAttribute("data-ready", "false");
@@ -554,6 +554,7 @@ test("oversized images fail visibly without permitting partial-page annotations"
   await expect(failedPage.locator(".pdf-area-capture")).toHaveCount(0);
   expect(await rpc({ type: "annotations.list" })).toHaveLength(0);
   expect(await failedPage.locator("canvas").evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
+  await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
   await open(fixturePdf(), "healthy-after-failure.pdf");
   await expect(page.locator(".pdf-page[data-ready=true]")).toHaveCount(1);
   await expect(page.locator(".pdf-page").getByRole("alert")).toHaveCount(0);

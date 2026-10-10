@@ -48,7 +48,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
               convertToViewportPoint: (x: number, y: number) => [x * scale, (height - y) * scale],
             }),
             render: () => {
-              // PDF.js skips oversized images by default but rejects the page when stopAtErrors is enabled.
+              // Model the strict stream error after the build-time PDF.js fix.
               const oversizedImage = number === 1 && io.rejectOversizedImage && options.stopAtErrors === true;
               const promise = io.renderGates[number] ?? (oversizedImage
                 ? Promise.reject(new Error("Image exceeded maximum allowed size and was removed."))

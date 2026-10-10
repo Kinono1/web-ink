@@ -495,6 +495,18 @@ describe('same-tab navigation authority', () => {
 });
 
 describe('reader handoff and return', () => {
+  it('accepts same-document reader URL updates while retaining tab and document identity', async () => {
+    const opened = value(await open());
+    loadedReader(7, opened.readerUrl);
+    const sender = readerSender();
+    const current = new URL(opened.readerUrl);
+    current.searchParams.delete('open');
+    current.searchParams.set('document', 'a'.repeat(64));
+    tabs.get(7)!.url = current.href;
+    contexts.find(entry => entry.tabId === 7)!.documentUrl = current.href;
+    expect(value(await rpc<PdfHandoff | null>({ type: 'pdf.handoff.get', token: opened.token }, sender))).toMatchObject({ tabId: 7 });
+    expect(value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, sender))).toEqual({ tabId: 7, url: ORIGINAL });
+  });
   it('accepts a refreshed document in the same own reader tab and returns to the exact observed URL', async () => {
     const opened = value(await open());
     loadedReader(7, opened.readerUrl, 'refreshed-reader-document');

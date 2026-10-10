@@ -200,3 +200,28 @@ notices; a material copy from react-pdf-highlighter or shadcn/ui carries the
 relevant MIT notice; a material copy from Hypothesis `src/annotator` carries
 the root BSD-2-Clause and annotator MIT notices. Inspect generated license
 artifacts in the release ZIP; this Stage A record is not that verification.
+
+## PDF.js strict rendering error correction (6.3.289)
+
+Native acceptance found that the public MICCAI 3466 PDF includes images above
+the existing 16,777,216-pixel resource limit. PDF.js normally omits these images.
+Web Ink enables `stopAtErrors` so an affected page can offer an explicit fallback
+instead of presenting incomplete content for annotation.
+
+The pinned `pdfjs-dist/legacy/build/pdf.mjs` source SHA-256 is
+`91e29f812c593904e8d48d022db5ddf93e3443575d4765ac9bfbb42494cfbd8d`.
+In `_pumpOperatorList` (upstream lines 22694-22714), the rejected stream sets
+`lastChunk` and calls `operatorListChanged` before rejecting the ready promise.
+A real-PDF.js regression confirms that this can resolve an incomplete operator
+list; a browser regression confirms that the page can also appear successfully
+rendered. `scripts/pdfjs-render-errors.ts` changes only that failure branch:
+reject the operator-list promise, cancel active render tasks with the actual
+error, then run the original cleanup/rejection. Iterate over a snapshot because
+cancellation removes tasks from the set.
+
+WXT applies the correction at build time, without editing `node_modules` or
+changing the worker. A source-hash or target mismatch stops the build and
+requires review when upgrading PDF.js. The distributed PDF.js Apache-2.0
+license remains included. Resource budgets are unchanged. Tests use an original
+synthetic oversized image declaration and a healthy follow-up file, with actual
+PDF.js operator-list and browser rendering coverage.
