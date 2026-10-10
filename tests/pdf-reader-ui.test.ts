@@ -27,6 +27,7 @@ vi.mock("../src/pdf/source", async (original) => {
 });
 vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
   GlobalWorkerOptions: { workerSrc: "" },
+  VerbosityLevel: { ERRORS: 0 },
   getDocument: (options: Record<string, unknown>) => {
     io.documentOptions.push(options);
     return {
@@ -720,6 +721,7 @@ describe("PDF reader workspace", () => {
       maxImageSize: 16777216,
       canvasMaxAreaInBytes: 67108864,
       stopAtErrors: true,
+      verbosity: 0,
     });
     const failedPage = host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')!;
     const healthyPage = host.querySelector<HTMLElement>('[data-page="2"] .pdf-page')!;

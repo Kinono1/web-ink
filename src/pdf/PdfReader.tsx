@@ -681,6 +681,8 @@ export function PdfReader() {
         wasmUrl: chrome.runtime.getURL("/pdfjs/wasm/"),
         iccUrl: chrome.runtime.getURL("/pdfjs/iccs/"),
         enableXfa: false,
+        // Font fallbacks are recoverable; page failures still reject and show an alert.
+        verbosity: api.VerbosityLevel.ERRORS,
         stopAtErrors: true,
         maxImageSize: 16777216,
         canvasMaxAreaInBytes: 67108864,
