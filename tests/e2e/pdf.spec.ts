@@ -9,13 +9,26 @@ import { cp, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fixturePdf } from "../pdf-fixture";
-let context: BrowserContext, folder: string, page: Page, id: string;
+let context: BrowserContext, folder: string, page: Page, control: Page, id: string;
 const rpc = async (message: object) =>
   page.evaluate(async (message) => {
     const r = await chrome.runtime.sendMessage(message);
     if (!r?.ok) throw Error(r?.error);
     return r.data;
   }, message);
+async function activeTab(reader: Page) {
+  const ownTabId = await reader.evaluate(async () =>
+    location.protocol === "chrome-extension:" ? (await chrome.tabs.getCurrent())?.id : undefined,
+  );
+  return control.evaluate(async ({ ownTabId, url }) => {
+    const tab = ownTabId === undefined
+      ? (await chrome.tabs.query({})).find((item) => item.url === url)
+      : { id: ownTabId };
+    if (tab?.id === undefined) throw new Error(`Synthetic reader tab missing: ${url}`);
+    await chrome.tabs.update(tab.id, { active: true });
+    return tab.id;
+  }, { ownTabId, url: reader.url() });
+}
 test.beforeEach(async () => {
   folder = await mkdtemp(path.join(tmpdir(), "web-ink-pdf-"));
   const extension = path.join(folder, "extension");
@@ -51,8 +64,11 @@ test.beforeEach(async () => {
     (await context.waitForEvent("serviceworker"));
   id = new URL(worker.url()).host;
   await context.route(/^https?:\/\//, (route) => route.abort("blockedbyclient"));
+  control = await context.newPage();
+  await control.goto(`chrome-extension://${id}/sidepanel.html`);
   page = await context.newPage();
   await page.goto(`chrome-extension://${id}/pdf.html`);
+  await activeTab(page);
 });
 test.afterEach(async () => {
   await context?.close();
@@ -71,6 +87,17 @@ async function open(buffer = fixturePdf(), name = "reading.pdf") {
   await expect(
     page.locator(".pdf-page[data-ready=true]").first(),
   ).toBeVisible();
+  // The extension page above is a synthetic sidepanel surface. Make the reader
+  // tab active so ManagementApp observes the correct PDF context.
+  await activeTab(page);
+}
+async function openPdfSidebar(reader = page) {
+  await activeTab(reader);
+  await reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
+  await activeTab(reader);
+  await expect(control.locator(".pdf-sidebar")).toBeVisible();
+  await expect(reader.locator(".pdf-notes")).toBeHidden();
+  await expect(reader.locator(".pdf-workspace")).not.toHaveClass(/notes-open/);
 }
 async function moreAction(name: string) {
   await page.locator(".pdf-toolbar").getByRole("button", { name: "更多", exact: true }).click();
@@ -342,11 +369,11 @@ test("PDF notes load beyond 50 and keep an edited draft when the list reorders",
     },
     overwrite: false,
   });
-  await page.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
-  await expect(page.locator(".pdf-note")).toHaveCount(50);
-  await page.getByRole("button", { name: "加载更多", exact: true }).click();
-  await expect(page.locator(".pdf-note")).toHaveCount(56);
-  const note = page.locator(`[data-pdf-note="${base.id}"]`);
+  await openPdfSidebar();
+  await expect(control.locator(".pdf-note")).toHaveCount(50);
+  await control.getByRole("button", { name: "加载更多", exact: true }).click();
+  await expect(control.locator(".pdf-note")).toHaveCount(56);
+  const note = control.locator(`[data-pdf-note="${base.id}"]`);
   await note.getByRole("button", { name: "编辑", exact: true }).click();
   await note
     .getByRole("textbox", { name: "笔记", exact: true })
@@ -436,10 +463,10 @@ test("Chinese multicolumn text uses packaged CMaps and remains separate from are
     .toBe(1);
   const [record] = await rpc({ type: "annotations.list" });
   expect(record.target.exact).toBe("右栏独立的研究结果");
-  await page.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true }).click();
-  await expect(page.locator(".pdf-note")).toHaveCount(1);
-  await page.screenshot({
-    path: "test-results/pdf-chinese.png",
+  await openPdfSidebar();
+  await expect(control.locator(".pdf-note")).toHaveCount(1);
+  await control.screenshot({
+    path: "test-results/pdf-chinese-synthetic-sidepanel.png",
     fullPage: true,
   });
 });
@@ -465,11 +492,11 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
   await expect(page.getByRole("button", { name: "图片绘制" })).toHaveCount(0);
   await page.setViewportSize({ width: 320, height: 640 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.screenshot({ path: "test-results/pdf-handoff-light.png" });
+  await page.screenshot({ path: "test-results/pdf-synthetic-sidepanel-handoff-light.png" });
   const settings = await rpc({ type: "settings.get" });
   await rpc({ type: "settings.put", settings: { ...settings, theme: "dark" } });
   await expect(page.locator(".ink-app")).toHaveAttribute("data-theme", "dark");
-  await page.screenshot({ path: "test-results/pdf-handoff-dark.png" });
+  await page.screenshot({ path: "test-results/pdf-synthetic-sidepanel-handoff-dark.png" });
   const before = context.pages().length;
   await button.click();
   const reader = original;

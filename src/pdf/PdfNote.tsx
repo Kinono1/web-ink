@@ -1,3 +1,4 @@
+import "./notes.css";
 import type { Settings } from "../core/model";
 import type { PdfAnnotation } from "./types";
 export type PdfNoteDraft = {
@@ -97,17 +98,20 @@ export function PdfNote({
             {t("笔记", "Note")}
             <textarea
               autoFocus
+              maxLength={10000}
               disabled={saving || locked}
               value={note}
-              onChange={(e) => updateDraft({ note: e.target.value })}
+              onChange={(e) => updateDraft({ note: e.target.value.slice(0, 10000) })}
             />
+            {note.length >= 10000 && <small role="status">{t("笔记最多 10,000 个字符。", "Notes are limited to 10,000 characters.")}</small>}
           </label>
           <label>
             {t("标签", "Tags")}
             <input
+              maxLength={10000}
               disabled={saving || locked}
               value={tags}
-              onChange={(e) => updateDraft({ tags: e.target.value })}
+              onChange={(e) => updateDraft({ tags: e.target.value.slice(0, 10000) })}
             />
           </label>
           <input

@@ -1,0 +1,88 @@
+.pdf-note {
+  position: relative;
+  display: grid;
+  gap: 4px;
+  padding: 8px 12px 8px 22px;
+  border-radius: var(--ink-radius-control);
+}
+.pdf-note::before {
+  content: "";
+  position: absolute;
+  top: 11px;
+  bottom: 11px;
+  left: 10px;
+  width: 3px;
+  border-radius: 999px;
+  background: var(--record-color);
+}
+.pdf-note:hover {
+  background: var(--item-hover);
+}
+.pdf-note-source {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  color: var(--ink-text);
+  background: transparent;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+}
+.pdf-note-source:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-decoration-color: var(--ink-separator);
+}
+.pdf-note-source .row-quote {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.pdf-note p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.pdf-note-actions {
+  display: flex;
+  gap: 2px;
+  margin-left: -8px;
+}
+.pdf-note-actions button {
+  min-height: 24px;
+  padding: 2px 8px;
+  color: var(--ink-secondary);
+  background: transparent;
+  font-size: var(--ink-size-meta);
+}
+.pdf-note-actions button:hover {
+  color: var(--ink-text);
+  background: var(--ink-fill);
+}
+.pdf-note-editor {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}
+.pdf-note-editor label {
+  display: grid;
+  gap: 4px;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-weight: 500;
+}
+.pdf-note-editor textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+.pdf-note-editor p {
+  color: var(--ink-warning);
+  font-size: var(--ink-size-meta);
+}
+.pdf-note-editor > button {
+  justify-self: start;
+}
+
+
+.pdf-note-actions button { min-height: 36px; }

@@ -20,6 +20,7 @@ import {
 } from "../core/model";
 import { isWebPage, pageKey } from "../core/url";
 import { ICON_PATHS, type IconName } from "./icons";
+import { PdfSidebar } from "./PdfSidebar";
 import { StoragePanel } from "./StoragePanel";
 import { applyPageTheme, installPageTheme } from "./page-theme";
 import "./management.css";
@@ -237,6 +238,10 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   }, [closeMore, moreOpen]);
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
+      if (message.type === "pdf.reader.changed" && mode === "sidepanel") {
+        void refreshContext();
+        return;
+      }
       if (
         message.type === "page.state.changed" &&
         mode === "sidepanel" &&
@@ -745,7 +750,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             disabled={!pageUrl || paused}
           /> : null}
           <div className="sidepanel-content">
-          {!pageUrl ? (
+          {pdfContext?.currentReader ? <PdfSidebar tabId={tab.id} language={language} /> : !pageUrl ? (
             <section className="pdf-handoff">
               <span className="pdf-handoff-icon" aria-hidden="true"><Icon name="pdf" /></span>
               <h2>{pdfContext?.currentReader ? t.pdfReading : pdfContext ? t.currentPdfTitle : t.pdfWelcomeTitle}</h2>

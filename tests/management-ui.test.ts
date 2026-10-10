@@ -273,7 +273,7 @@ describe("management UI", () => {
 
     const host = await mount("sidepanel");
 
-    expect(host.textContent).toContain("正在阅读");
+    expect(host.textContent).toContain("正在连接 PDF");
     expect(host.querySelector(".pdf-open-current")).toBeNull();
     expect(host.querySelector(".pdf-local-link")).toBeNull();
     expect(host.querySelector('button[aria-label="打开 PDF"]')).toBeNull();

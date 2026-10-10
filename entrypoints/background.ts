@@ -2,6 +2,7 @@ import { handleDataRequest } from "../src/background/data";
 import { isWebPage, pageKey } from "../src/core/url";
 import { getDatabase } from "../src/background/database";
 import { createPdfHandoffHandler } from "../src/background/pdf-handoff";
+import { installPdfSidebarBroker } from "../src/background/pdf-sidebar";
 import {
   initializeRuntime,
   RUNTIME_REGISTRATION_KEY,
@@ -24,6 +25,7 @@ const CONTENT_ID = "web-ink-pages";
 type PageState = { pageUrl?: string; states: AnchorState[] };
 
 export default defineBackground(() => {
+  installPdfSidebarBroker();
   // Transient display state only. The durable annotation database is owned by data.ts.
   const pageStates = new Map<number, PageState>();
   const resolveContentPage = createContentPageResolver();

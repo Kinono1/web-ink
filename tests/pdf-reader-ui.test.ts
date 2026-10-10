@@ -262,6 +262,75 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("keeps sidebar edits in the reader leave guard and rejects an old document command", async () => {
+    records = [baseRecord()];
+    const outgoing: any[] = [];
+    const listeners = new Set<(message: any) => void>();
+    Object.assign(chrome.runtime, {
+      id: "test",
+      connect: () => ({
+        postMessage: (message: any) => outgoing.push(message),
+        onMessage: { addListener: (listener: (message: any) => void) => listeners.add(listener), removeListener: (listener: (message: any) => void) => listeners.delete(listener) },
+        onDisconnect: { addListener() {} }, disconnect() {},
+      }),
+    });
+    await mount(`?handoff=${TOKEN}`);
+    const state = outgoing.filter((message) => message.type === "state").at(-1).state;
+    const draft = { note: "sidebar draft", tags: "", color: "#facc15", base: records[0], editing: true };
+    const command = { type: "command", commandId: "draft-1", pageUrl: state.pageUrl, sessionId: "expired", command: { type: "draft", id: "saved-highlight", draft } };
+    await act(async () => { for (const listener of listeners) listener(command); });
+    expect(unloadBlocked()).toBe(false);
+    await act(async () => { for (const listener of listeners) listener({ ...command, sessionId: state.sessionId }); });
+    await settle();
+    expect(unloadBlocked()).toBe(true);
+    await click("返回原阅读器");
+    expect(host.querySelector('[role="dialog"]')?.textContent).toContain("未保存");
+    expect(messages.some((message) => message.type === "pdf.returnOriginal")).toBe(false);
+    await click("继续编辑");
+    putError = "changed elsewhere";
+    await act(async () => { for (const listener of listeners) listener({ ...command, commandId: "save-1", sessionId: state.sessionId, command: { type: "save", id: "saved-highlight" } }); });
+    await settle();
+    const failed = outgoing.filter((message) => message.type === "state").at(-1).state;
+    expect(failed.drafts["saved-highlight"].note).toBe("sidebar draft");
+    expect(failed.conflicts["saved-highlight"]).toBe(true);
+    expect(records[0]!.note).toBe("");
+    expect(unloadBlocked()).toBe(true);
+  });
+
+  it("opens the existing Chrome sidebar instead of a second notes rail", async () => {
+    records = [baseRecord()];
+    const openedPanels: number[] = [];
+    Object.assign(chrome, {
+      tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) },
+      sidePanel: { open: async ({ tabId }: { tabId: number }) => { openedPanels.push(tabId); } },
+    });
+    await mount();
+    await click("笔记");
+    expect(openedPanels).toEqual([8]);
+    expect(host.querySelector(".pdf-workspace")?.classList.contains("notes-open")).toBe(false);
+    expect(host.querySelector<HTMLElement>(".pdf-notes")?.hidden ?? true).toBe(true);
+    expect(records).toHaveLength(1);
+  });
+
+  it("opens the sidebar on the Add note gesture before the asynchronous save", async () => {
+    const openedPanels: number[] = [];
+    Object.assign(chrome, {
+      tabs: { getCurrent: async () => ({ id: 8 }) },
+      sidePanel: { open: async ({ tabId }: { tabId: number }) => { openedPanels.push(tabId); } },
+    });
+    await mount();
+    await selectPage();
+    putGate = deferred<unknown>();
+    await click("添加笔记");
+    expect(openedPanels).toEqual([8]);
+    expect(host.querySelector(".pdf-workspace")?.classList.contains("notes-open")).toBe(false);
+    const pending = puts().at(-1)!;
+    if (pending.type !== "annotations.put") throw Error("Missing highlight write");
+    putGate.resolve({ ok: true, data: { ...pending.annotation, revision: 1 } });
+    await settle();
+    expect(host.querySelector(".pdf-workspace")?.classList.contains("notes-open")).toBe(false);
+  });
+
   it.each(["open", "closed"])("restores orphan draft focus after Keep editing when Notes was %s", async (notes) => {
     const listeners = runtimeListeners();
     records = [baseRecord()];
