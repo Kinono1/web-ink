@@ -1,5 +1,52 @@
 # v0.3 performance evidence
 
+## PDF remote startup follow-up (2026-10-11)
+
+Baseline `4e74a0f` and the source hashes in
+[performance-pdf-startup-v0.3.2.json](performance-pdf-startup-v0.3.2.json) identify
+this comparison. The public 11-page MICCAI PDF contains 836,561 bytes. This uses
+disposable, preauthorized Chromium profiles and interface timing, without
+Computer Use or screenshots; it is separate from native Chrome acceptance.
+
+| Observation | Baseline | Candidate |
+| --- | --- | --- |
+| First remote open | 2,121.8 ms | 2,009.1 ms |
+| Subsequent two remote opens | 2,007.2 / 776.6 ms | 1,029.4 / 347.6 ms |
+| Response transfer per subsequent open | 836,861 bytes | 300 bytes |
+| Same bytes replayed locally, 30 samples: P50 / P95 | 118.3 / 130.6 ms | 119.4 / 131.2 ms |
+| Maximum observed page canvases | 3 | 3 |
+
+The baseline spent 80%–93% of first-page waiting time reading the network
+response. `no-cache` permits Chrome's HTTP cache to reuse an unchanged body
+after server validation, unlike the previous `no-store`. It still waits for the
+server, respects server cache policy and hashes the actual verified bytes.
+The small remote sample demonstrates reduced body transfers, **not a stable
+speedup percentage**. The local timings show no meaningful rendering speedup.
+First visits, slow servers, noncacheable responses and heavy image decoding
+remain outside this improvement. The full-byte validation barrier is retained.
+
+Byte reading and PDF.js module loading now overlap; document parsing and saved
+annotation reading overlap too. Both document and records must be ready before
+publishing an editable reader. Deferred unit tests cover this barrier, failed
+record loading and stale results after disposal. The HTTPS browser regression
+in `tests/e2e/pdf-cache.spec.ts` verifies `200 → 304 → changed 200 → 503`, content
+hash isolation, omitted cookies and no stale-success fallback. It fails on the
+baseline at the expected second response (`200` instead of `304`).
+
+Reproduce the interface timing with a tested build:
+
+```bash
+npm run benchmark:pdf-startup -- .build-output/chrome-mv3 /tmp/pdf-startup.json https://papers.miccai.org/miccai-2026/paper/2353_paper.pdf
+```
+
+An optional fourth argument supplies downloaded public fixture bytes and runs
+three warmups plus 30 measured navigations without network transfer. Remote
+mode makes three requests; do not run timing alongside tests or builds. Raw
+samples, source identity, environment and limitations remain in the single
+linked final report.
+
+## Earlier v0.3 measurements
+
 Measured 2026-09-19, Asia/Shanghai, on an Apple M4 Pro (14 logical cores, 48 GiB), macOS 26.6.2, Node 26.5.0 and Playwright Chromium 153.0.8010.12. Baseline: published v0.2.1 `282ac0c`; candidate webpage runtime/benchmark source: `69bdd60`. PDF measurements use `0326026`; the PDF source and dependencies are unchanged by the later isolated SVGPoint compatibility fix. Raw samples, archive identities, environment, and Boolean acceptance gates are in [performance-v0.3.json](performance-v0.3.json).
 
 ## Method

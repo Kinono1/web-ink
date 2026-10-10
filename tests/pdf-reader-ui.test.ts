@@ -12,6 +12,7 @@ const io = vi.hoisted(() => ({
   documentOptions: [] as Record<string, unknown>[],
   rejectOversizedImage: false,
   renderGates: {} as Record<number, Promise<unknown> | undefined>,
+  parseGate: undefined as Promise<unknown> | undefined,
 }));
 vi.mock("../src/pdf/source", async (original) => {
   const actual = await original<typeof import("../src/pdf/source")>();
@@ -32,7 +33,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
     io.documentOptions.push(options);
     return {
       destroy: async () => undefined,
-      promise: Promise.resolve({
+      promise: (io.parseGate ?? Promise.resolve()).then(() => ({
         numPages: io.pageCount,
         getPage: async (number: number) => {
           io.pagesRead.push(number);
@@ -63,7 +64,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
             cleanup: () => undefined,
           };
         },
-      }),
+      })),
     };
   },
   TextLayer: class {
@@ -126,6 +127,7 @@ beforeEach(() => {
   io.documentOptions = [];
   io.rejectOversizedImage = false;
   io.renderGates = {};
+  io.parseGate = undefined;
   records = [];
   messages = [];
   writes = [];
@@ -276,6 +278,67 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("loads saved annotations while PDF parsing is pending, and publishes both together", async () => {
+    const parsing = deferred<unknown>();
+    const annotations = deferred<unknown>();
+    io.parseGate = parsing.promise;
+    records = [baseRecord()];
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list"
+      ? (messages.push(message), annotations.promise) : send(message)) as typeof send;
+    await mount();
+    expect(messages.some(message => message.type === "annotations.list")).toBe(true);
+    expect(host.querySelector(".pdf-page")).toBeNull();
+    await act(async () => parsing.resolve(undefined));
+    await settle();
+    // A document must not become editable before its existing records are known.
+    expect(host.querySelector(".pdf-page")).toBeNull();
+    await act(async () => annotations.resolve({ ok: true, data: records }));
+    await settle();
+    expect(host.querySelector('.pdf-page[data-ready="true"]')).toBeTruthy();
+    expect(host.querySelector(".pdf-marks rect")).toBeTruthy();
+  });
+
+  it("ignores a replaced document's late parse and annotation results", async () => {
+    const parsing = deferred<unknown>();
+    const annotations = deferred<unknown>();
+    io.parseGate = parsing.promise;
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list" && message.pageUrl === `urn:web-ink:pdf:${HASH}`
+      ? annotations.promise : send(message)) as typeof send;
+    await mount();
+    await act(async () => root!.unmount());
+    root = undefined;
+    io.parseGate = undefined;
+    io.hash = "b".repeat(64);
+    await mount("", false);
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF-"], "replacement.pdf")] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await settle();
+    await act(async () => {
+      parsing.resolve(undefined);
+      annotations.resolve({ ok: true, data: [baseRecord()] });
+    });
+    await settle();
+    expect(host.querySelector(".pdf-name")?.textContent).toBe("replacement.pdf");
+    expect(host.querySelector(".pdf-marks rect")).toBeNull();
+    expect(new URL(location.href).searchParams.get("document")).toBe("b".repeat(64));
+  });
+
+  it("keeps a document closed when annotation loading fails before parsing completes", async () => {
+    const parsing = deferred<unknown>();
+    io.parseGate = parsing.promise;
+    const send = chrome.runtime.sendMessage;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list"
+      ? Promise.resolve({ ok: false, error: "Saved records unavailable" }) : send(message)) as typeof send;
+    await mount();
+    expect(host.textContent).toContain("Saved records unavailable");
+    await act(async () => parsing.resolve(undefined));
+    await settle();
+    expect(host.querySelector(".pdf-page")).toBeNull();
+  });
+
   it("keeps sidebar edits in the reader leave guard and rejects an old document command", async () => {
     records = [baseRecord()];
     const outgoing: any[] = [];

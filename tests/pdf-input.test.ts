@@ -29,6 +29,20 @@ it("joins unknown-length chunks and releases the stream lock", async () => {
   expect(body.locked).toBe(false);
 });
 
+it("revalidates public PDF responses while retaining credential and redirect protections", async () => {
+  const bytes = new TextEncoder().encode("%PDF-1.7\nvalidated response");
+  provideResponse(new ReadableStream({ start(controller) {
+    controller.enqueue(bytes);
+    controller.close();
+  } }));
+  const signal = new AbortController().signal;
+  const result = await readRemotePdf("https://example.test/a.pdf", signal);
+  expect(Array.from(result)).toEqual(Array.from(bytes));
+  expect(fetch).toHaveBeenCalledWith(new URL("https://example.test/a.pdf"), {
+    signal, credentials: "omit", cache: "no-cache", redirect: "error",
+  });
+});
+
 it.each([{}, { "content-encoding": "gzip", "content-length": "20" }])(
   "enforces the decoded output limit when length is unavailable or compressed: %j",
   async (headers) => {
