@@ -647,6 +647,34 @@ describe("PDF reader workspace", () => {
     expect(page.dataset.ready).toBe("true");
     expect(page.querySelector(".pdf-area-capture")).toBeTruthy();
   });
+
+  it("saves an area from pointerup coordinates before a preview render or pointermove", async () => {
+    io.pageCount = 1;
+    await mount();
+    await click("更多");
+    await click("区域标注");
+    const page = host.querySelector<HTMLElement>('.pdf-page')!;
+    page.getBoundingClientRect = () => ({ left: 0, top: 0, width: 600, height: 800 } as DOMRect);
+    const capture = page.querySelector<HTMLElement>('.pdf-area-capture')!;
+    capture.setPointerCapture = vi.fn();
+    capture.hasPointerCapture = () => true;
+    capture.releasePointerCapture = vi.fn();
+    const pointer = (type: string, x: number, y: number) => {
+      const event = new MouseEvent(type, { bubbles: true, button: 0, clientX: x, clientY: y });
+      Object.defineProperty(event, 'pointerId', { value: 7 });
+      capture.dispatchEvent(event);
+    };
+    await act(async () => {
+      pointer('pointerdown', 60, 80);
+      pointer('pointerup', 180, 240);
+    });
+    await settle();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ kind: 'pdf-area', target: {
+      pageNumber: 1, rects: [{ x: expect.closeTo(0.1), y: expect.closeTo(0.7), width: expect.closeTo(0.2), height: expect.closeTo(0.2) }],
+    } });
+    expect(capture.releasePointerCapture).toHaveBeenCalledWith(7);
+  });
 });
 
 describe("PDF reading position integration", () => {

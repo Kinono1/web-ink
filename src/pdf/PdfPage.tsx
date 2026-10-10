@@ -320,13 +320,22 @@ export function PdfPage({
           }}
           onPointerUp={(e) => {
             if (drag.current?.pointer !== e.pointerId) return;
+            const start = drag.current;
+            const end = position(e);
+            // Pointerup may arrive before React commits the last preview.
+            const finalRect = toPdfRect({
+              left: Math.min(start.x, end.x),
+              top: Math.min(start.y, end.y),
+              right: Math.max(start.x, end.x),
+              bottom: Math.max(start.y, end.y),
+            }, geometry.viewport, geometry.box);
             drag.current = undefined;
             if (e.currentTarget.hasPointerCapture(e.pointerId))
               e.currentTarget.releasePointerCapture(e.pointerId);
-            if (preview)
+            if (finalRect)
               onArea({
                 pageNumber: number,
-                rects: [preview],
+                rects: [finalRect],
                 exact: "",
                 prefix: "",
                 suffix: "",
