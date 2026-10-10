@@ -58,6 +58,8 @@ jobs:
           mkdir "$BASELINE_WORKTREE/node_modules"
           cp -a "$GITHUB_WORKSPACE/node_modules/." "$BASELINE_WORKTREE/node_modules/"
           (cd "$BASELINE_WORKTREE" && npm run build)
+          git -C "$BASELINE_WORKTREE" status --porcelain --untracked-files=normal
+          cat "$BASELINE_WORKTREE/.output/chrome-mv3/build-info.json"
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
