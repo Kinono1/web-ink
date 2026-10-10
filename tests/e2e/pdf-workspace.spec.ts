@@ -223,12 +223,14 @@ test("current PDF API preserves the tab through single-flight same-tab opening a
   expect(context.pages().length).toBe(before);
   const ownContext = await rpc<PdfTabContext>(control, { type: "pdf.context.get", tabId, expectedUrl: original.url() });
   expect(ownContext).toMatchObject({ tabId, currentReader: true, handoffToken: opened.token });
-  const returned = await rpc(original, { type: "pdf.returnOriginal", token: opened.token });
-  expect(returned).toEqual({ tabId, url: source });
+  // Navigation destroys the reader context; observe the browser outcome instead of its RPC reply.
+  await original.getByRole("button", { name: "返回原阅读器", exact: true }).click();
   await expect(original).toHaveURL(source);
-  expect(await activeTab(original)).toBe(tabId);
+  const returnedTabId = await activeTab(original);
+  expect(returnedTabId).toBe(tabId);
   expect(context.pages().length).toBe(before);
-  observations.push({ tabId, before, after: context.pages().length, opened, returned });
+  observations.push({ tabId, before, after: context.pages().length, opened,
+    returned: { tabId: returnedTabId, url: original.url(), observedNavigation: true } });
 });
 
 test("handoff tokens cannot navigate another reader and expired sessions keep public-source recovery", async () => {
