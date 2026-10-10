@@ -315,9 +315,9 @@ test("selection and copy events create no record and color selection works immed
 
 test("abandoned readers retain one return session per tab and closing reclaims it", async () => {
   const { reader, tabId } = await openCurrent();
-  const sessions = () => control.evaluate(async () => Object.entries(await chrome.storage.session.get(null))
+  const sessions = () => control.evaluate(async (tabId) => Object.entries(await chrome.storage.session.get(null))
     .filter(([key, value]) => key.startsWith("pdf.handoff.") && (value as PdfHandoff).tabId === tabId),
-  );
+  tabId);
   for (let index = 0; index < 3; index++) {
     await reader.goto(source);
     const opened = await rpc<PdfOpenResult>(control, { type: "pdf.openCurrent", tabId, expectedUrl: source });
