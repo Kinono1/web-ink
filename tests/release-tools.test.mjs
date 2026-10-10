@@ -79,6 +79,15 @@ async function hashes(root) {
   return fileHashes(await runtimeFiles(root));
 }
 
+async function writeEarlyArchive(dir, version = '0.1.1') {
+  await writeRuntime(dir, version, { seal: false });
+  for (const name of ['engine.js', 'pdf.html', 'pdfjs', 'build-info.json'])
+    await rm(path.join(dir, name), { recursive: true });
+  const oldManifest = manifest(version);
+  delete oldManifest.web_accessible_resources;
+  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify(oldManifest));
+}
+
 test('create and validate runtime integrity cover a real minimal resource graph', async t => {
   const repo = await fixture(t);
   const source = path.join(repo, sourceName);
@@ -251,6 +260,117 @@ test('registration validates old receipt and copies legacy backups without touch
   await assert.rejects(installRuntime(repo, identity), /changed outside/i);
   await assert.rejects(runtime.registerInstallation(repo, identity), /changed outside/i);
 });
+
+test('registration archives an early flat backup without requiring PDF or engine entries', async t => {
+  const repo = await fixture(t, { registered: false });
+  const target = path.join(repo, targetName);
+  const loaded = await hashes(target);
+  const name = 'Web-Ink-Chrome-0.1.1-20260918T060608Z';
+  const original = path.join(repo, '.output/install-backups', name);
+  const destination = path.join(repo, '.local-install/backups/legacy', name, 'chrome-mv3');
+  await writeEarlyArchive(original);
+  const archived = await hashes(original);
+  assert.equal('engine.js' in archived, false);
+  assert.equal('pdf.html' in archived, false);
+
+  const receipt = await runtime.registerInstallation(repo, identity);
+  assert.deepEqual(receipt.migratedBackups, [destination]);
+  assert.deepEqual(receipt.archivalBackups, [{ source: original, destination, version: '0.1.1', files: archived }]);
+  assert.deepEqual(await hashes(destination), archived);
+  assert.deepEqual(await hashes(original), archived);
+  assert.deepEqual(await hashes(target), loaded);
+  assert.deepEqual(await runtime.registerInstallation(repo, identity), receipt);
+  // Archival acceptance must not make this history a valid installed runtime.
+  const archivedFiles = await runtimeFiles(original);
+  assert.throws(() => runtime.validateIdentity(archivedFiles, identity), /pdf\.html/);
+  assert.throws(() => validateRuntimeIntegrity(archivedFiles, { requireIntegrity: false }), /engine\.js/);
+});
+
+test('registration archives the known flat timestamp families and nested build layout', async t => {
+  const repo = await fixture(t, { registered: false });
+  const loaded = await hashes(path.join(repo, targetName));
+  const expected = [];
+  for (const [name, version, early] of [
+    ['Web-Ink-Chrome-0.1.2-20260918T064032Z', '0.1.2', true],
+    ['before-ci-canonical-20260918T151007Z', '0.1.3', true],
+    ['before-public-release-20260918T144841Z', '0.1.3', true],
+    ['chrome-mv3-1e29792-20260925-182854', '0.3.1', false],
+    ['chrome-mv3-31a11a9-20260925-181355', '0.3.1', false],
+    ['build-5tKYix', '0.3.0', false],
+  ]) {
+    const original = path.join(repo, '.output/install-backups', name, ...(name.startsWith('build-') ? ['Web-Ink-Chrome'] : []));
+    if (early) await writeEarlyArchive(original, version);
+    else await writeRuntime(original, version);
+    expected.push({ source: original, destination: path.join(repo, '.local-install/backups/legacy', name, 'chrome-mv3'), version, files: await hashes(original) });
+  }
+  const receipt = await runtime.registerInstallation(repo, identity);
+  expected.sort((a, b) => a.source.localeCompare(b.source));
+  assert.deepEqual(receipt.migratedBackups, expected.map(record => record.destination));
+  assert.deepEqual(receipt.archivalBackups, expected);
+  for (const archive of expected) {
+    assert.deepEqual(await hashes(archive.source), archive.files);
+    assert.deepEqual(await hashes(archive.destination), archive.files);
+  }
+  assert.deepEqual(await hashes(path.join(repo, targetName)), loaded);
+});
+
+test('registration verifies an archival inventory seal without imposing current entry requirements', async t => {
+  const repo = await fixture(t, { registered: false });
+  const loaded = await hashes(path.join(repo, targetName));
+  const original = path.join(repo, '.output/install-backups/Web-Ink-Chrome-0.1.1-20260918T060608Z');
+  await writeEarlyArchive(original);
+  await writeFile(path.join(original, 'runtime-integrity.json'), JSON.stringify({ schemaVersion: 1, files: await hashes(original) }));
+  const archived = await hashes(original);
+  const receipt = await runtime.registerInstallation(repo, identity);
+  assert.deepEqual(await hashes(receipt.migratedBackups[0]), archived);
+  assert.deepEqual(receipt.archivalBackups[0].files, archived);
+  assert.deepEqual(await hashes(original), archived);
+  assert.deepEqual(await hashes(path.join(repo, targetName)), loaded);
+});
+
+for (const [label, name, mutate, expected] of [
+  ['unknown directory family', 'before-other-20260918T151007Z', async () => {}, /Unknown legacy backup/],
+  ['wrong extension key', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, key: 'another-extension' }));
+  }, /identity mismatch/i],
+  ['wrong extension name', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, name: 'Another extension' }));
+  }, /identity mismatch/i],
+  ['wrong manifest version', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, manifest_version: 2 }));
+  }, /identity mismatch/i],
+  ['symlink backup directory', undefined, async dir => {
+    const linkedSource = path.join(path.dirname(path.dirname(dir)), 'historical-source');
+    await cp(dir, linkedSource, { recursive: true });
+    await rm(dir, { recursive: true });
+    await symlink(linkedSource, dir, 'dir');
+  }, /symbolic link/i],
+  ['symlink payload', undefined, async dir => symlink(path.join(dir, 'background.js'), path.join(dir, 'chunks/link.js')), /symbolic link/i],
+  ['unknown root file', undefined, async dir => writeFile(path.join(dir, 'personal-notes.txt'), 'preserve'), /Unknown install entry/],
+  ['non-runtime nested file', undefined, async dir => writeFile(path.join(dir, 'chunks/notes.db'), 'preserve'), /Non-runtime file/],
+  ['extra nested sibling', 'build-5tKYix', async dir => writeFile(path.join(path.dirname(dir), 'personal-notes.txt'), 'preserve'), /Unknown legacy backup/],
+  ['modified sealed archive', undefined, async dir => {
+    await writeFile(path.join(dir, 'runtime-integrity.json'), JSON.stringify({ schemaVersion: 1, files: await hashes(dir) }));
+    await writeFile(path.join(dir, 'chunks/helper.js'), 'modified historical payload');
+  }, /integrity/i],
+]) {
+  test(`registration refuses ${label} in archival history without modifying the loaded runtime`, async t => {
+    const repo = await fixture(t, { registered: false });
+    const target = path.join(repo, targetName);
+    const loaded = await hashes(target);
+    const entryName = name || 'Web-Ink-Chrome-0.1.1-20260918T060608Z';
+    const original = path.join(repo, '.output/install-backups', entryName, ...(entryName.startsWith('build-') ? ['Web-Ink-Chrome'] : []));
+    await writeEarlyArchive(original);
+    await mutate(original);
+    await assert.rejects(runtime.registerInstallation(repo, identity), expected);
+    assert.deepEqual(await hashes(target), loaded);
+    await stat(original);
+    await assert.rejects(stat(path.join(repo, receiptName)), { code: 'ENOENT' });
+  });
+}
 
 async function cliFixture(t) {
   const repo = await fixture(t);

@@ -38,6 +38,24 @@ export function validateIdentity(files, identity) {
   return manifest;
 }
 
+// Historical archives predate PDF/engine entries and are not rollback candidates.
+function validateArchive(files, identity) {
+  const manifest = JSON.parse(files['manifest.json']?.toString() || '{}');
+  if (manifest.name !== identity.name || manifest.key !== identity.key || manifest.manifest_version !== 3)
+    throw Error('Archive extension identity mismatch; registration refused');
+  if (typeof manifest.version !== 'string' || !manifest.version) throw Error('Invalid archive manifest version');
+  if (Object.hasOwn(files, 'runtime-integrity.json')) {
+    let seal;
+    try { seal = JSON.parse(files['runtime-integrity.json'].toString()); }
+    catch { throw Error('Invalid archival integrity manifest JSON'); }
+    if (seal?.schemaVersion !== 1 || !seal.files || typeof seal.files !== 'object' || Array.isArray(seal.files))
+      throw Error('Invalid archival integrity manifest schema');
+    const payload = Object.fromEntries(Object.entries(files).filter(([name]) => name !== 'runtime-integrity.json'));
+    assert.deepEqual(seal.files, fileHashes(payload), 'Archival integrity mismatch');
+  }
+  return manifest;
+}
+
 async function rejectSymlink(location) {
   try {
     if ((await lstat(location)).isSymbolicLink()) throw Error(`Refusing symbolic link: ${location}`);
@@ -146,21 +164,34 @@ export async function registerInstallation(repo, identity) {
   try { entries = await readdir(oldBackups, { withFileTypes: true }); }
   catch (error) { if (error.code !== 'ENOENT') throw error; entries = []; }
   const migrated = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory() || !/^build-[\w-]+$/.test(entry.name)) throw Error(`Unknown legacy backup: ${entry.name}`);
-    const original = path.join(oldBackups, entry.name, 'Web-Ink-Chrome');
+  const archivalBackups = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isSymbolicLink()) throw Error(`Refusing symbolic link: ${entry.name}`);
+    const nested = /^build-[\w-]+$/.test(entry.name);
+    const flat = /^Web-Ink-Chrome-0\.1\.[12]-\d{8}T\d{6}Z$/.test(entry.name) ||
+      /^before-(?:ci-canonical|public-release)-\d{8}T\d{6}Z$/.test(entry.name) ||
+      /^chrome-mv3-[a-f0-9]{7}-\d{8}-\d{6}$/.test(entry.name);
+    if (!entry.isDirectory() || (!nested && !flat)) throw Error(`Unknown legacy backup: ${entry.name}`);
+    const backupRoot = path.join(oldBackups, entry.name);
+    if (nested) {
+      const children = await readdir(backupRoot, { withFileTypes: true });
+      if (children.length !== 1 || children[0].name !== 'Web-Ink-Chrome' || !children[0].isDirectory())
+        throw Error(`Unknown legacy backup layout: ${entry.name}`);
+    }
+    const original = nested ? path.join(backupRoot, 'Web-Ink-Chrome') : backupRoot;
     const saved = await runtimeFiles(original);
-    validateIdentity(saved, identity);
-    validateRuntimeIntegrity(saved, { requireIntegrity: false });
+    const manifest = validateArchive(saved, identity);
+    const archiveHashes = fileHashes(saved);
     const destination = path.join(state, 'backups/legacy', entry.name, 'chrome-mv3');
     for (const location of [path.join(state, 'backups/legacy'), path.dirname(destination), destination]) await rejectSymlink(location);
     await mkdir(path.dirname(destination), { recursive: true });
     try { await cp(original, destination, { recursive: true, errorOnExist: true, force: false }); }
     catch (error) { if (error.code !== 'ERR_FS_CP_EEXIST') throw error; }
-    assert.deepEqual(fileHashes(await runtimeFiles(destination)), fileHashes(saved), 'Legacy backup migration hash mismatch');
+    assert.deepEqual(fileHashes(await runtimeFiles(destination)), archiveHashes, 'Legacy backup migration hash mismatch');
     migrated.push(destination);
+    archivalBackups.push({ source: original, destination, version: manifest.version, files: archiveHashes });
   }
-  const receipt = { ...receiptFor(target, identity, files), migratedBackups: migrated };
+  const receipt = { ...receiptFor(target, identity, files), migratedBackups: migrated, archivalBackups };
   await saveReceipt(receiptPath, receipt);
   return receipt;
 }
