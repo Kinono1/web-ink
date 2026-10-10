@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, cp } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, readFile, rm, symlink, cp, stat, realpath, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,11 +12,13 @@ import {
   runtimeFiles,
   validateRuntimeIntegrity,
 } from '../scripts/lib/runtime.mjs';
+import * as runtime from '../scripts/lib/runtime.mjs';
 import { packFiles, verifyArchive, unpackFiles } from '../scripts/lib/archive.mjs';
 
 const identity = { name: 'Web Ink', key: 'test-public-key' };
-const sourceName = '.output/chrome-mv3';
-const targetName = 'Web-Ink-Chrome';
+const sourceName = '.build-output/chrome-mv3';
+const targetName = '.output/chrome-mv3';
+const receiptName = '.local-install/receipt.json';
 
 function manifest(version) {
   return {
@@ -63,17 +65,27 @@ async function reseal(dir) {
   await writeFile(path.join(dir, 'runtime-integrity.json'), createRuntimeIntegrity(files));
 }
 
-async function fixture(t) {
-  const repo = await mkdtemp(path.join(tmpdir(), 'webink-release-test-'));
+async function fixture(t, { registered = true } = {}) {
+  const repo = await realpath(await mkdtemp(path.join(tmpdir(), 'webink-release-test-')));
   t.after(() => rm(repo, { recursive: true, force: true }));
   await writeRuntime(path.join(repo, sourceName), '0.3.1');
   // Existing local installs predate the seal. They remain structurally checked.
   await writeRuntime(path.join(repo, targetName), '0.3.0', { seal: false });
+  if (registered) await runtime.registerInstallation(repo, identity);
   return repo;
 }
 
 async function hashes(root) {
   return fileHashes(await runtimeFiles(root));
+}
+
+async function writeEarlyArchive(dir, version = '0.1.1') {
+  await writeRuntime(dir, version, { seal: false });
+  for (const name of ['engine.js', 'pdf.html', 'pdfjs', 'build-info.json'])
+    await rm(path.join(dir, name), { recursive: true });
+  const oldManifest = manifest(version);
+  delete oldManifest.web_accessible_resources;
+  await writeFile(path.join(dir, 'manifest.json'), JSON.stringify(oldManifest));
 }
 
 test('create and validate runtime integrity cover a real minimal resource graph', async t => {
@@ -91,17 +103,18 @@ test('create and validate runtime integrity cover a real minimal resource graph'
 });
 
 test('installer accepts a complete legacy target, seals it on upgrade, and accepts a second upgrade', async t => {
-  const repo = await fixture(t);
+  const repo = await fixture(t, { registered: false });
   const source = path.join(repo, sourceName);
   const target = path.join(repo, targetName);
   await rm(path.join(target, 'build-info.json'));
   const legacy = await runtimeFiles(target);
   assert.equal(validateRuntimeIntegrity(legacy, { requireIntegrity: false }).version, '0.3.0');
+  await runtime.registerInstallation(repo, identity);
 
   const result = await installRuntime(repo, identity);
   assert.deepEqual(await hashes(result.target), await hashes(source));
-  assert.deepEqual(await hashes(path.join(result.backup, targetName)), fileHashes(legacy));
-  assert.deepEqual(JSON.parse(await readFile(path.join(repo, '.output/install-receipt.json'), 'utf8')).files, await hashes(target));
+  assert.deepEqual(await hashes(path.join(result.backup, 'chrome-mv3')), fileHashes(legacy));
+  assert.deepEqual(JSON.parse(await readFile(path.join(repo, receiptName), 'utf8')).files, await hashes(target));
   await installRuntime(repo, identity);
 });
 
@@ -152,7 +165,7 @@ test('installer rolls back files and receipt after a copy failure', async t => {
   const target = path.join(repo, targetName);
   await installRuntime(repo, identity);
   const old = await hashes(target);
-  const receiptPath = path.join(repo, '.output/install-receipt.json');
+  const receiptPath = path.join(repo, receiptName);
   const receipt = await readFile(receiptPath);
   await writeFile(path.join(source, 'chunks/app.js'), "import './helper.js';\nexport const app = 'next';\n");
   await reseal(source);
@@ -190,7 +203,8 @@ test('sealing refuses missing direct and transitive references instead of blessi
 
 test('packaging CLI refuses an incomplete build before overwriting an existing archive', async t => {
   const repo = await fixture(t);
-  const archive = path.join(repo, '.output/web-ink-0.3.1-chrome.zip');
+  const archive = path.join(repo, '.build-output/releases/web-ink-0.3.1-chrome.zip');
+  await mkdir(path.dirname(archive), { recursive: true });
   await writeFile(archive, 'previous verified archive');
   const script = fileURLToPath(new URL('../scripts/package-release.mjs', import.meta.url));
   for (const name of ['engine.js', 'chunks/helper.js', 'pdfjs/pdf.worker.min.mjs']) {
@@ -202,5 +216,286 @@ test('packaging CLI refuses an incomplete build before overwriting an existing a
     assert.notEqual(result.status, 0);
     assert.ok(result.stderr.includes(name), result.stderr);
     assert.equal(await readFile(archive, 'utf8'), 'previous verified archive');
+  }
+});
+
+test('unregistered installation is refused rather than silently skipping old-file verification', async t => {
+  const repo = await fixture(t, { registered: false });
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  await assert.rejects(installRuntime(repo, identity), /not registered/i);
+  assert.deepEqual(await hashes(target), before);
+});
+
+test('staging cleanup preserves loaded directory root, receipt and verified rollback source', async t => {
+  const repo = await fixture(t);
+  const target = path.join(repo, targetName);
+  const originalRoot = (await stat(target)).ino;
+  const old = await hashes(target);
+  const installed = await installRuntime(repo, identity);
+  await rm(path.join(repo, '.build-output'), { recursive: true });
+  assert.equal((await stat(target)).ino, originalRoot);
+  assert.deepEqual(await hashes(path.join(installed.backup, 'chrome-mv3')), old);
+  const receipt = JSON.parse(await readFile(path.join(repo, receiptName), 'utf8'));
+  assert.equal(receipt.target, target);
+  assert.deepEqual(receipt.files, await hashes(target));
+  await writeRuntime(path.join(repo, sourceName), '0.3.2');
+  await installRuntime(repo, identity);
+  assert.equal((await stat(target)).ino, originalRoot);
+});
+
+test('registration validates old receipt and copies legacy backups without touching the loaded runtime', async t => {
+  const repo = await fixture(t, { registered: false });
+  const target = path.join(repo, targetName);
+  const old = await hashes(target);
+  const legacyBackup = path.join(repo, '.output/install-backups/build-old');
+  await mkdir(legacyBackup, { recursive: true });
+  await cp(target, path.join(legacyBackup, 'Web-Ink-Chrome'), { recursive: true });
+  await writeFile(path.join(repo, '.output/install-receipt.json'), JSON.stringify({ files: old, backup: legacyBackup }));
+  await runtime.registerInstallation(repo, identity);
+  await rm(path.join(repo, '.output/install-backups'), { recursive: true });
+  assert.deepEqual(await hashes(target), old);
+  assert.deepEqual(await hashes(path.join(repo, '.local-install/backups/legacy/build-old/chrome-mv3')), old);
+  await writeFile(path.join(target, 'engine.js'), 'external modification');
+  await assert.rejects(installRuntime(repo, identity), /changed outside/i);
+  await assert.rejects(runtime.registerInstallation(repo, identity), /changed outside/i);
+});
+
+test('registration archives an early flat backup without requiring PDF or engine entries', async t => {
+  const repo = await fixture(t, { registered: false });
+  const target = path.join(repo, targetName);
+  const loaded = await hashes(target);
+  const name = 'Web-Ink-Chrome-0.1.1-20260918T060608Z';
+  const original = path.join(repo, '.output/install-backups', name);
+  const destination = path.join(repo, '.local-install/backups/legacy', name, 'chrome-mv3');
+  await writeEarlyArchive(original);
+  const archived = await hashes(original);
+  assert.equal('engine.js' in archived, false);
+  assert.equal('pdf.html' in archived, false);
+
+  const receipt = await runtime.registerInstallation(repo, identity);
+  assert.deepEqual(receipt.migratedBackups, [destination]);
+  assert.deepEqual(receipt.archivalBackups, [{ source: original, destination, version: '0.1.1', files: archived }]);
+  assert.deepEqual(await hashes(destination), archived);
+  assert.deepEqual(await hashes(original), archived);
+  assert.deepEqual(await hashes(target), loaded);
+  assert.deepEqual(await runtime.registerInstallation(repo, identity), receipt);
+  // Archival acceptance must not make this history a valid installed runtime.
+  const archivedFiles = await runtimeFiles(original);
+  assert.throws(() => runtime.validateIdentity(archivedFiles, identity), /pdf\.html/);
+  assert.throws(() => validateRuntimeIntegrity(archivedFiles, { requireIntegrity: false }), /engine\.js/);
+});
+
+test('registration archives the known flat timestamp families and nested build layout', async t => {
+  const repo = await fixture(t, { registered: false });
+  const loaded = await hashes(path.join(repo, targetName));
+  const expected = [];
+  for (const [name, version, early] of [
+    ['Web-Ink-Chrome-0.1.2-20260918T064032Z', '0.1.2', true],
+    ['before-ci-canonical-20260918T151007Z', '0.1.3', true],
+    ['before-public-release-20260918T144841Z', '0.1.3', true],
+    ['chrome-mv3-1e29792-20260925-182854', '0.3.1', false],
+    ['chrome-mv3-31a11a9-20260925-181355', '0.3.1', false],
+    ['build-5tKYix', '0.3.0', false],
+  ]) {
+    const original = path.join(repo, '.output/install-backups', name, ...(name.startsWith('build-') ? ['Web-Ink-Chrome'] : []));
+    if (early) await writeEarlyArchive(original, version);
+    else await writeRuntime(original, version);
+    expected.push({ source: original, destination: path.join(repo, '.local-install/backups/legacy', name, 'chrome-mv3'), version, files: await hashes(original) });
+  }
+  const receipt = await runtime.registerInstallation(repo, identity);
+  expected.sort((a, b) => a.source.localeCompare(b.source));
+  assert.deepEqual(receipt.migratedBackups, expected.map(record => record.destination));
+  assert.deepEqual(receipt.archivalBackups, expected);
+  for (const archive of expected) {
+    assert.deepEqual(await hashes(archive.source), archive.files);
+    assert.deepEqual(await hashes(archive.destination), archive.files);
+  }
+  assert.deepEqual(await hashes(path.join(repo, targetName)), loaded);
+});
+
+test('registration verifies an archival inventory seal without imposing current entry requirements', async t => {
+  const repo = await fixture(t, { registered: false });
+  const loaded = await hashes(path.join(repo, targetName));
+  const original = path.join(repo, '.output/install-backups/Web-Ink-Chrome-0.1.1-20260918T060608Z');
+  await writeEarlyArchive(original);
+  await writeFile(path.join(original, 'runtime-integrity.json'), JSON.stringify({ schemaVersion: 1, files: await hashes(original) }));
+  const archived = await hashes(original);
+  const receipt = await runtime.registerInstallation(repo, identity);
+  assert.deepEqual(await hashes(receipt.migratedBackups[0]), archived);
+  assert.deepEqual(receipt.archivalBackups[0].files, archived);
+  assert.deepEqual(await hashes(original), archived);
+  assert.deepEqual(await hashes(path.join(repo, targetName)), loaded);
+});
+
+for (const [label, name, mutate, expected] of [
+  ['unknown directory family', 'before-other-20260918T151007Z', async () => {}, /Unknown legacy backup/],
+  ['wrong extension key', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, key: 'another-extension' }));
+  }, /identity mismatch/i],
+  ['wrong extension name', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, name: 'Another extension' }));
+  }, /identity mismatch/i],
+  ['wrong manifest version', undefined, async dir => {
+    const info = JSON.parse(await readFile(path.join(dir, 'manifest.json'), 'utf8'));
+    await writeFile(path.join(dir, 'manifest.json'), JSON.stringify({ ...info, manifest_version: 2 }));
+  }, /identity mismatch/i],
+  ['symlink backup directory', undefined, async dir => {
+    const linkedSource = path.join(path.dirname(path.dirname(dir)), 'historical-source');
+    await cp(dir, linkedSource, { recursive: true });
+    await rm(dir, { recursive: true });
+    await symlink(linkedSource, dir, 'dir');
+  }, /symbolic link/i],
+  ['symlink payload', undefined, async dir => symlink(path.join(dir, 'background.js'), path.join(dir, 'chunks/link.js')), /symbolic link/i],
+  ['unknown root file', undefined, async dir => writeFile(path.join(dir, 'personal-notes.txt'), 'preserve'), /Unknown install entry/],
+  ['non-runtime nested file', undefined, async dir => writeFile(path.join(dir, 'chunks/notes.db'), 'preserve'), /Non-runtime file/],
+  ['extra nested sibling', 'build-5tKYix', async dir => writeFile(path.join(path.dirname(dir), 'personal-notes.txt'), 'preserve'), /Unknown legacy backup/],
+  ['modified sealed archive', undefined, async dir => {
+    await writeFile(path.join(dir, 'runtime-integrity.json'), JSON.stringify({ schemaVersion: 1, files: await hashes(dir) }));
+    await writeFile(path.join(dir, 'chunks/helper.js'), 'modified historical payload');
+  }, /integrity/i],
+]) {
+  test(`registration refuses ${label} in archival history without modifying the loaded runtime`, async t => {
+    const repo = await fixture(t, { registered: false });
+    const target = path.join(repo, targetName);
+    const loaded = await hashes(target);
+    const entryName = name || 'Web-Ink-Chrome-0.1.1-20260918T060608Z';
+    const original = path.join(repo, '.output/install-backups', entryName, ...(entryName.startsWith('build-') ? ['Web-Ink-Chrome'] : []));
+    await writeEarlyArchive(original);
+    await mutate(original);
+    await assert.rejects(runtime.registerInstallation(repo, identity), expected);
+    assert.deepEqual(await hashes(target), loaded);
+    await stat(original);
+    await assert.rejects(stat(path.join(repo, receiptName)), { code: 'ENOENT' });
+  });
+}
+
+async function cliFixture(t) {
+  const repo = await fixture(t);
+  await cp(fileURLToPath(new URL('../scripts', import.meta.url)), path.join(repo, 'scripts'), { recursive: true });
+  await writeFile(path.join(repo, 'wxt.config.ts'), `export default { manifest: { key: '${identity.key}' } };\n`);
+  await writeFile(path.join(repo, 'package.json'), JSON.stringify({ version: '0.3.1' }));
+  await writeFile(path.join(repo, '.gitignore'), '.build-output/\n.output/\n.local-install/\n');
+  for (const args of [['init', '-q'], ['add', '.'], ['-c', 'user.name=Test', '-c', 'user.email=test@example.test', 'commit', '-qm', 'fixture']]) {
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  }
+  const head = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim();
+  await writeFile(path.join(repo, sourceName, 'build-info.json'), JSON.stringify({ version: '0.3.1', commit: head, dirty: false }));
+  await reseal(path.join(repo, sourceName));
+  return repo;
+}
+
+test('update CLI rejects linked worktrees before building or changing either installation', async t => {
+  const repo = await cliFixture(t);
+  const linked = path.join(repo, 'linked');
+  const before = await hashes(path.join(repo, targetName));
+  const result = spawnSync('git', ['worktree', 'add', '--detach', linked, 'HEAD'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const run = spawnSync(process.execPath, [path.join(linked, 'scripts/update-local.mjs')], { cwd: linked, encoding: 'utf8' });
+  assert.notEqual(run.status, 0);
+  assert.match(run.stderr, /primary checkout/i);
+  assert.ok(run.stderr.includes(repo), run.stderr);
+  assert.deepEqual(await hashes(path.join(repo, targetName)), before);
+  await assert.rejects(stat(path.join(linked, '.output')), { code: 'ENOENT' });
+});
+
+test('skip-build accepts only a clean matching candidate and leaves the installation unchanged on rejection', async t => {
+  const repo = await cliFixture(t);
+  const script = path.join(repo, 'scripts/update-local.mjs');
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const infoPath = path.join(repo, sourceName, 'build-info.json');
+  const info = JSON.parse(await readFile(infoPath, 'utf8'));
+  for (const invalid of [{ ...info, commit: 'old' }, { ...info, version: '0.3.0' }, { ...info, dirty: true }]) {
+    await writeRuntime(path.join(repo, sourceName), invalid.version);
+    await writeFile(infoPath, JSON.stringify(invalid));
+    await reseal(path.join(repo, sourceName));
+    const result = spawnSync(process.execPath, [script, '--skip-build'], { cwd: repo, encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /candidate|stale|clean/i);
+    assert.deepEqual(await hashes(target), before);
+  }
+  await writeRuntime(path.join(repo, sourceName), info.version);
+  await writeFile(infoPath, JSON.stringify(info));
+  await reseal(path.join(repo, sourceName));
+  const result = spawnSync(process.execPath, [script, '--skip-build'], { cwd: repo, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(result.stdout.includes(target), result.stdout);
+  assert.deepEqual(await hashes(target), await hashes(path.join(repo, sourceName)));
+});
+
+test('artifact cleanup deletes only stale staged archives and preserves installs, backups and profiles', async t => {
+  const repo = await fixture(t);
+  const preserved = ['.output/install-backups/keep', '.local-install/backups/keep', '.build-output/releases/notes.txt',
+    '.build-output/native-profile-old/keep', '.build-output/releases/web-ink-0.3.2-chrome.zip'];
+  const stale = ['.build-output/releases/web-ink-0.3.0-chrome.zip', '.build-output/releases/web-ink-0.3.0-chrome.zip.sha256'];
+  for (const name of [...preserved, ...stale]) {
+    await mkdir(path.dirname(path.join(repo, name)), { recursive: true });
+    await writeFile(path.join(repo, name), 'keep or intentionally expired');
+  }
+  const oldTime = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000);
+  for (const name of stale) await utimes(path.join(repo, name), oldTime, oldTime);
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const script = fileURLToPath(new URL('../scripts/clean-artifacts.mjs', import.meta.url));
+  for (const args of [['--dry-run'], []]) {
+    const result = spawnSync(process.execPath, [script, ...args], { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    for (const name of preserved) assert.equal(await readFile(path.join(repo, name), 'utf8'), 'keep or intentionally expired');
+    assert.deepEqual(await hashes(target), before);
+    await stat(path.join(repo, receiptName));
+    if (args.length) for (const name of stale) await stat(path.join(repo, name));
+    else for (const name of stale) await assert.rejects(stat(path.join(repo, name)), { code: 'ENOENT' });
+  }
+});
+
+test('interrupted update restores its verified backup before the next attempt', async t => {
+  const repo = await fixture(t);
+  await writeFile(path.join(repo, sourceName, 'background.js'), "import './chunks/helper.js';\nexport const candidate = true;\n");
+  await reseal(path.join(repo, sourceName));
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const library = new URL('../scripts/lib/runtime.mjs', import.meta.url).href;
+  const script = `import { installRuntime } from ${JSON.stringify(library)};
+    import { cp } from 'node:fs/promises';
+    let copies = 0;
+    await installRuntime(${JSON.stringify(repo)}, ${JSON.stringify(identity)}, { copyFile: async (from, to) => {
+      await cp(from, to); if (++copies === 2) process.exit(71);
+    } });`;
+  const stopped = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8' });
+  assert.equal(stopped.status, 71, stopped.stderr);
+  assert.notDeepEqual(await hashes(target), before);
+  const result = await installRuntime(repo, identity);
+  assert.deepEqual(await hashes(path.join(result.backup, 'chrome-mv3')), before);
+  assert.deepEqual(await hashes(target), await hashes(path.join(repo, sourceName)));
+});
+
+test('an unrelated stale receipt temporary file cannot prevent the next update or be deleted', async t => {
+  const repo = await fixture(t);
+  const stale = path.join(repo, '.local-install/receipt.json.tmp');
+  await writeFile(stale, 'preserve for investigation');
+  await installRuntime(repo, identity);
+  assert.equal(await readFile(stale, 'utf8'), 'preserve for investigation');
+});
+
+test('invalid recovery journal is refused without modifying the installation', async t => {
+  const repo = await fixture(t);
+  const target = path.join(repo, targetName);
+  const before = await hashes(target);
+  const receipt = JSON.parse(await readFile(path.join(repo, receiptName), 'utf8'));
+  const backup = path.join(repo, '.local-install/backups/build-recovery');
+  await cp(target, path.join(backup, 'chrome-mv3'), { recursive: true });
+  const pending = { schemaVersion: 1, target, backup, before: receipt, after: receipt };
+  for (const invalid of [
+    { ...pending, backup: path.join(repo, 'outside') },
+    { ...pending, before: { ...receipt, files: {} } },
+    { ...pending, after: { ...receipt, files: { '../outside': 'a'.repeat(64) } } },
+  ]) {
+    await writeFile(path.join(repo, '.local-install/pending.json'), JSON.stringify(invalid));
+    await assert.rejects(installRuntime(repo, identity), /journal|changed outside|recovery/i);
+    assert.deepEqual(await hashes(target), before);
   }
 });

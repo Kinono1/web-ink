@@ -1,7 +1,20 @@
 import { defineConfig } from 'wxt';
+import { patchPdfjsRenderErrors } from './scripts/pdfjs-render-errors';
 
 export default defineConfig({
+  outDir: '.build-output',
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({
+    plugins: [{
+      name: 'web-ink-pdfjs-render-errors',
+      enforce: 'pre',
+      transform(source, id) {
+        if (id.endsWith('/pdfjs-dist/legacy/build/pdf.mjs')) {
+          return patchPdfjsRenderErrors(source);
+        }
+      },
+    }],
+  }),
   hooks: {
     'build:manifestGenerated': (_wxt, manifest) => {
       // WXT otherwise infers required host access from runtime content-script matches.
@@ -16,7 +29,7 @@ export default defineConfig({
     icons: { 16: 'icon/16.png', 32: 'icon/32.png', 48: 'icon/48.png', 128: 'icon/128.png' },
     description: 'Private webpage and PDF annotations. 本地网页与 PDF 标注。',
     minimum_chrome_version: '120',
-    permissions: ['storage', 'scripting', 'sidePanel'],
+    permissions: ['storage', 'scripting', 'sidePanel', 'activeTab'],
     optional_host_permissions: ['http://*/*', 'https://*/*'],
     action: { default_title: 'Web Ink' },
     side_panel: { default_path: 'sidepanel.html' },

@@ -4,7 +4,7 @@ import type {
   RenderTask,
 } from "pdfjs-dist/types/src/display/api";
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
-import type { PdfRect } from "../core/model";
+import type { Language, PdfRect } from "../core/model";
 import { fromPdfRect, toPdfRect } from "./geometry";
 import {
   errorText,
@@ -12,14 +12,15 @@ import {
   type PdfAnnotation,
   type PdfApi,
   type SelectionTarget,
+  type SelectionPreview,
 } from "./types";
 export function PdfPage({
+  language = "zh-CN",
   opened,
   number,
   zoom,
   rotation,
   records,
-  enabled,
   area,
   color,
   measurementGeneration,
@@ -29,21 +30,24 @@ export function PdfPage({
   onDimensions,
   onError,
 }: {
+  language?: Language;
   opened: OpenDocument;
   number: number;
   zoom: number;
   rotation: number;
   records: PdfAnnotation[];
-  enabled: boolean;
   area: boolean;
   color: string;
   measurementGeneration: number;
-  onSelection: (v: SelectionTarget | undefined) => void;
+  onSelection: (v: SelectionPreview | undefined) => void;
   onPick: (record: PdfAnnotation) => void;
   onArea: (v: SelectionTarget) => void;
   onDimensions: (generation: number, w: number, h: number) => void;
   onError: (e: string) => void;
 }) {
+  const t = (zh: string, en: string) => language === "zh-CN" ? zh : en;
+  const [ready, setReady] = useState(false);
+  const [failure, setFailure] = useState<"image-too-large" | "render-failed">();
   const root = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
     text = useRef<HTMLDivElement>(null),
@@ -64,6 +68,9 @@ export function PdfPage({
       render: RenderTask | undefined,
       layer: InstanceType<PdfApi["TextLayer"]> | undefined;
     setGeometry(undefined);
+    setReady(false);
+    setFailure(undefined);
+    text.current?.replaceChildren();
     if (root.current) root.current.dataset.ready = "false";
     void (async () => {
       try {
@@ -110,7 +117,10 @@ export function PdfPage({
           viewport,
         });
         await layer.render();
-        if (!dead && pageRoot.isConnected) pageRoot.dataset.ready = "true";
+        if (!dead && pageRoot.isConnected) {
+          pageRoot.dataset.ready = "true";
+          setReady(true);
+        }
       } catch (cause) {
         if (
           !dead &&
@@ -118,8 +128,17 @@ export function PdfPage({
             cause instanceof Error &&
             cause.name === "RenderingCancelledException"
           )
-        )
-          callbacks.current.onError(errorText(cause));
+        ) {
+          // A rejected render can leave a partial canvas. Never present it as
+          // a complete page or allow annotations against stale text/geometry.
+          if (canvas.current) {
+            canvas.current.width = 0;
+            canvas.current.height = 0;
+          }
+          text.current?.replaceChildren();
+          setFailure(errorText(cause).includes("Image exceeded maximum allowed size")
+            ? "image-too-large" : "render-failed");
+        }
       } finally {
         if (dead) page?.cleanup();
       }
@@ -139,7 +158,7 @@ export function PdfPage({
     };
   }, [opened, number, zoom, rotation, measurementGeneration]);
   function capture(event: React.MouseEvent<HTMLDivElement>) {
-    if (!enabled || area || !geometry || !text.current || !root.current) return;
+    if (area || !ready || !geometry || !text.current || !root.current) return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
       const page = root.current.getBoundingClientRect();
@@ -166,6 +185,7 @@ export function PdfPage({
       !text.current.contains(range.endContainer)
     ) {
       onSelection(undefined);
+      onError("请在同一页内选择文字；跨页选择不会保存。 / Select text within one page; cross-page selections are not saved.");
       return;
     }
     const exact = s.toString().trim();
@@ -173,7 +193,8 @@ export function PdfPage({
     const box = root.current.getBoundingClientRect();
     const rects: PdfRect[] = [];
     const seen = new Set<string>();
-    for (const rect of range.getClientRects()) {
+    const clientRects = [...range.getClientRects()];
+    for (const rect of clientRects) {
       const normalized = toPdfRect(
         {
           left: rect.left - box.left,
@@ -201,13 +222,18 @@ export function PdfPage({
     const after = range.cloneRange();
     after.selectNodeContents(text.current);
     after.setStart(range.endContainer, range.endOffset);
-    onSelection({
+    onSelection({ target: {
       pageNumber: number,
       rects,
       exact,
       prefix: before.toString().slice(-64),
       suffix: after.toString().slice(0, 64),
-    });
+    }, anchor: {
+      left: Math.min(...clientRects.map((rect) => rect.left)),
+      top: Math.min(...clientRects.map((rect) => rect.top)),
+      right: Math.max(...clientRects.map((rect) => rect.right)),
+      bottom: Math.max(...clientRects.map((rect) => rect.bottom)),
+    } });
   }
   function position(e: React.PointerEvent) {
     const r = root.current!.getBoundingClientRect();
@@ -229,7 +255,14 @@ export function PdfPage({
     >
       <canvas ref={canvas} aria-label={`PDF ${number}`} />
       <div className="textLayer" ref={text} />
-      {geometry && (
+      {failure && <div className="pdf-page-error" role="alert">
+        <h2>{t(`第 ${number} 页无法完整显示`, `Page ${number} could not be displayed completely`)}</h2>
+        <p>{failure === "image-too-large"
+          ? t("图片过大，已停止显示以保护内存。", "An image is too large to display safely.")
+          : t("这页暂时无法显示，请重新打开 PDF。", "This page could not be displayed. Reopen the PDF to try again.")}</p>
+        <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
+      </div>}
+      {ready && geometry && (
         <svg
           className="pdf-marks"
           width={geometry.viewport.width}
@@ -259,7 +292,7 @@ export function PdfPage({
           )}
         </svg>
       )}
-      {enabled && area && geometry && (
+      {area && ready && geometry && (
         <div
           className="pdf-area-capture"
           onPointerDown={(e) => {
@@ -287,13 +320,22 @@ export function PdfPage({
           }}
           onPointerUp={(e) => {
             if (drag.current?.pointer !== e.pointerId) return;
+            const start = drag.current;
+            const end = position(e);
+            // Pointerup may arrive before React commits the last preview.
+            const finalRect = toPdfRect({
+              left: Math.min(start.x, end.x),
+              top: Math.min(start.y, end.y),
+              right: Math.max(start.x, end.x),
+              bottom: Math.max(start.y, end.y),
+            }, geometry.viewport, geometry.box);
             drag.current = undefined;
             if (e.currentTarget.hasPointerCapture(e.pointerId))
               e.currentTarget.releasePointerCapture(e.pointerId);
-            if (preview)
+            if (finalRect)
               onArea({
                 pageNumber: number,
-                rects: [preview],
+                rects: [finalRect],
                 exact: "",
                 prefix: "",
                 suffix: "",

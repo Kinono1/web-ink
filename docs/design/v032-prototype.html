@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Web Ink v0.3.2 静态设计原型</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f6f7f9; --surface: #fff; --text: #18181b; --muted: #52525b;
+        --quiet: #71717a; --line: #e4e4e7; --fill: #eef0f4;
+        --accent: #2563eb; --accent-soft: #dbeafe; --primary: #27272a;
+        --primary-text: #fff; --danger: #b42318; --radius: 12px; --control: 8px;
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+          "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+      }
+      :root[data-theme="dark"] {
+        color-scheme: dark;
+        --bg: #111318; --surface: #191c23; --text: #f4f4f5; --muted: #a1a1aa;
+        --quiet: #a1a1aa; --line: #2b303b; --fill: #252a34;
+        --accent: #60a5fa; --accent-soft: #1e3a5f; --primary: #f4f4f5;
+        --primary-text: #18181b; --danger: #fda4af;
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; min-width: 320px; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.45; }
+      button, input { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+      svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+      .prototype-note { min-height: 32px; display: flex; align-items: center; justify-content: center; padding: 6px 16px; background: var(--primary); color: var(--primary-text); font-size: 12px; font-weight: 600; text-align: center; }
+      .app { max-width: 1440px; min-height: calc(100vh - 32px); margin: auto; padding: 24px; }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+      .brand { display: flex; align-items: center; gap: 10px; font-size: 16px; font-weight: 650; letter-spacing: -.01em; }
+      .brand-mark { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--primary); color: var(--primary-text); }
+      .brand small, .meta { color: var(--muted); font-size: 12px; font-weight: 500; }
+      .actions, .tabs, .control-row, .source-choices { display: flex; align-items: center; gap: 8px; }
+      button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 36px; padding: 7px 12px; border: 1px solid transparent; border-radius: var(--control); background: var(--surface); color: var(--text); font-weight: 600; text-decoration: none; }
+      button:hover, .button:hover { border-color: var(--line); background: var(--fill); }
+      button.primary { background: var(--primary); color: var(--primary-text); }
+      button.primary:hover { background: var(--primary); filter: brightness(.94); }
+      button.quiet { background: transparent; color: var(--muted); }
+      button.quiet:hover { background: var(--fill); color: var(--text); }
+      .icon-button { width: 36px; padding: 0; }
+      .tabs { width: max-content; max-width: 100%; margin-bottom: 14px; padding: 4px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+      .tab { min-height: 32px; padding: 5px 11px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 13px; white-space: nowrap; }
+      .tab[aria-selected="true"] { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 42%, var(--line)); }
+      .screen { display: none; } .screen.active { display: block; }
+      .surface { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+      h1, h2, h3, p { margin: 0; } h1 { font-size: 22px; line-height: 1.2; letter-spacing: -.025em; } h2 { font-size: 16px; line-height: 1.3; } h3 { font-size: 14px; }
+      .screen-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 20px; border-bottom: 1px solid var(--line); }
+      .helper { max-width: 72ch; margin-top: 5px; color: var(--muted); }
+      .document-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .switch { min-height: 32px; padding: 4px 8px; font-size: 12px; }
+      .switch::before { width: 8px; height: 8px; border-radius: 50%; background: currentColor; content: ""; }
+      .switch.on { color: #166534; background: #dcfce7; }
+      :root[data-theme="dark"] .switch.on { color: #86efac; background: #163c2a; }
+      .sidebar-layout { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-height: 560px; }
+      .current-context { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      .current-context .meta { grid-column: 1; } .context-actions { display: flex; align-items: center; gap: 8px; grid-column: 2; grid-row: 1 / span 2; }
+      .record-list { min-height: 0; padding: 8px 12px; overflow: auto; }
+      .record-list > p { padding: 6px 8px 10px; color: var(--muted); font-size: 12px; }
+      .record { width: 100%; justify-content: flex-start; min-height: 58px; padding: 9px 10px; text-align: left; background: transparent; }
+      .record strong, .record span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .record span { margin-top: 3px; color: var(--muted); font-size: 12px; font-weight: 400; }
+      .record:hover { background: var(--fill); }
+      .sidebar-bottom { display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center; padding: 12px 20px; border-top: 1px solid var(--line); }
+      .sidebar-bottom p { color: var(--muted); font-size: 12px; }
+      .library-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+      .search { position: relative; } .search svg { position: absolute; top: 9px; left: 11px; width: 17px; height: 17px; color: var(--quiet); }
+      input { width: 100%; min-height: 36px; padding: 8px 10px 8px 36px; border: 1px solid var(--line); border-radius: var(--control); background: var(--bg); color: var(--text); }
+      input::placeholder { color: var(--quiet); }
+      .library-list { padding: 8px 12px 18px; } .library-list > p { padding: 6px 8px 10px; color: var(--muted); font-size: 12px; }
+      .library-list .record { border-bottom: 1px solid var(--line); border-radius: 0; }
+      .library-empty { display: grid; place-items: center; min-height: 250px; padding: 36px 24px; text-align: center; }
+      .library-empty p { max-width: 400px; margin: 8px 0 16px; color: var(--muted); }
+      .pdf-shell { min-height: 640px; background: var(--bg); }
+      .pdf-toolbar { display: flex; align-items: center; gap: 8px; height: 52px; min-height: 52px; overflow: hidden; padding: 8px 16px; border-bottom: 1px solid var(--line); background: var(--surface); }
+      .pdf-file { min-width: 0; overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+      .spacer { flex: 1; } .page-readout { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+      .pdf-workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 588px; }
+      .paper-wrap { overflow: auto; padding: 28px; } .paper { width: min(100%, 680px); min-height: 680px; margin: auto; padding: 48px 56px; background: #fff; color: #222; box-shadow: 0 8px 24px rgb(0 0 0 / .12); }
+      .paper .paper-meta { color: #666; font-size: 12px; } .paper h2 { margin: 30px 0 12px; color: #18181b; font-size: 22px; } .paper p { margin: 0 0 14px; color: #444; line-height: 1.7; } mark { padding: 1px 2px; background: #fde68a; color: #3d2a00; }
+      .notes { display: none; padding: 16px; border-left: 1px solid var(--line); background: var(--surface); } .notes > p { margin-top: 5px; color: var(--muted); font-size: 12px; } .note-card { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); } .note-card p { margin-top: 6px; color: var(--muted); font-size: 13px; }
+      .more-menu { position: relative; } .menu { display: none; position: absolute; z-index: 2; top: 42px; right: 0; min-width: 170px; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); box-shadow: 0 12px 30px rgb(0 0 0 / .16); } .more-menu.open .menu { display: grid; } .menu button { justify-content: flex-start; }
+      .settings { display: grid; grid-template-columns: minmax(0, 1fr) 260px; min-height: 520px; } .settings-main { padding: 24px; } .setting-section { padding: 18px 0; border-bottom: 1px solid var(--line); } .setting-section:last-child { border-bottom: 0; } .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 12px; } .setting-row p, .settings-side p { color: var(--muted); font-size: 13px; } .radio-group { display: flex; flex-wrap: wrap; gap: 6px; } .choice { min-height: 34px; padding: 6px 10px; } .choice.active { border-color: var(--accent); background: var(--accent-soft); color: var(--text); } .settings-side { padding: 20px; border-left: 1px solid var(--line); background: var(--bg); } .settings-side p { margin: 7px 0 14px; }
+      .alert { display: flex; align-items: flex-start; gap: 10px; margin: 16px 20px 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); border-radius: 10px; background: color-mix(in srgb, var(--danger) 8%, var(--surface)); } .alert svg { color: var(--danger); } .alert p { color: var(--muted); font-size: 13px; } .alert strong { display: block; margin-bottom: 2px; }
+      .error-next { display: grid; place-items: center; min-height: 280px; padding: 36px 24px; text-align: center; } .error-next p { max-width: 440px; margin: 8px 0 18px; color: var(--muted); }
+      .mobile-only { display: none; }
+      @media (min-width: 900px) { .pdf-workspace.notes-open { grid-template-columns: minmax(0, 1fr) 320px; } .pdf-workspace.notes-open .notes { display: block; } }
+      @media (max-width: 899px) { .notes.open { display: block; position: absolute; z-index: 1; top: 110px; right: 12px; width: min(320px, calc(100% - 24px)); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 30px rgb(0 0 0 / .2); } }
+      @media (max-width: 699px) { .app { padding: 12px; } .topbar { align-items: flex-start; flex-direction: column; } .actions { width: 100%; justify-content: space-between; } .tabs { width: 100%; } .tab { flex: 1; } .screen-head, .current-context, .sidebar-bottom { padding-right: 16px; padding-left: 16px; } .library-toolbar { padding: 12px 16px; } .settings { grid-template-columns: 1fr; } .settings-side { display: none; } .pdf-toolbar { padding: 8px 12px; } .hide-narrow { display: none; } .mobile-only { display: inline-flex; } .paper-wrap { padding: 14px; } .paper { min-height: 560px; padding: 30px 26px; } .paper h2 { margin-top: 18px; font-size: 19px; } .pdf-shell { min-height: 540px; } .setting-row { align-items: flex-start; flex-direction: column; } }
+      @media (max-width: 599px) { .pdf-file { display: none; } }
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+    </style>
+  </head>
+  <body>
+    <div class="prototype-note">静态可点击原型 · 合成示例数据 · 非生产界面</div>
+    <main class="app">
+      <header class="topbar">
+        <div class="brand"><span class="brand-mark"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6V3Zm8 0v5h5M8 16h8M8 12h5"/></svg></span>Web Ink <small>v0.3.2 设计基线</small></div>
+        <div class="actions"><button class="quiet icon-button" id="theme-toggle" aria-label="切换明暗主题"><svg viewBox="0 0 24 24"><path d="M12 3v2m0 14v2m9-9h-2M5 12H3m15.36-6.36-1.42 1.42M7.06 16.94l-1.42 1.42m12.72 0-1.42-1.42M7.06 7.06 5.64 5.64M15.5 12a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z"/></svg></button><span class="meta" id="theme-label">浅色</span></div>
+      </header>
+      <nav class="tabs" role="tablist" aria-label="原型页面">
+        <button class="tab" role="tab" aria-selected="true" data-screen="sidebar">当前页面</button>
+        <button class="tab" role="tab" aria-selected="false" data-screen="library">资料库</button>
+        <button class="tab" role="tab" aria-selected="false" data-screen="pdf">PDF 阅读器</button>
+        <button class="tab" role="tab" aria-selected="false" data-screen="settings">设置与数据</button>
+        <button class="tab" role="tab" aria-selected="false" data-screen="error">错误状态</button>
+      </nav>
+      <section class="screen active" id="sidebar" role="tabpanel">
+        <div class="surface sidebar-layout">
+          <header class="current-context">
+            <div><h1 class="document-title">Web Ink · 阅读测试页</h1><p class="meta">127.0.0.1:4173</p></div>
+            <div class="context-actions"><button class="switch on" aria-pressed="true">本页标注已开启</button><button class="quiet icon-button" aria-label="刷新"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0 2 5.3M20 4v7h-7"/></svg></button></div>
+          </header>
+          <div class="record-list">
+            <p>本页标注 · 2 条（合成示例）</p>
+            <button class="record"><span><strong>“选中网页文字，再选择高亮颜色。”</strong><span>文字标注 · 今天 10:14</span></span></button>
+            <button class="record"><span><strong>图像中的实验流程</strong><span>图片绘制 · 今天 10:19</span></span></button>
+            <button class="record" data-go="pdf"><span><strong>当前标签页是 PDF？</strong><span>在 Web Ink 中打开当前 PDF</span></span></button>
+          </div>
+          <footer class="sidebar-bottom"><div><h2>图片绘制</h2><p>开启页面标注后，在图片上绘制区域。</p></div><button>开始绘制</button></footer>
+        </div>
+      </section>
+      <section class="screen" id="library" role="tabpanel">
+        <div class="surface">
+          <header class="screen-head"><div><h1>资料库</h1><p class="helper">搜索当前浏览器中保存的文字、笔记、网址或标签。</p></div><button class="primary" data-go="sidebar">当前页面</button></header>
+          <div class="library-toolbar"><label class="search"><svg viewBox="0 0 24 24"><path d="m20 20-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z"/></svg><input aria-label="搜索标注" placeholder="搜索文字、笔记、网址或标签" /></label><button><svg viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-6 6h2"/></svg>筛选</button></div>
+          <div class="library-list"><p>全部标注 · 3 条（默认不展开详情）</p><button class="record"><span><strong>脑周血管转运</strong><span>PDF 文字 · 今天</span></span></button><button class="record"><span><strong>图像对比度笔记</strong><span>网页文字 · 昨天</span></span></button><button class="record"><span><strong>阅读器返回规则</strong><span>PDF 区域 · 10 月 8 日</span></span></button></div>
+        </div>
+      </section>
+      <section class="screen" id="pdf" role="tabpanel">
+        <div class="surface pdf-shell">
+          <div class="pdf-toolbar">
+            <button class="quiet icon-button" aria-label="返回"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button>
+            <strong class="pdf-file">synthetic-paper.pdf</strong><span class="spacer"></span>
+            <button class="quiet hide-narrow">−</button><span class="page-readout hide-narrow">100%</span><button class="quiet hide-narrow">+</button>
+            <span class="page-readout">1 / 12</span>
+            <button class="quiet" id="notes-toggle" aria-label="笔记" aria-expanded="false"><svg viewBox="0 0 24 24"><path d="M5 4.5h14A1.5 1.5 0 0 1 20.5 6v9a1.5 1.5 0 0 1-1.5 1.5H10L5.5 20v-3.5H5A1.5 1.5 0 0 1 3.5 15V6A1.5 1.5 0 0 1 5 4.5ZM8 9h8M8 12.5h5"/></svg><span class="hide-narrow">笔记</span></button>
+            <div class="more-menu"><button class="quiet icon-button" id="more-toggle" aria-label="更多阅读器操作"><svg viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg></button><div class="menu"><button>旋转页面</button><button class="mobile-only">缩放控制</button><button>打开来源</button></div></div>
+          </div>
+          <div class="pdf-workspace"><div class="paper-wrap"><article class="paper"><p class="paper-meta">合成论文 · 第 1 页</p><h2>本地标注工作区</h2><p>这是 Stage A 设计原型的示例纸面文字。深色界面不会默认反转 PDF 页面内容。</p><p><mark>选择内容会与页面和归一化几何信息关联。</mark>真实的 PDF 来源验证和保存行为留待后续实现。</p><p>笔记仅保存在本机；返回来源页只能使用已观察到的标签页上下文。本原型不执行这些操作。</p></article></div><aside class="notes" id="notes"><h2>笔记</h2><p>产品默认关闭此栏。</p><div class="note-card"><strong>第 1 页 · 高亮</strong><p>集成阅读器前检查恢复优先级。</p></div></aside></div>
+        </div>
+      </section>
+      <section class="screen" id="settings" role="tabpanel">
+        <div class="surface settings"><article class="settings-main"><h1>设置与数据</h1><section class="setting-section"><h2>外观</h2><div class="setting-row"><div><strong>主题</strong><p>选择扩展页面使用的浅色或深色界面。</p></div><div class="radio-group"><button class="choice">跟随系统</button><button class="choice active">浅色</button><button class="choice">深色</button></div></div><div class="setting-row"><div><strong>减少动态效果</strong><p>移除界面动画，不影响可用操作。</p></div><button class="choice">关闭</button></div></section><section class="setting-section"><h2>备份与导入</h2><div class="setting-row"><div><strong>导出本地数据</strong><p>更新、清理浏览器数据或更换设备前，请下载 JSON 备份。</p></div><button>下载 JSON</button></div><div class="setting-row"><div><strong>导入备份</strong><p>导入文件中的设置不会覆盖本地设置。</p></div><button>选择 JSON 文件</button></div></section></article><aside class="settings-side"><h2>存储位置</h2><p>标注和偏好仅保存在当前浏览器；不需要账号，也没有云同步。</p><strong>2.4 MB</strong><p class="meta">合成展示数值。</p></aside></div>
+      </section>
+      <section class="screen" id="error" role="tabpanel">
+        <div class="surface"><header class="screen-head"><div><h1>无法打开当前 PDF</h1><p class="helper">当前标签页已不再匹配已观察到的公开来源。</p></div><button class="quiet" data-go="pdf">阅读器</button></header><div class="alert" role="alert"><svg viewBox="0 0 24 24"><path d="M12 9v4m0 4h.01M10.3 3.9 2.8 17a2 2 0 0 0 1.74 3h14.92A2 2 0 0 0 21.2 17L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg><div><strong>现有标注没有被修改</strong><p>请返回原标签页，或在阅读器中选择本地 PDF / 公开 PDF 链接。</p></div></div><div class="error-next"><h2>选择下一步</h2><p>来源不可用时不猜测返回地址。此静态原型不会执行打开、返回或保存操作。</p><div class="source-choices"><button class="primary" data-go="pdf">打开阅读器</button><button data-go="library">查看已保存标注</button></div></div></div>
+      </section>
+    </main>
+    <script>
+      const root = document.documentElement;
+      const tabs = [...document.querySelectorAll("[role=tab]")];
+      const screens = [...document.querySelectorAll(".screen")];
+      function show(id, updateHash = true) {
+        tabs.forEach(tab => tab.setAttribute("aria-selected", tab.dataset.screen === id));
+        screens.forEach(screen => screen.classList.toggle("active", screen.id === id));
+        if (updateHash) history.replaceState(null, "", `#${id}`);
+      }
+      const initial = location.hash.slice(1);
+      if (tabs.some(tab => tab.dataset.screen === initial)) show(initial, false);
+      tabs.forEach(tab => tab.addEventListener("click", () => show(tab.dataset.screen)));
+      document.querySelectorAll("[data-go]").forEach(button => button.addEventListener("click", () => show(button.dataset.go)));
+      document.querySelector("#theme-toggle").addEventListener("click", () => {
+        const dark = root.dataset.theme !== "dark";
+        root.dataset.theme = dark ? "dark" : "light";
+        document.querySelector("#theme-label").textContent = dark ? "深色" : "浅色";
+      });
+      document.querySelector("#notes-toggle").addEventListener("click", () => {
+        const notes = document.querySelector("#notes");
+        const workspace = document.querySelector(".pdf-workspace");
+        const open = notes.classList.toggle("open");
+        workspace.classList.toggle("notes-open", open);
+        document.querySelector("#notes-toggle").setAttribute("aria-expanded", String(open));
+      });
+      document.querySelector("#more-toggle").addEventListener("click", () => document.querySelector(".more-menu").classList.toggle("open"));
+      document.addEventListener("keydown", event => { if (event.key === "Escape") document.querySelector(".more-menu").classList.remove("open"); });
+    </script>
+  </body>
+</html>

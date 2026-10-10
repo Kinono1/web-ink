@@ -121,6 +121,60 @@ export interface PageRecord {
 export interface PageMode {
   enabled: boolean;
 }
+export interface RuntimeHealth {
+  generation: string;
+  version: string;
+  commit: string;
+  dirty: boolean;
+}
+export interface PdfSourceCandidate {
+  url: string;
+  via: "url" | "viewer" | "iframe" | "embed" | "object";
+}
+export type PdfContextReason =
+  | "not-pdf"
+  | "source-unknown"
+  | "protected-viewer"
+  | "permission-denied"
+  | "local-source"
+  | "unsafe-source"
+  | "context-unavailable"
+  | "session-unavailable";
+export interface PdfTabContext {
+  tabId: number;
+  url?: string;
+  kind: "direct" | "embedded" | "wrapper" | "local" | "unavailable";
+  candidates: PdfSourceCandidate[];
+  currentReader: boolean;
+  handoffToken?: string;
+  reason?: PdfContextReason;
+}
+export interface PdfHandoff {
+  token: string;
+  tabId: number;
+  returnUrl: string;
+  sourceUrl?: string;
+}
+export interface PdfOpenResult {
+  tabId: number;
+  readerUrl: string;
+  navigation: "same-tab" | "new-tab" | "current-reader";
+  token?: string;
+  sourceUrl?: string;
+}
+export interface PdfReturnResult {
+  tabId: number;
+  url: string;
+}
+export type PdfNavigationErrorCode =
+  | "INVALID_INPUT"
+  | "FORBIDDEN"
+  | "PAGE_CHANGED"
+  | "PDF_CHOICE_REQUIRED"
+  | "PDF_SOURCE_UNAVAILABLE"
+  | "STORAGE_UNAVAILABLE"
+  | "CONTEXT_UNAVAILABLE"
+  | "NAVIGATION_FAILED";
 export interface BackupEnvelope {
   format: "web-ink";
   schemaVersion: typeof SCHEMA_VERSION;
@@ -189,6 +243,11 @@ export type Result<T> =
   | { ok: true; data: T }
   | { ok: false; error: string; code?: string };
 export type Request =
+  | { type: "runtime.health" }
+  | { type: "pdf.context.get"; tabId?: number; windowId?: number; expectedUrl?: string }
+  | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string }
+  | { type: "pdf.handoff.get"; token: string }
+  | { type: "pdf.returnOriginal"; token: string }
   | { type: "annotations.list"; pageUrl?: string }
   | {
       type: "annotations.put";

@@ -1,6 +1,6 @@
 {
   "name": "web-ink",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Local-first webpage and PDF annotations",
   "license": "MIT",
@@ -21,8 +21,9 @@
     "benchmark": "node scripts/benchmark.mjs --mode=v02",
     "benchmark:v03": "node scripts/benchmark.mjs --mode=v03",
     "benchmark:pdf": "node scripts/benchmark.mjs --mode=pdf",
-    "test:release": "node --test tests/release-tools.test.mjs",
+    "test:release": "node --test tests/release-tools.test.mjs tests/pdfjs-errors.test.mjs",
     "update:local": "node scripts/update-local.mjs",
+    "register:local": "node scripts/update-local.mjs --register",
     "test:bulk": "vitest run --config vitest.bulk.config.ts",
     "postbuild": "node scripts/seal-runtime.mjs",
     "clean:artifacts": "node scripts/clean-artifacts.mjs"

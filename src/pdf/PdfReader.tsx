@@ -5,6 +5,7 @@ import {
   type PdfAnnotation,
   type OpenDocument,
   type SelectionTarget,
+  type SelectionPreview,
 } from "./types";
 import {
   useCallback,
@@ -20,7 +21,9 @@ import {
   DEFAULT_SETTINGS,
   type Annotation,
   type AnnotationPage,
-  type PageMode,
+  type PdfHandoff,
+  type PdfReturnResult,
+  type Request,
   type PdfTarget,
   type Settings,
 } from "../core/model";
@@ -29,28 +32,83 @@ import { Icon } from "../ui/management/helpers";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
+import {
+  readPdfReadingPosition,
+  createPdfReadingPositionWriter,
+  capturePdfReadingPosition,
+  restorePdfReadingPosition,
+  type PdfReadingPosition,
+  type PdfReadingPositionWriter,
+  type PdfRotation,
+} from "./reading-position";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "../ui/management.css";
 import "./pdf.css";
 
 const isPdf = (record: Annotation): record is PdfAnnotation =>
   record.kind === "pdf-text" || record.kind === "pdf-area";
-const initialParams = new URLSearchParams(location.search);
+const noteTags = (value: string) => [
+  ...new Set(value.split(",").map((tag) => tag.trim()).filter(Boolean)),
+];
+const dirtyDraft = (draft: PdfNoteDraft) =>
+  draft.note !== draft.base.note ||
+  draft.color !== draft.base.color ||
+  noteTags(draft.tags).join("\0") !== draft.base.tags.join("\0");
+type LeaveAction =
+  | { kind: "return" | "source" | "library" | "choose" }
+  | { kind: "open"; file?: File; source: string };
+type PositionSession = {
+  session: number;
+  hash: string;
+  writer: PdfReadingPositionWriter;
+  readReady: boolean;
+  intent: number;
+  pending?: PdfReadingPosition;
+};
+function safeSource(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  try {
+    return pdfSourceUrl(raw).href;
+  } catch {
+    return undefined;
+  }
+}
 
 export function PdfReader() {
+  const [initialParams] = useState(() => new URLSearchParams(location.search));
+  const handoffToken = initialParams.get("handoff");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsReady, setSettingsReady] = useState(false);
   const autoOpenAttempted = useRef(false);
   const [source, setSource] = useState(initialParams.get("source") || "");
   const [opened, setOpened] = useState<OpenDocument>();
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
-  const [enabled, setEnabled] = useState(false),
+  const recordsRef = useRef(records);
+  recordsRef.current = records;
+  const [showMarks, setShowMarks] = useState(true),
     [area, setArea] = useState(false);
   const [color, setColor] = useState<string>(COLORS[0]);
   const [zoom, setZoom] = useState(1),
-    [rotation, setRotation] = useState(0),
+    [rotation, setRotation] = useState<PdfRotation>(0),
     [pageNumber, setPageNumber] = useState(1);
-  const [selection, setSelection] = useState<SelectionTarget>();
+  const [selection, setSelection] = useState<SelectionPreview>();
+  const selectionBar = useRef<HTMLDivElement>(null);
+  const [selectionStyle, setSelectionStyle] = useState<React.CSSProperties>({});
+  const [notesOpen, setNotesOpen] = useState(false),
+    [moreOpen, setMoreOpen] = useState(false),
+    [sourceOpen, setSourceOpen] = useState(false);
+  const moreMenu = useRef<HTMLDivElement>(null);
+  const moreTrigger = useRef<HTMLButtonElement>(null);
+  const notesRail = useRef<HTMLElement>(null);
+  const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
+  const [handoffReady, setHandoffReady] = useState(!handoffToken);
+  const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
+  const [leaving, setLeaving] = useState(false),
+    [guardSaving, setGuardSaving] = useState(false);
+  const [positionError, setPositionError] = useState("");
+  const [positionEpoch, setPositionEpoch] = useState(0);
+  const positionSession = useRef<PositionSession | undefined>(undefined);
+  const intentEpoch = useRef(0);
   const [picked, setPicked] = useState<PdfAnnotation>();
   const [undoRecord, setUndoRecord] = useState<PdfAnnotation>();
   const [unsaved, setUnsaved] = useState<PdfAnnotation>();
@@ -64,6 +122,15 @@ export function PdfReader() {
   const [noteDrafts, setNoteDrafts] = useState<Record<string, PdfNoteDraft>>(
     {},
   );
+  const draftsRef = useRef(noteDrafts);
+  draftsRef.current = noteDrafts;
+  const unsavedRef = useRef(unsaved);
+  unsavedRef.current = unsaved;
+  const noteAfterSave = useRef(false);
+  const annotationWrites = useRef(new Set<Promise<unknown>>());
+  const [writeCount, setWriteCount] = useState(0);
+  const [noteSaving, setNoteSaving] = useState<string>();
+  const [noteConflicts, setNoteConflicts] = useState<Record<string, boolean>>({});
   const [documentSession, setDocumentSession] = useState(0);
   const container = useRef<HTMLDivElement>(null);
   const session = useRef(new PdfSession());
@@ -82,9 +149,14 @@ export function PdfReader() {
   const zh = settings.language === "zh-CN";
   const t = (cn: string, en: string) => (zh ? cn : en);
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
-  const hasNoteDrafts = Object.values(noteDrafts).some(
-    (draft) => draft.editing,
+  const savedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
+  const deletedDrafts = Object.values(noteDrafts).filter(
+    (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
   );
+  useLayoutEffect(() => {
+    if (notesOpen && deletedDrafts.length && !pendingLeave && !sourceOpen)
+      notesRail.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+  }, [notesOpen, deletedDrafts.length, pendingLeave, sourceOpen]);
   const sortedNotes = useMemo(
     () =>
       records
@@ -111,6 +183,103 @@ export function PdfReader() {
     clearTimeout(noticeTimer.current);
     noticeTimer.current = setTimeout(() => setNotice(""), 1800);
   };
+  // Remote deletion must reach pending save callbacks before React renders.
+  function updateRecords(next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) {
+    const values = typeof next === "function" ? next(recordsRef.current) : next;
+    const ids = new Set(values.map((record) => record.id));
+    for (const record of recordsRef.current) {
+      const draft = draftsRef.current[record.id];
+      if (draft && dirtyDraft(draft) && !ids.has(record.id)) {
+        setNotesOpen(true);
+        break;
+      }
+    }
+    recordsRef.current = values;
+    setRecords(values);
+  }
+  function updateDraft(id: string, draft?: PdfNoteDraft, resolveConflict = false) {
+    const next = { ...draftsRef.current };
+    if (draft) next[id] = draft;
+    else delete next[id];
+    draftsRef.current = next;
+    setNoteDrafts(next);
+    if (!draft || resolveConflict) setNoteConflicts((current) => ({ ...current, [id]: false }));
+  }
+  function userIntent() {
+    intentEpoch.current++;
+    if (positionSession.current) positionSession.current.pending = undefined;
+    setPositionEpoch((epoch) => epoch + 1);
+  }
+  function pagesPadding() {
+    return container.current ? parseFloat(getComputedStyle(container.current).paddingTop) || 0 : 0;
+  }
+  function currentPosition() {
+    const active = positionSession.current;
+    const scroller = container.current;
+    if (!active || !scroller || active.session !== documentSessionRef.current || !active.readReady || active.pending) return;
+    const top = Math.max(0, scroller.scrollTop - pagesPadding());
+    if (!dimensions.current.has(layoutIndex.current.pageAt(top))) return;
+    return capturePdfReadingPosition(layoutIndex.current, top, zoom, rotation);
+  }
+  function savePosition() {
+    const snapshot = currentPosition();
+    if (snapshot) positionSession.current?.writer.save(snapshot);
+  }
+  async function flushPosition() {
+    savePosition();
+    try {
+      await positionSession.current?.writer.flush();
+      setPositionError("");
+    } catch {
+      setPositionError(t("阅读位置暂未保存，可重试；标注不受影响。", "Reading position was not saved. Retry is available; annotations are unaffected."));
+    }
+  }
+  async function trackWrite<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = operation();
+    annotationWrites.current.add(pending);
+    setWriteCount(annotationWrites.current.size);
+    try {
+      return await pending;
+    } finally {
+      annotationWrites.current.delete(pending);
+      setWriteCount(annotationWrites.current.size);
+    }
+  }
+  useEffect(() => {
+    if (!handoffToken) return;
+    let dead = false;
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(handoffToken)) {
+      setHandoffReady(true);
+      return;
+    }
+    void request<PdfHandoff | null>({ type: "pdf.handoff.get", token: handoffToken })
+      .then((value) => { if (!dead) setHandoff(value?.token === handoffToken ? value : null); })
+      .catch(() => { if (!dead) setHandoff(null); })
+      .finally(() => { if (!dead) setHandoffReady(true); });
+    return () => { dead = true; };
+  }, [handoffToken]);
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (!unsavedRef.current && !annotationWrites.current.size && !Object.values(draftsRef.current).some(dirtyDraft)) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    const hide = () => { void positionSession.current?.writer.flush().catch(() => undefined); };
+    window.addEventListener("beforeunload", guard);
+    window.addEventListener("pagehide", hide);
+    return () => {
+      window.removeEventListener("beforeunload", guard);
+      window.removeEventListener("pagehide", hide);
+    };
+  }, []);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const outside = (event: PointerEvent) => {
+      if (!moreMenu.current?.contains(event.target as Node)) setMoreOpen(false);
+    };
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [moreOpen]);
   useEffect(() => {
     void request<Settings>({ type: "settings.get" }).then((next) => {
       setSettings(next);
@@ -149,6 +318,9 @@ export function PdfReader() {
   useEffect(
     () => () => {
       void session.current.dispose();
+      const position = positionSession.current;
+      positionSession.current = undefined;
+      if (position) void position.writer.flush().catch(() => undefined).finally(() => position.writer.dispose());
       cancelAnimationFrame(measureFrame.current);
       measureFrame.current = 0;
       clearTimeout(noticeTimer.current);
@@ -163,7 +335,7 @@ export function PdfReader() {
         type: "annotations.list",
         pageUrl: key,
       });
-      if (active === documentSessionRef.current) setRecords(all.filter(isPdf));
+      if (active === documentSessionRef.current) updateRecords(all.filter(isPdf));
     } catch (cause) {
       if (active === documentSessionRef.current) setError(errorText(cause));
     }
@@ -184,34 +356,26 @@ export function PdfReader() {
       ) {
         if (m.annotation && isPdf(m.annotation)) {
           const changed = m.annotation;
-          setRecords((old) =>
+          updateRecords((old) =>
             [...old.filter((r) => r.id !== changed.id), changed].sort(
               (a, b) => a.target.pageNumber - b.target.pageNumber,
             ),
           );
         } else if (m.deletedId)
-          setRecords((old) => old.filter((r) => r.id !== m.deletedId));
+          updateRecords((old) => old.filter((r) => r.id !== m.deletedId));
         else void refresh();
       }
-      if (m.type === "page.mode.changed" && m.pageUrl === key)
-        void request<PageMode>({ type: "page.mode.get", pageUrl: key })
-          .then((mode) => {
-            if (active === documentSessionRef.current) setEnabled(mode.enabled);
-          })
-          .catch((cause) => {
-            if (active === documentSessionRef.current)
-              setError(errorText(cause));
-          });
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => chrome.runtime.onMessage.removeListener(listener);
   }, [key, documentSession, refresh]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!opened) return;
     const scroller = container.current;
     const oldScroll = scroller?.scrollTop ?? 0;
-    const anchor = scroller ? layoutIndex.current.pageAt(oldScroll) : 1;
-    const relative = oldScroll - layoutIndex.current.offsetBefore(anchor);
+    const padding = pagesPadding();
+    const anchor = scroller ? layoutIndex.current.pageAt(Math.max(0, oldScroll - padding)) : 1;
+    const relative = Math.max(0, oldScroll - padding) - layoutIndex.current.offsetBefore(anchor);
     cancelAnimationFrame(measureFrame.current);
     measureFrame.current = 0;
     pendingMeasures.current.clear();
@@ -221,7 +385,7 @@ export function PdfReader() {
     const fallback = (rotation % 180 ? 612 : 792) * zoom;
     layoutIndex.current.reset(opened.document.numPages, fallback);
     pendingScrollAdjustment.current = scroller
-      ? layoutIndex.current.offsetBefore(anchor) + relative - oldScroll
+      ? layoutIndex.current.offsetBefore(anchor) + relative + padding - oldScroll
       : 0;
     dimensions.current.clear();
     setLayoutEpoch((value) => value + 1);
@@ -238,7 +402,7 @@ export function PdfReader() {
         measureFrame.current = 0;
         const scroller = container.current;
         const anchor = scroller
-          ? layoutIndex.current.pageAt(scroller.scrollTop)
+          ? layoutIndex.current.pageAt(Math.max(0, scroller.scrollTop - pagesPadding()))
           : 1;
         const before = scroller ? layoutIndex.current.offsetBefore(anchor) : 0;
         if (generation !== layoutGeneration.current) return;
@@ -274,6 +438,40 @@ export function PdfReader() {
     if (scroller) scroller.scrollTop += adjustment;
     pendingScrollAdjustment.current = 0;
   }, [layoutEpoch]);
+  useLayoutEffect(() => {
+    const active = positionSession.current;
+    const pending = active?.pending;
+    const scroller = container.current;
+    if (!active || !pending || !scroller || active.session !== documentSessionRef.current) return;
+    if (active.intent !== intentEpoch.current) { active.pending = undefined; return; }
+    if (!dimensions.current.has(pending.pageNumber)) return;
+    const top = restorePdfReadingPosition(layoutIndex.current, pending);
+    if (top === undefined) return;
+    pendingScrollAdjustment.current = 0;
+    scroller.scrollTop = top + pagesPadding();
+    active.pending = undefined;
+    setPageNumber(pending.pageNumber);
+    setPositionEpoch((epoch) => epoch + 1);
+  }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
+  useLayoutEffect(() => {
+    const bar = selectionBar.current;
+    const scroller = container.current;
+    if (!selection || !bar || !scroller) return;
+    const page = scroller.getBoundingClientRect();
+    const bounds = bar.getBoundingClientRect();
+    const left = Math.max(8, page.left), right = Math.min(innerWidth - 8, page.right);
+    const top = Math.max(60, page.top), bottom = Math.min(innerHeight - 8, page.bottom);
+    const anchor = selection.anchor;
+    const above = anchor.top - bounds.height - 8;
+    const below = anchor.bottom + 8;
+    if (bounds.width > right - left || anchor.bottom < top || anchor.top > bottom || (above < top && below + bounds.height > bottom)) {
+      setSelectionStyle({});
+      return;
+    }
+    setSelectionStyle({ left: Math.max(left, Math.min(right - bounds.width, (anchor.left + anchor.right - bounds.width) / 2)),
+      top: above >= top ? above : below, bottom: "auto", transform: "none" });
+  }, [selection, layoutEpoch]);
+  useEffect(() => { savePosition(); }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
   useEffect(() => {
     const scroller = container.current;
     if (!opened || !scroller) return;
@@ -283,16 +481,20 @@ export function PdfReader() {
     };
     const update = () => {
       frame = 0;
-      const first = findPage(Math.max(0, scroller.scrollTop - 24));
-      const last = findPage(scroller.scrollTop + scroller.clientHeight);
+      if (positionSession.current?.pending) return;
+      const position = Math.max(0, scroller.scrollTop - pagesPadding());
+      const first = findPage(position);
+      const last = findPage(position + scroller.clientHeight);
       const start = Math.max(0, first - 1),
         end = Math.min(opened.document.numPages, last + 2);
       setPageWindow((old) =>
         old.start === start && old.end === end ? old : { start, end },
       );
       setPageNumber(first + 1);
+      savePosition();
     };
     const scroll = () => {
+      setSelectionStyle({});
       if (!frame) frame = requestAnimationFrame(update);
     };
     const resize = new ResizeObserver(scroll);
@@ -304,30 +506,19 @@ export function PdfReader() {
       resize.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [opened?.hash, layoutEpoch]);
+  }, [opened?.hash, layoutEpoch, positionEpoch, zoom, rotation]);
   useEffect(() => {
     if (!settingsReady || autoOpenAttempted.current) return;
     autoOpenAttempted.current = true;
-    if (initialParams.get("open") === "1" && initialParams.get("source")) {
+    if (safeSource(initialParams.get("source") || undefined)) {
       // A side-panel click starts this handoff. Never request site access from
       // an effect: if needed, the reader's Open URL button supplies the gesture.
-      void openPdf(undefined, true);
+      void loadPdf(undefined, true);
     }
   }, [settingsReady]);
-  async function openPdf(file?: File, automatic = false) {
-    if (unsaved || saving || removing || hasNoteDrafts) {
-      setError(
-        t(
-          hasNoteDrafts
-            ? "请先保存或放弃笔记草稿。"
-            : "请先保存或放弃未保存标注。",
-          hasNoteDrafts
-            ? "Resolve note drafts before opening another PDF."
-            : "Resolve the unsaved annotation first.",
-        ),
-      );
-      return;
-    }
+  async function loadPdf(file?: File, automatic = false, chosenSource = source) {
+    const openingParams = new URLSearchParams(location.search);
+    const openingIntent = intentEpoch.current;
     const chromeVersion = Number(
       navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/)?.[1] || 0,
     );
@@ -348,12 +539,23 @@ export function PdfReader() {
     // Invalidate every async callback from the currently displayed document
     // before a new source read can complete.
     documentSessionRef.current++;
+    positionSession.current?.writer.dispose();
+    positionSession.current = undefined;
     setOpened(undefined);
     setSelection(undefined);
     setPicked(undefined);
     setUndoRecord(undefined);
-    setRecords([]);
+    updateRecords([]);
     setNoteDrafts({});
+    draftsRef.current = {};
+    setNoteConflicts({});
+    setShowMarks(true);
+    setNotesOpen(false);
+    setSourceOpen(false);
+    setPositionError("");
+    setZoom(1);
+    setRotation(0);
+    setPageNumber(1);
     dimensions.current.clear();
     setPageWindow({ start: 0, end: 3 });
     try {
@@ -362,7 +564,7 @@ export function PdfReader() {
       signal = active.signal;
       let remote: string | undefined;
       if (!file) {
-        const url = pdfSourceUrl(source.trim());
+        const url = pdfSourceUrl(chosenSource.trim());
         remote = url.href;
         const origins = [`${url.origin}/*`];
         if (!(await chrome.permissions.contains({ origins }))) {
@@ -380,6 +582,7 @@ export function PdfReader() {
       if (!session.current.isCurrent(token)) return;
       const hash = await pdfHash(bytes);
       if (!session.current.isCurrent(token)) return;
+      const positionRead = readPdfReadingPosition(hash);
       const api = await import("pdfjs-dist/legacy/build/pdf.mjs");
       api.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
         "/pdfjs/pdf.worker.min.mjs",
@@ -392,6 +595,7 @@ export function PdfReader() {
         wasmUrl: chrome.runtime.getURL("/pdfjs/wasm/"),
         iccUrl: chrome.runtime.getURL("/pdfjs/iccs/"),
         enableXfa: false,
+        stopAtErrors: true,
         maxImageSize: 16777216,
         canvasMaxAreaInBytes: 67108864,
       });
@@ -414,19 +618,18 @@ export function PdfReader() {
           new URL(remote!).pathname.split("/").pop() || "Document.pdf",
         );
       const pageUrl = `urn:web-ink:pdf:${hash}`;
-      const [all, mode] = await Promise.all([
-        request<Annotation[]>({ type: "annotations.list", pageUrl }),
-        request<PageMode>({ type: "page.mode.get", pageUrl }),
-      ]);
+      const all = await request<Annotation[]>({ type: "annotations.list", pageUrl });
       if (!session.current.isCurrent(token)) return;
       // Keep the reader URL aligned with the successfully loaded document so
       // a later library/source handoff cannot reuse a tab showing another PDF.
       const readerLocation = new URL(location.href);
       readerLocation.searchParams.set("document", hash);
       readerLocation.searchParams.delete("open");
+      readerLocation.searchParams.delete("page");
       if (remote) readerLocation.searchParams.set("source", remote);
       else readerLocation.searchParams.delete("source");
       history.replaceState(null, "", readerLocation.href);
+      setSource(remote ?? "");
       setOpened({
         document: doc,
         api,
@@ -436,13 +639,34 @@ export function PdfReader() {
       });
       documentSessionRef.current++;
       setDocumentSession(documentSessionRef.current);
-      setRecords(all.filter(isPdf));
-      setEnabled(mode.enabled);
+      updateRecords(all.filter(isPdf));
       setArea(false);
-      setZoom(1);
-      setRotation(0);
-      setPageNumber(1);
-      const expected = initialParams.get("document");
+      const expected = openingParams.get("document");
+      const requestedPage = openingParams.get("page");
+      const explicitPage = requestedPage && /^[1-9]\d*$/.test(requestedPage) && (!expected || expected === hash) && Number(requestedPage) <= doc.numPages
+        ? Number(requestedPage) : undefined;
+      const position: PositionSession = {
+        session: documentSessionRef.current, hash,
+        writer: createPdfReadingPositionWriter(hash), readReady: false, intent: openingIntent,
+      };
+      positionSession.current = position;
+      void positionRead.then((stored) => {
+        if (!session.current.isCurrent(token) || positionSession.current !== position) return;
+        position.readReady = true;
+        if (openingIntent === intentEpoch.current) {
+          const valid = stored && stored.pageNumber <= doc.numPages ? stored : undefined;
+          const target = explicitPage ? { version: 1 as const, pageNumber: explicitPage, pageOffsetRatio: 0,
+            zoom: valid?.zoom ?? 1, rotation: valid?.rotation ?? 0 } : valid;
+          if (target) {
+            position.pending = target;
+            setZoom(target.zoom);
+            setRotation(target.rotation);
+            setPageNumber(target.pageNumber);
+            setPageWindow({ start: Math.max(0, target.pageNumber - 2), end: Math.min(doc.numPages, target.pageNumber + 2) });
+          }
+        }
+        setPositionEpoch((epoch) => epoch + 1);
+      });
       let changed = !!expected && expected !== hash;
       if (remote && !changed) {
         const earlier = await request<AnnotationPage>({
@@ -472,47 +696,139 @@ export function PdfReader() {
       if (token && session.current.isCurrent(token)) setBusy(false);
     }
   }
-  async function toggle() {
-    if (!key || unsaved || saving || removing) return;
-    const active = documentSession;
-    try {
-      const mode = await request<PageMode>({
-        type: "page.mode.put",
-        pageUrl: key,
-        enabled: !enabled,
-      });
-      if (active !== documentSessionRef.current) return;
-      setEnabled(mode.enabled);
-      setSelection(undefined);
-      setPicked(undefined);
-      setArea(false);
-    } catch (cause) {
-      if (active === documentSessionRef.current) setError(errorText(cause));
-    }
-  }
-  async function save(record: PdfAnnotation) {
-    if (saving) return;
+  async function save(record: PdfAnnotation, editNote = false): Promise<PdfAnnotation> {
     setSaving(true);
     setUnsaved(record);
+    unsavedRef.current = record;
+    noteAfterSave.current = editNote;
     setError("");
     const active = documentSession;
-    try {
+    return trackWrite(async () => { try {
       const stored = await request<PdfAnnotation>({
         type: "annotations.put",
         annotation: record,
         expectedRevision: record.revision,
       });
-      if (active !== documentSessionRef.current) return;
-      setRecords((old) => [...old.filter((r) => r.id !== stored.id), stored]);
+      if (active !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
+      updateRecords((old) => [...old.filter((r) => r.id !== stored.id), stored]);
       setUnsaved(undefined);
+      unsavedRef.current = undefined;
       setSelection(undefined);
       getSelection()?.removeAllRanges();
       tell(t("已保存到本机", "Saved on this device"));
+      if (editNote) {
+        setNotesOpen(true);
+        setNotesLimit((limit) => Math.max(limit, records.length + 1));
+        updateDraft(stored.id, { note: stored.note, tags: stored.tags.join(", "), color: stored.color, base: stored, editing: true });
+      }
+      return stored;
     } catch (cause) {
       if (active === documentSessionRef.current) setError(errorText(cause));
+      throw cause;
     } finally {
       if (active === documentSessionRef.current) setSaving(false);
+    } });
+  }
+  async function saveNote(id: string, draft: PdfNoteDraft): Promise<void> {
+    const deletedMessage = t(
+      "原标注已被删除。草稿仅保留在此窗口，请复制内容或放弃草稿后再继续。",
+      "The original annotation was deleted. This draft remains in this window; copy its contents or discard it before leaving.",
+    );
+    if (!recordsRef.current.some((record) => record.id === id)) {
+      setNotesOpen(true);
+      setError(deletedMessage);
+      throw Error(deletedMessage);
     }
+    const active = documentSession;
+    setNoteSaving(id);
+    setError("");
+    return trackWrite(async () => { try {
+      const stored = await request<PdfAnnotation>({ type: "annotations.put", annotation: {
+        ...draft.base, note: draft.note, tags: noteTags(draft.tags), color: draft.color, updatedAt: new Date().toISOString(),
+      }, expectedRevision: draft.base.revision });
+      if (active !== documentSessionRef.current) return;
+      if (!recordsRef.current.some((record) => record.id === id)) throw Error(deletedMessage);
+      updateRecords((old) => [...old.filter((record) => record.id !== id), stored]);
+      updateDraft(id);
+    } catch (cause) {
+      if (active === documentSessionRef.current) {
+        if (cause instanceof RequestError && cause.code === "CONFLICT") setNoteConflicts((current) => ({ ...current, [id]: true }));
+        setError(errorText(cause));
+      }
+      throw cause;
+    } finally {
+      if (active === documentSessionRef.current) setNoteSaving(undefined);
+    } });
+  }
+  const currentParams = new URLSearchParams(location.search);
+  const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
+  async function executeLeave(action: LeaveAction) {
+    if (leaving) return;
+    setLeaving(true);
+    try {
+      await flushPosition();
+      switch (action.kind) {
+        case "return":
+          if (!handoff) throw Error(t("原阅读器会话已失效，请打开 PDF 来源或重新选择本地文件。", "Original-reader session expired. Open the public source or choose the local file again."));
+          await request<PdfReturnResult>({ type: "pdf.returnOriginal", token: handoff.token });
+          break;
+        case "source":
+          if (publicUrl) location.assign(publicUrl);
+          else setSourceOpen(true);
+          break;
+        case "library": location.assign(chrome.runtime.getURL("/library.html")); break;
+        case "choose": setSourceOpen(true); break;
+        case "open": await loadPdf(action.file, false, action.source); break;
+      }
+      setPendingLeave(undefined);
+    } catch (cause) {
+      if (action.kind === "return" && cause instanceof RequestError &&
+        (cause.code === "PDF_SOURCE_UNAVAILABLE" || cause.code === "FORBIDDEN")) setHandoff(null);
+      setError(errorText(cause));
+    } finally { setLeaving(false); }
+  }
+  function requestLeave(action: LeaveAction) {
+    if (action.kind === "open") {
+      autoOpenAttempted.current = true;
+      // Cancel old initialization without queuing another old-document write.
+      intentEpoch.current++;
+      if (positionSession.current) positionSession.current.pending = undefined;
+    }
+    setMoreOpen(false);
+    if (unsavedRef.current || annotationWrites.current.size || Object.values(draftsRef.current).some(dirtyDraft)) {
+      setPendingLeave(action);
+      return;
+    }
+    void executeLeave(action);
+  }
+  async function saveAndContinue() {
+    if (!pendingLeave || guardSaving) return;
+    setGuardSaving(true);
+    try {
+      await Promise.all([...annotationWrites.current]);
+      if (unsavedRef.current) await save(unsavedRef.current, noteAfterSave.current);
+      for (const [id, draft] of Object.entries(draftsRef.current)) {
+        if (dirtyDraft(draft)) await saveNote(id, draft);
+      }
+      await executeLeave(pendingLeave);
+    } catch (cause) { setError(errorText(cause)); }
+    finally { setGuardSaving(false); }
+  }
+  function discardAndContinue() {
+    if (!pendingLeave || annotationWrites.current.size || guardSaving) return;
+    unsavedRef.current = undefined;
+    setUnsaved(undefined);
+    draftsRef.current = {};
+    setNoteDrafts({});
+    setNoteConflicts({});
+    setSelection(undefined);
+    getSelection()?.removeAllRanges();
+    setError("");
+    void executeLeave(pendingLeave);
+  }
+  function keepEditing() {
+    setPendingLeave(undefined);
+    if (deletedDrafts.length) setNotesOpen(true);
   }
   async function remove(record: PdfAnnotation) {
     if (removing || saving || unsaved || record.pageUrl !== key) return;
@@ -520,13 +836,13 @@ export function PdfReader() {
     setError("");
     const active = documentSession;
     try {
-      await request({
+      await trackWrite(() => request({
         type: "annotations.delete",
         id: record.id,
         expectedRevision: record.revision,
-      });
+      }));
       if (active !== documentSessionRef.current) return;
-      setRecords((old) => old.filter((item) => item.id !== record.id));
+      updateRecords((old) => old.filter((item) => item.id !== record.id));
       setNoteDrafts((current) => {
         const { [record.id]: _removed, ...rest } = current;
         return rest;
@@ -553,12 +869,12 @@ export function PdfReader() {
     setError("");
     const active = documentSession;
     try {
-      const restored = await request<PdfAnnotation>({
+      const restored = await trackWrite(() => request<PdfAnnotation>({
         type: "annotations.restore",
         annotation: { ...undoRecord, updatedAt: new Date().toISOString() },
-      });
+      }));
       if (active !== documentSessionRef.current) return;
-      setRecords((old) => [
+      updateRecords((old) => [
         ...old.filter((item) => item.id !== restored.id),
         restored,
       ]);
@@ -574,8 +890,9 @@ export function PdfReader() {
     target: SelectionTarget,
     kind: "pdf-text" | "pdf-area",
     chosen = color,
+    editNote = false,
   ) {
-    if (!opened || !key || !enabled || saving || removing || unsaved) return;
+    if (!opened || !key || locked || annotationWrites.current.size) return;
     const now = new Date().toISOString();
     const pdfTarget: PdfTarget = {
       ...target,
@@ -595,10 +912,11 @@ export function PdfReader() {
       revision: 0,
       kind,
       target: pdfTarget,
-    });
+    }, editNote).catch(() => undefined);
   }
   function jump(n: number) {
     if (!opened) return;
+    userIntent();
     const page = Math.min(opened.document.numPages, Math.max(1, n));
     setPageNumber(page);
     setPageWindow({
@@ -606,430 +924,191 @@ export function PdfReader() {
       end: Math.min(opened.document.numPages, page + 2),
     });
     container.current?.scrollTo({
-      top: layoutIndex.current.offsetBefore(page),
+      top: layoutIndex.current.offsetBefore(page) + pagesPadding(),
       behavior: "instant",
     });
   }
-  const locked = busy || saving || removing || !!unsaved;
-  // One set of source controls: centred while the reader is empty, then in the
-  // header, where the URL can still be changed once a document is open.
+  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0;
+  function changeZoom(delta: number) {
+    userIntent();
+    setSelection(undefined);
+    setZoom((value) => Math.max(0.5, Math.min(3, value + delta)));
+  }
+  function dialogKeys(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key !== "Tab") return;
+    const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')];
+    const first = controls[0], last = controls.at(-1);
+    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+    if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+  }
+  const zoomControls = <>
+    <button className="quiet icon-button" aria-label={t("缩小", "Zoom out")} title={t("缩小", "Zoom out")}
+      disabled={locked || zoom <= 0.5} onClick={() => changeZoom(-0.25)}><Icon name="minus" /></button>
+    <span className="pdf-zoom">{Math.round(zoom * 100)}%</span>
+    <button className="quiet icon-button" aria-label={t("放大", "Zoom in")} title={t("放大", "Zoom in")}
+      disabled={locked || zoom >= 3} onClick={() => changeZoom(0.25)}><Icon name="plus" /></button>
+  </>;
+  const backLabel = handoff ? t("返回原阅读器", "Return to original reader") : publicUrl
+    ? t("打开 PDF 来源", "Open PDF source") : t("重新选择 PDF", "Choose PDF again");
+  const backAction: LeaveAction = { kind: handoff ? "return" : publicUrl ? "source" : "choose" };
   const sourceControls = (
     <section className="pdf-open" aria-label={t("打开 PDF", "Open PDF")}>
-      <label
-        className={opened ? "pdf-file-button compact" : "pdf-file-button"}
-        title={t("选择本地 PDF", "Choose local PDF")}
-      >
-        <Icon name="pdf" />
-        {opened ? null : t("选择本地 PDF", "Choose local PDF")}
-        <input
-          aria-label={t("选择本地 PDF", "Choose local PDF")}
-          type="file"
-          accept="application/pdf,.pdf"
-          disabled={locked}
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void openPdf(file);
-            e.target.value = "";
-          }}
-        />
+      <label className="pdf-file-button" title={t("选择本地 PDF", "Choose local PDF")}>
+        <Icon name="pdf" />{t("选择本地 PDF", "Choose local PDF")}
+        <input aria-label={t("选择本地 PDF", "Choose local PDF")} type="file" accept="application/pdf,.pdf" disabled={locked}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) requestLeave({ kind: "open", file, source });
+            event.target.value = "";
+          }} />
       </label>
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          void openPdf();
-        }}
-      >
-        <input
-          aria-label={t("公开 PDF 网址", "Public PDF URL")}
-          type="url"
-          value={source}
-          placeholder="https://…/paper.pdf"
-          onChange={(e) => setSource(e.target.value)}
-          required
-        />
-        <button disabled={locked}>
-          {busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}
-        </button>
+      <form onSubmit={(event) => { event.preventDefault(); requestLeave({ kind: "open", source }); }}>
+        <input aria-label={t("公开 PDF 网址", "Public PDF URL")} type="url" value={source} disabled={locked}
+          placeholder="https://…/paper.pdf" onChange={(event) => setSource(event.target.value)} required />
+        <button disabled={locked}>{busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}</button>
       </form>
     </section>
   );
   return (
-    <main className="pdf-app">
-      <header className="pdf-header">
-        <div className="pdf-brand">
-          <Icon name="pdf" />
-          <strong>
-            Web Ink <span>PDF</span>
-          </strong>
+    <main className="pdf-app" onKeyDown={(event) => {
+      if (event.key !== "Escape" || guardSaving || leaving) return;
+      if (pendingLeave) keepEditing();
+      else if (sourceOpen) setSourceOpen(false);
+      else {
+        if (moreOpen) moreTrigger.current?.focus();
+        setMoreOpen(false);
+        setSelection(undefined);
+        setPicked(undefined);
+        setArea(false);
+      }
+    }}>
+      {opened ? <nav className="pdf-toolbar" aria-label={t("PDF 工具栏", "PDF toolbar")}>
+        <button className="quiet icon-button pdf-back" aria-label={backLabel} title={backLabel}
+          disabled={leaving || !handoffReady} onClick={() => requestLeave(backAction)}><Icon name="chevron" /></button>
+        <span className="pdf-name" title={opened.fileName}>{opened.fileName}</span>
+        <label className="pdf-page-field"><input aria-label={t("页码", "Page number")} type="number" min="1"
+          max={opened.document.numPages} value={pageNumber} disabled={locked}
+          onChange={(event) => { const number = event.target.valueAsNumber; if (Number.isInteger(number)) jump(number); }} />
+          <span>/ {opened.document.numPages}</span></label>
+        <div className="pdf-zoom-controls">{zoomControls}</div>
+        <button className="quiet" aria-label={t("笔记", "Notes")} aria-expanded={notesOpen} aria-controls="pdf-notes"
+          onClick={() => setNotesOpen((open) => !open)}><Icon name="note" /><span className="pdf-control-label">{t("笔记", "Notes")}</span></button>
+        <div className="pdf-more" ref={moreMenu}>
+          <button className="quiet icon-button" ref={moreTrigger} aria-label={t("更多", "More")} title={t("更多", "More")}
+            aria-expanded={moreOpen} aria-controls="pdf-more-menu" disabled={leaving || guardSaving}
+            onClick={() => setMoreOpen((open) => !open)}><Icon name="more" /></button>
+          {moreOpen && <div className="pdf-more-menu" id="pdf-more-menu" aria-label={t("更多阅读器操作", "More reader actions")}>
+            <div className="pdf-more-zoom">{zoomControls}</div>
+            <button disabled={locked} onClick={() => { userIntent(); setSelection(undefined); setRotation((value) => ((value + 90) % 360) as PdfRotation); setMoreOpen(false); }}>
+              <Icon name="rotate" />{t("旋转页面", "Rotate page")}</button>
+            <button aria-pressed={area} disabled={locked} onClick={() => { userIntent(); setArea((value) => !value); setSelection(undefined); setMoreOpen(false); }}>
+              <Icon name="highlight" />{area ? t("文字选择", "Select text") : t("区域标注", "Mark area")}</button>
+            <label className="pdf-area-color">{t("标注颜色", "Annotation color")}<input type="color" aria-label={t("标注颜色", "Annotation color")}
+              value={color} disabled={locked} onChange={(event) => setColor(event.target.value)} /></label>
+            <button aria-pressed={showMarks} onClick={() => { setShowMarks((value) => !value); setPicked(undefined); setMoreOpen(false); }}>
+              {showMarks ? t("隐藏标注", "Hide annotations") : t("显示标注", "Show annotations")}</button>
+            <button onClick={() => requestLeave({ kind: "choose" })}><Icon name="pdf" />{t("打开其他文件", "Open another file")}</button>
+            <button onClick={() => requestLeave({ kind: "library" })}><Icon name="library" />{t("资料库", "Library")}</button>
+          </div>}
         </div>
-        {opened ? sourceControls : null}
-        <a
-          className="pdf-library"
-          href={chrome.runtime.getURL("/library.html")}
-          aria-label={t("资料库", "Library")}
-          title={t("资料库", "Library")}
-        >
-          <Icon name="library" />
-        </a>
-      </header>
-      {error && (
-        <div className="pdf-message error" role="alert">
-          <span>{error}</span>
-          {!opened ? <p>{t("无法直接读取？下载 PDF 后，点击「选择本地 PDF」继续。", "Can't open the link? Download the PDF, then choose the local file.")}</p> : null}
-          {unsaved ? (
-            <>
-              <button disabled={saving} onClick={() => void save(unsaved)}>
-                {t("重试保存", "Retry save")}
-              </button>
-              <button
-                disabled={saving}
-                onClick={() => {
-                  setUnsaved(undefined);
-                  setError("");
-                }}
-              >
-                {t("放弃本次修改", "Discard change")}
-              </button>
-            </>
-          ) : hasNoteDrafts ? (
-            <>
-              <button
-                onClick={() => {
-                  setNoteDrafts({});
-                  setError("");
-                }}
-              >
-                {t("放弃笔记草稿", "Discard note drafts")}
-              </button>
-              <button onClick={() => setError("")}>
-                {t("关闭", "Dismiss")}
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setError("")}>{t("关闭", "Dismiss")}</button>
-          )}
-        </div>
-      )}
-      {notice && (
-        <div className="pdf-message" role="status">
-          {notice}
-        </div>
-      )}
-      {opened ? (
-        <>
-          <nav
-            className="pdf-toolbar"
-            aria-label={t("PDF 工具栏", "PDF toolbar")}
-          >
-            <span className="pdf-name" title={opened.fileName}>
-              {opened.fileName}
-            </span>
-            <label className="pdf-page-field">
-              <input
-                aria-label={t("页码", "Page number")}
-                type="number"
-                min="1"
-                max={opened.document.numPages}
-                value={pageNumber}
-                onChange={(e) => {
-                  const n = e.target.valueAsNumber;
-                  if (Number.isInteger(n)) jump(n);
-                }}
-              />
-              <span>/ {opened.document.numPages}</span>
-            </label>
-            <span className="pdf-sep" aria-hidden="true" />
-            <button
-              className="quiet icon-button"
-              aria-label={t("缩小", "Zoom out")}
-              title={t("缩小", "Zoom out")}
-              disabled={zoom <= 0.5}
-              onClick={() => {
-                setSelection(undefined);
-                dimensions.current.clear();
-                setZoom((z) => Math.max(0.5, z - 0.25));
-              }}
-            >
-              <Icon name="minus" />
-            </button>
-            <span className="pdf-zoom">{Math.round(zoom * 100)}%</span>
-            <button
-              className="quiet icon-button"
-              aria-label={t("放大", "Zoom in")}
-              title={t("放大", "Zoom in")}
-              disabled={zoom >= 3}
-              onClick={() => {
-                setSelection(undefined);
-                dimensions.current.clear();
-                setZoom((z) => Math.min(3, z + 0.25));
-              }}
-            >
-              <Icon name="plus" />
-            </button>
-            <button
-              className="quiet icon-button"
-              aria-label={t("旋转", "Rotate")}
-              title={t("旋转", "Rotate")}
-              onClick={() => {
-                setSelection(undefined);
-                dimensions.current.clear();
-                setRotation((r) => (r + 90) % 360);
-              }}
-            >
-              <Icon name="rotate" />
-            </button>
-            <span className="pdf-sep" aria-hidden="true" />
-            <button
-              className="quiet"
-              aria-pressed={enabled}
-              disabled={saving || !!unsaved}
-              onClick={() => void toggle()}
-            >
-              <Icon name="highlight" />
-              {enabled
-                ? t("关闭标注", "Disable annotations")
-                : t("开启标注", "Enable annotations")}
-            </button>
-            {enabled && (
-              <>
-                <button
-                  className="quiet"
-                  aria-pressed={area}
-                  onClick={() => {
-                    setArea((a) => !a);
-                    setSelection(undefined);
-                  }}
-                >
-                  {area
-                    ? t("文字选择", "Select text")
-                    : t("区域标注", "Mark area")}
-                </button>
-                <input
-                  aria-label={t("标注颜色", "Annotation color")}
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                />
-              </>
-            )}
-          </nav>
-          {selection && enabled && (
-            <div
-              className="pdf-selection"
-              role="toolbar"
-              aria-label={t("选中文字高亮", "Highlight selected text")}
-            >
-              {COLORS.slice(0, 4).map((c) => (
-                <button
-                  className="pdf-swatch"
-                  key={c}
-                  aria-label={`${t("高亮", "Highlight")} ${c}`}
-                  style={{ background: c }}
-                  onPointerDown={(e) => e.preventDefault()}
-                  onClick={() => mark(selection, "pdf-text", c)}
-                />
-              ))}
-              <button
-                onPointerDown={(e) => e.preventDefault()}
-                onClick={() => mark(selection, "pdf-text")}
-              >
-                {t("应用当前颜色", "Use current color")}
-              </button>
-              <button
-                onClick={() => {
-                  setSelection(undefined);
-                  getSelection()?.removeAllRanges();
-                }}
-              >
-                {t("取消", "Cancel")}
-              </button>
-            </div>
-          )}
-          {picked && enabled && (
-            <div className="pdf-mark-menu" role="status">
-              <span>
-                {picked.kind === "pdf-text"
-                  ? t("文字标注", "Text annotation")
-                  : t("区域标注", "Area annotation")}
-              </span>
-              <button disabled={removing} onClick={() => void remove(picked)}>
-                {t("取消标注", "Remove annotation")}
-              </button>
-              <button disabled={removing} onClick={() => setPicked(undefined)}>
-                {t("关闭", "Close")}
-              </button>
-            </div>
-          )}
-          {undoRecord && (
-            <div className="pdf-undo" role="status">
-              <span>{t("标注已移除。", "Annotation removed.")}</span>
-              <button disabled={removing} onClick={() => void restoreRemoved()}>
-                {t("撤销移除", "Undo remove")}
-              </button>
-              <button
-                disabled={removing}
-                onClick={() => setUndoRecord(undefined)}
-              >
-                {t("关闭", "Close")}
-              </button>
-            </div>
-          )}
-          <div className="pdf-workspace">
-            <div
-              className="pdf-pages"
-              tabIndex={0}
-              ref={container}
-              aria-label={t("PDF 页面", "PDF pages")}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setSelection(undefined);
-                  setArea(false);
-                }
-              }}
-            >
-              <div
-                aria-hidden="true"
-                style={{
-                  height: layoutIndex.current.offsetBefore(
-                    pageWindow.start + 1,
-                  ),
-                }}
-              />
-              {Array.from(
-                {
-                  length:
-                    Math.min(pageWindow.end, opened.document.numPages) -
-                    pageWindow.start,
-                },
-                (_, i) => i + pageWindow.start + 1,
-              ).map((n) => (
-                <div
-                  className="pdf-slot"
-                  data-page={n}
-                  key={`${opened.hash}-${n}`}
-                  style={{
-                    width: dimensions.current.get(n)?.width || 612 * zoom,
-                    height: dimensions.current.get(n)?.height || 792 * zoom,
-                  }}
-                >
-                  {
-                    <PdfPage
-                      opened={opened}
-                      number={n}
-                      zoom={zoom}
-                      rotation={rotation}
-                      records={enabled ? (recordsByPage.get(n) ?? []) : []}
-                      enabled={enabled}
-                      area={area}
-                      color={color}
-                      measurementGeneration={measurementGeneration}
-                      onSelection={setSelection}
-                      onPick={(record) => {
-                        setPicked(record);
-                        setSelection(undefined);
-                      }}
-                      onArea={(target) => mark(target, "pdf-area")}
-                      onDimensions={(generation, width, height) =>
-                        onPageDimensions(n, generation, width, height)
-                      }
-                      onError={(message) => {
-                        if (documentSession === documentSessionRef.current)
-                          setError(message);
-                      }}
-                    />
-                  }
-                </div>
-              ))}
-              <div
-                aria-hidden="true"
-                style={{
-                  height: Math.max(
-                    0,
-                    layoutIndex.current.totalHeight() -
-                      layoutIndex.current.offsetBefore(
-                        Math.min(pageWindow.end, opened.document.numPages) + 1,
-                      ),
-                  ),
-                }}
-              />
-            </div>
-            {/* Reading comes first: the notes column appears once annotating starts. */}
-            {(enabled || records.length > 0) && (
-              <aside className="pdf-notes">
-                <h2>
-                  {t("本篇标注", "Annotations")} <span>{records.length}</span>
-                </h2>
-                {!records.length && (
-                  <p className="pdf-muted">
-                    {t(
-                      "选中文字即可高亮，或用「区域标注」框选图表。",
-                      "Select text to highlight it, or use Mark area to frame a figure.",
-                    )}
-                  </p>
-                )}
-                {sortedNotes.slice(0, notesLimit).map((r) => (
-                  <PdfNote
-                    key={r.id}
-                    record={r}
-                    language={settings.language}
-                    onJump={() => jump(r.target.pageNumber)}
-                    onError={(message) => {
-                      if (documentSession === documentSessionRef.current)
-                        setError(message);
-                    }}
-                    onRemove={remove}
-                    removing={removing}
-                    draft={noteDrafts[r.id]}
-                    onDraft={(draft) =>
-                      setNoteDrafts((current) => ({ ...current, [r.id]: draft }))
-                    }
-                    onClearDraft={() => {
-                      if (documentSession !== documentSessionRef.current) return;
-                      setNoteDrafts((current) => {
-                        const { [r.id]: _removed, ...rest } = current;
-                        return rest;
-                      });
-                    }}
-                  />
-                ))}
-                {notesLimit < sortedNotes.length && (
-                  <button onClick={() => setNotesLimit((limit) => limit + 50)}>
-                    {t("加载更多", "Load more")}
-                  </button>
-                )}
-              </aside>
-            )}
+      </nav> : <header className="pdf-header">
+        <div className="pdf-brand"><Icon name="pdf" /><strong>Web Ink <span>PDF</span></strong></div>
+        {handoffToken && <button className="quiet" disabled={!handoffReady || leaving} onClick={() => requestLeave(backAction)}>{backLabel}</button>}
+        <button className="quiet icon-button" aria-label={t("资料库", "Library")} title={t("资料库", "Library")}
+          onClick={() => requestLeave({ kind: "library" })}><Icon name="library" /></button>
+      </header>}
+      {error && <div className="pdf-message error" role="alert">
+        <span>{error}</span>
+        {!opened && <p>{t("无法直接读取？下载 PDF 后，点击「选择本地 PDF」继续。", "Can't open the link? Download the PDF, then choose the local file.")}</p>}
+        {unsaved ? <>
+          <button disabled={saving} onClick={() => void save(unsaved, noteAfterSave.current).catch(() => undefined)}>{t("重试保存", "Retry save")}</button>
+          <button disabled={saving} onClick={() => { unsavedRef.current = undefined; setUnsaved(undefined); setSelection(undefined); getSelection()?.removeAllRanges(); setError(""); }}>
+            {t("放弃本次修改", "Discard change")}</button>
+        </> : <button onClick={() => setError("")}>{t("关闭", "Dismiss")}</button>}
+      </div>}
+      {positionError && <div className="pdf-message error" role="status"><span>{positionError}</span>
+        <button onClick={() => void flushPosition()}>{t("重试保存阅读位置", "Retry reading position")}</button>
+        <button onClick={() => setPositionError("")}>{t("关闭", "Dismiss")}</button></div>}
+      {notice && <div className="pdf-message" role="status">{notice}</div>}
+      {!notice && handoffToken && handoffReady && !handoff && <div className="pdf-message" role="status">
+        <span>{t("暂时无法返回原阅读器。", "The original reader is unavailable.")}</span>
+        <button onClick={() => requestLeave(backAction)}>{backLabel}</button>
+      </div>}
+      {opened ? <>
+        {selection && <div className="pdf-selection" ref={selectionBar} style={selectionStyle} role="toolbar" aria-label={t("选中文字高亮", "Highlight selected text")}>
+          {COLORS.map((chosen) => <button className="pdf-swatch" key={chosen} aria-label={`${t("高亮", "Highlight")} ${chosen}`}
+            title={`${t("高亮", "Highlight")} ${chosen}`} style={{ background: chosen }} disabled={locked}
+            onPointerDown={(event) => event.preventDefault()} onClick={() => mark(selection.target, "pdf-text", chosen)} />)}
+          <button disabled={locked} onPointerDown={(event) => event.preventDefault()}
+            onClick={() => mark(selection.target, "pdf-text", color, true)}><Icon name="note" />{t("添加笔记", "Add note")}</button>
+          <button disabled={saving} onClick={() => { setSelection(undefined); getSelection()?.removeAllRanges(); }}>{t("取消", "Cancel")}</button>
+        </div>}
+        {picked && showMarks && <div className="pdf-mark-menu" role="status">
+          <span>{picked.kind === "pdf-text" ? t("文字标注", "Text annotation") : t("区域标注", "Area annotation")}</span>
+          <button disabled={locked} onClick={() => void remove(picked)}>{t("取消标注", "Remove annotation")}</button>
+          <button onClick={() => setPicked(undefined)}>{t("关闭", "Close")}</button>
+        </div>}
+        {undoRecord && <div className="pdf-undo" role="status"><span>{t("标注已移除。", "Annotation removed.")}</span>
+          <button disabled={locked} onClick={() => void restoreRemoved()}>{t("撤销移除", "Undo remove")}</button>
+          <button disabled={removing} onClick={() => setUndoRecord(undefined)}>{t("关闭", "Close")}</button>
+        </div>}
+        <div className={`pdf-workspace${notesOpen ? " notes-open" : ""}`}>
+          <div className="pdf-pages" tabIndex={0} ref={container} aria-label={t("PDF 页面", "PDF pages")}
+            onWheelCapture={userIntent} onPointerDownCapture={userIntent}
+            onKeyDownCapture={(event) => { if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) userIntent(); }}>
+            <div aria-hidden="true" style={{ height: layoutIndex.current.offsetBefore(pageWindow.start + 1) }} />
+            {Array.from({ length: Math.min(pageWindow.end, opened.document.numPages) - pageWindow.start }, (_, index) => index + pageWindow.start + 1).map((number) => (
+              <div className="pdf-slot" data-page={number} key={`${opened.hash}-${number}`} style={{
+                width: dimensions.current.get(number)?.width || (rotation % 180 ? 792 : 612) * zoom,
+                height: dimensions.current.get(number)?.height || (rotation % 180 ? 612 : 792) * zoom,
+              }}>
+                <PdfPage language={settings.language} opened={opened} number={number} zoom={zoom} rotation={rotation} records={showMarks ? recordsByPage.get(number) ?? [] : []}
+                  area={area && !locked} color={color} measurementGeneration={measurementGeneration}
+                  onSelection={(next) => { if (!unsavedRef.current && !annotationWrites.current.size) { setSelection(next); setPicked(undefined); } }}
+                  onPick={(record) => { setPicked(record); if (!unsavedRef.current) setSelection(undefined); }}
+                  onArea={(target) => mark(target, "pdf-area")}
+                  onDimensions={(generation, width, height) => onPageDimensions(number, generation, width, height)}
+                  onError={(message) => { if (documentSession === documentSessionRef.current) setError(message); }} />
+              </div>
+            ))}
+            <div aria-hidden="true" style={{ height: Math.max(0, layoutIndex.current.totalHeight() - layoutIndex.current.offsetBefore(Math.min(pageWindow.end, opened.document.numPages) + 1)) }} />
           </div>
-        </>
-      ) : (
-        <section className="pdf-welcome" aria-busy={busy}>
-          <span className="pdf-welcome-icon" aria-hidden="true">
-            <Icon name="pdf" />
-          </span>
-          <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : t("读论文，留下重点", "Read. Mark. Return.")}</h1>
-          <p>
-            {t(
-              "选择一份 PDF，或打开公开网址。标注保存在本机，原文件不会存入资料库。",
-              "Choose a PDF or open a public URL. Annotations stay on this device; the PDF is not stored in your library.",
-            )}
-          </p>
-          {sourceControls}
-          <p className="pdf-muted">
-            {t(
-              "单份文件最多 50 MiB。登录网站的 PDF 请下载后选择本地文件；扫描件可做区域标注。",
-              "Up to 50 MiB per file. Download authenticated PDFs first. Scanned documents support area annotations.",
-            )}
-          </p>
-          {initialParams.has("document") && (
-            <p role="status">
-              {t(
-                "重新选择原来的 PDF，即可恢复标注。",
-                "Choose the original PDF again to restore your annotations.",
-              )}
-            </p>
-          )}
-        </section>
-      )}
+          <aside className="pdf-notes" id="pdf-notes" ref={notesRail} aria-label={t("本篇笔记", "Document notes")} hidden={!notesOpen}>
+            <div className="pdf-notes-header"><h2>{t("本篇标注", "Annotations")} <span>{records.length}</span></h2>
+              <button className="quiet icon-button" aria-label={t("关闭笔记", "Close notes")} onClick={() => setNotesOpen(false)}><Icon name="close" /></button></div>
+            {!records.length && <p className="pdf-muted">{t("选中文字后选择颜色保存高亮，或用「区域标注」框选图表。", "Select text and choose a color to save it, or use Mark area for a figure.")}</p>}
+            {[...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <PdfNote key={record.id} record={record} language={settings.language}
+              onJump={() => jump(record.target.pageNumber)} onSave={(draft) => saveNote(record.id, draft)} onRemove={remove}
+              removing={removing} saving={noteSaving === record.id} conflict={noteConflicts[record.id] === true}
+              locked={leaving || guardSaving || writeCount > 0 || !!unsaved} draft={noteDrafts[record.id]}
+              deleted={!savedIds.has(record.id)}
+              onDraft={(draft, resolveConflict) => updateDraft(record.id, draft, resolveConflict)} onClearDraft={() => updateDraft(record.id)} />)}
+            {notesLimit < sortedNotes.length && <button onClick={() => setNotesLimit((limit) => limit + 50)}>{t("加载更多", "Load more")}</button>}
+          </aside>
+        </div>
+      </> : <section className="pdf-welcome" aria-busy={busy}>
+        <span className="pdf-welcome-icon" aria-hidden="true"><Icon name="pdf" /></span>
+        <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : t("选择 PDF", "Choose a PDF")}</h1>
+        <p>{t("选择本地文件，或打开公开 PDF 网址。标注保存在本机，原文件不会存入资料库。", "Choose a local file or public PDF URL. Annotations stay on this device; the PDF is not stored in your library.")}</p>
+        {sourceControls}
+        <p className="pdf-muted">{t("单份文件最多 50 MiB。登录网站的 PDF 请下载后选择本地文件；扫描件可做区域标注。", "Up to 50 MiB per file. Download authenticated PDFs first. Scanned documents support area annotations.")}</p>
+        {currentParams.has("document") && !publicUrl && <p role="status">{t("重新选择原来的 PDF，即可恢复标注与阅读位置。", "Choose the original PDF again to restore annotations and reading position.")}</p>}
+      </section>}
+      {sourceOpen && <div className="pdf-dialog-backdrop"><section className="pdf-dialog" role="dialog" aria-modal="true"
+        aria-label={t("打开其他 PDF", "Open another PDF")} onKeyDown={dialogKeys}>
+        <h2>{t("打开其他 PDF", "Open another PDF")}</h2><p>{t("标注保留在本机；原文件不会存入资料库。", "Annotations stay on this device; PDF files are not stored in your library.")}</p>
+        {sourceControls}<button autoFocus onClick={() => setSourceOpen(false)}>{t("继续阅读", "Keep reading")}</button>
+      </section></div>}
+      {pendingLeave && <div className="pdf-dialog-backdrop"><section className="pdf-dialog" role="dialog" aria-modal="true"
+        aria-label={t("未保存的内容", "Unsaved changes")} onKeyDown={dialogKeys}>
+        <h2>{t("未保存的内容", "Unsaved changes")}</h2><p>{t("保存或放弃当前草稿后继续，也可以留在这里编辑。", "Save or discard the current draft to continue, or keep editing here.")}</p>
+        {error && <p role="alert">{error}</p>}
+        <div className="pdf-dialog-actions">
+          <button disabled={guardSaving || leaving} onClick={() => void saveAndContinue()}>{guardSaving ? t("正在保存…", "Saving…") : t("保存并继续", "Save and continue")}</button>
+          <button disabled={guardSaving || leaving || writeCount > 0} onClick={discardAndContinue}>{t("放弃并继续", "Discard and continue")}</button>
+          <button autoFocus disabled={guardSaving || leaving} onClick={keepEditing}>{t("继续编辑", "Keep editing")}</button>
+        </div>
+      </section></div>}
     </main>
   );
 }

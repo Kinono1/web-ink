@@ -2,7 +2,7 @@ import { useAnnotationQuery } from "./management/useAnnotationQuery";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { toMarkdown } from "../core/backup";
-import { request } from "../core/client";
+import { RequestError, request } from "../core/client";
 import {
   COLORS,
   DEFAULT_SETTINGS,
@@ -14,10 +14,11 @@ import {
   type ImportPreview,
   type Language,
   type PageMode,
+  type PdfOpenResult,
+  type PdfTabContext,
   type Settings,
 } from "../core/model";
 import { isWebPage, pageKey } from "../core/url";
-import { getPdfContext, buildPdfOpenUrl } from "../pdf/context";
 import { ICON_PATHS, type IconName } from "./icons";
 import { StoragePanel } from "./StoragePanel";
 import { applyPageTheme, installPageTheme } from "./page-theme";
@@ -66,9 +67,13 @@ export function mountManagementApp(root: HTMLElement, mode: Mode): void {
   createRoot(root).render(<ManagementApp mode={mode} />);
 }
 
+const isPdfSurface = (context: PdfTabContext | undefined) =>
+  Boolean(context && (context.currentReader || context.kind !== "unavailable"));
+
 export function ManagementApp({ mode }: { mode: Mode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [tab, setTab] = useState<TabContext>({});
+  const [pdfContext, setPdfContext] = useState<PdfTabContext>();
   const [hasPermission, setHasPermission] = useState(true);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
@@ -90,7 +95,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [overwrite, setOverwrite] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
   const [openingPdf, setOpeningPdf] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const pdfOpenPending = useRef(false);
+  const moreMenu = useRef<HTMLDetailsElement>(null);
+  const moreTrigger = useRef<HTMLElement>(null);
+  const libraryScrollY = useRef<number | undefined>(undefined);
   const contextRequest = useRef(0);
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
@@ -100,8 +109,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const language = settings.language;
   const t = COPY[language];
   useLayoutEffect(() => applyPageTheme(settings.theme), [settings.theme]);
-  const pdfContext = getPdfContext(tab.url);
-  const pageUrl = !pdfContext && tab.url && isWebPage(tab.url) ? pageKey(tab.url) : undefined;
+  const observedUrl = pdfContext?.url ?? tab.url;
+  const pageUrl =
+    !isPdfSurface(pdfContext) && observedUrl && isWebPage(observedUrl)
+      ? pageKey(observedUrl)
+      : undefined;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
   const { records, setRecords, nextCursor, loading, loadRecords } =
@@ -110,7 +122,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       setError,
       (items) =>
         setSelectedId((current) =>
-          items.some((item) => item.id === current) ? current : items[0]?.id,
+          current && items.some((item) => item.id === current)
+            ? current
+            : undefined,
         ),
     );
 
@@ -160,22 +174,38 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           ? (await chrome.tabs.query({ active: true, currentWindow: true }))[0]
           : undefined;
       const context: TabContext = nextTab
-        ? { id: nextTab.id, url: nextTab.url, title: nextTab.title }
+        ? { id: nextTab.id, windowId: nextTab.windowId, url: nextTab.url, title: nextTab.title }
         : {};
+      const nextPdfContext =
+        mode === "sidepanel" && context.id !== undefined
+          ? await request<PdfTabContext>({
+              type: "pdf.context.get",
+              tabId: context.id,
+              ...(context.windowId !== undefined ? { windowId: context.windowId } : {}),
+              ...(context.url ? { expectedUrl: context.url } : {}),
+            })
+          : undefined;
       const permission = await chrome.permissions.contains({
         origins: ["http://*/*", "https://*/*"],
       });
       const nextSettings = await request<Settings>({ type: "settings.get" });
       if (requestId !== contextRequest.current) return;
-      setTab(context);
+      const observedContext = {
+        ...context,
+        ...(nextPdfContext?.url ? { url: nextPdfContext.url } : {}),
+      };
+      setTab(observedContext);
+      setPdfContext(nextPdfContext);
       setHasPermission(permission);
       settingsRef.current = nextSettings;
       setSettings(nextSettings);
       const nextUrl =
-        !getPdfContext(context.url) && context.url && isWebPage(context.url)
-          ? pageKey(context.url)
+        !isPdfSurface(nextPdfContext) &&
+        observedContext.url &&
+        isWebPage(observedContext.url)
+          ? pageKey(observedContext.url)
           : undefined;
-      await pageState(context.id, nextUrl, requestId);
+      await pageState(observedContext.id, nextUrl, requestId);
     } catch (cause) {
       if (requestId === contextRequest.current)
         setError(cause instanceof Error ? cause.message : String(cause));
@@ -184,6 +214,27 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   useEffect(() => {
     void refreshContext();
   }, [refreshContext]);
+  const closeMore = useCallback(() => {
+    setMoreOpen(false);
+    moreTrigger.current?.focus();
+  }, []);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !moreOpen) return;
+      event.preventDefault();
+      closeMore();
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (moreOpen && !moreMenu.current?.contains(event.target as Node))
+        setMoreOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      document.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [closeMore, moreOpen]);
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
       if (
@@ -520,14 +571,52 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { pdfOpenPending.current = false; setOpeningPdf(false); }
   };
-  const openCurrentPdf = () => {
-    void showPdf(buildPdfOpenUrl(chrome.runtime.getURL("/pdf.html"), pdfContext));
+  const openCurrentPdf = (candidateUrl?: string) => {
+    if (tab.id === undefined || pdfContext?.currentReader || pdfOpenPending.current)
+      return;
+    pdfOpenPending.current = true;
+    setOpeningPdf(true);
+    void request<PdfOpenResult>({
+      type: "pdf.openCurrent",
+      tabId: tab.id,
+      ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
+      ...(tab.url ? { expectedUrl: tab.url } : {}),
+      ...(candidateUrl ? { candidateUrl } : {}),
+    })
+      .catch((cause) => {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setError(
+          cause instanceof RequestError && cause.code
+            ? message
+            : `${message} ${t.refreshPdfHint}`,
+        );
+      })
+      .finally(() => {
+        pdfOpenPending.current = false;
+        setOpeningPdf(false);
+      });
   };
   const openPdf = (record?: Annotation) => {
     void showPdf(pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record));
   };
   const filterCount =
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
+  const showHeaderPdfAction =
+    !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
+  const openLibraryDetail = (id: string) => {
+    if (window.innerWidth <= 699) libraryScrollY.current = window.scrollY;
+    setSelectedId(id);
+    setLibraryDetail(true);
+  };
+  const closeLibraryDetail = () => {
+    setLibraryDetail(false);
+  };
+  useLayoutEffect(() => {
+    const top = libraryScrollY.current;
+    if (mode !== "library" || libraryDetail || top === undefined) return;
+    libraryScrollY.current = undefined;
+    window.scrollTo({ top, behavior: "auto" });
+  }, [libraryDetail, mode]);
   return (
     <main
       className={mode === "sidepanel" ? "ink-app sidepanel" : "ink-app"}
@@ -555,10 +644,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         <div className="header-actions">
           {mode === "sidepanel" ? (
             <>
-            <button className="quiet icon-button" disabled={openingPdf} onClick={openCurrentPdf}
-              title={t.openPdf} aria-label={t.openPdf}>
-              <Icon name="pdf" />
-            </button>
+            {showHeaderPdfAction ? (
+              <button className="quiet icon-button" disabled={openingPdf} onClick={() => openCurrentPdf()}
+                title={t.openPdf} aria-label={t.openPdf}>
+                <Icon name="pdf" />
+              </button>
+            ) : null}
             <button
               className="quiet icon-button"
               aria-label={t.openLibrary}
@@ -629,7 +720,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           closeLabel={t.close}
         />
       ) : null}
-      {!hasPermission && !(mode === "sidepanel" && (!pageUrl || pdfContext)) ? (
+      {!hasPermission && !(mode === "sidepanel" && (!pageUrl || isPdfSurface(pdfContext))) ? (
         <Empty
           title={t.permission}
           text={t.permissionText}
@@ -657,13 +748,32 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           {!pageUrl ? (
             <section className="pdf-handoff">
               <span className="pdf-handoff-icon" aria-hidden="true"><Icon name="pdf" /></span>
-              <h2>{pdfContext ? t.currentPdfTitle : t.pdfWelcomeTitle}</h2>
-              <p>{pdfContext?.kind === "remote" ? t.currentPdfText : t.pdfFallbackText}</p>
-              {pdfContext && tab.title ? <span className="pdf-document-name" title={tab.title}>{tab.title}</span> : null}
-              <button className="primary pdf-open-current" disabled={openingPdf} onClick={openCurrentPdf}>
-                <Icon name="pdf" />{openingPdf ? t.openingPdf : pdfContext?.kind === "remote" ? t.openCurrentPdf : t.openPdf}
-              </button>
-              {pdfContext?.kind === "remote" ? <button className="quiet pdf-local-link" onClick={() => openPdf()}>{t.chooseLocalPdf}</button> : null}
+              <h2>{pdfContext?.currentReader ? t.pdfReading : pdfContext ? t.currentPdfTitle : t.pdfWelcomeTitle}</h2>
+              <p>{pdfContext?.currentReader ? t.pdfReadingText : isPdfSurface(pdfContext) ? t.currentPdfText : t.pdfFallbackText}</p>
+              {tab.title ? <span className="pdf-document-name" title={tab.title}>{tab.title}</span> : null}
+              {pdfContext?.currentReader ? (
+                <span className="pdf-reader-status" role="status">{t.pdfReading}</span>
+              ) : pdfContext && pdfContext.candidates.length > 1 ? (
+                <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
+                  {pdfContext.candidates.map((candidate) => (
+                    <button
+                      className="quiet pdf-source-choice"
+                      disabled={openingPdf}
+                      key={candidate.url}
+                      onClick={() => openCurrentPdf(candidate.url)}
+                    >
+                      {candidate.url}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <button className="primary pdf-open-current" disabled={openingPdf} onClick={() => openCurrentPdf(pdfContext?.candidates[0]?.url)}>
+                  <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openCurrentPdf}
+                </button>
+              )}
+              {!pdfContext?.currentReader && pdfContext?.candidates.length !== undefined && pdfContext.candidates.length <= 1 ? (
+                <button className="quiet pdf-local-link" onClick={() => openCurrentPdf()}>{t.chooseLocalPdf}</button>
+              ) : null}
               <small>{t.pdfLocalNote}</small>
             </section>
           ) : paused ? (
@@ -731,8 +841,13 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                 <Icon name="draw" />
                 {t.drawImage}
               </button>
-              <details className="menu">
-                <summary aria-label={t.moreActions} title={t.moreActions}>
+              <details
+                ref={moreMenu}
+                className="menu"
+                open={moreOpen}
+                onToggle={(event) => setMoreOpen(event.currentTarget.open)}
+              >
+                <summary ref={moreTrigger} aria-label={t.moreActions} title={t.moreActions}>
                   <Icon name="more" />
                 </summary>
                 <button
@@ -794,15 +909,12 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               />
             ) : null}
           </div>
-          <AnnotationBrowser
+          {records.length ? <AnnotationBrowser
             detailOpen={libraryDetail}
-            onBack={() => setLibraryDetail(false)}
+            onBack={closeLibraryDetail}
             records={records}
             selectedId={selectedId}
-            setSelectedId={(id) => {
-              setSelectedId(id);
-              setLibraryDetail(true);
-            }}
+            setSelectedId={openLibraryDetail}
             states={states}
             language={language}
             t={t}
@@ -819,11 +931,11 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             onRebind={() => undefined}
             onDraw={() => undefined}
             onOpenPdf={openPdf}
-          />
+          /> : null}
           {!records.length && !loading ? (
             <Empty
-              title={query || filterCount ? t.noResults : t.empty}
-              text=""
+              title={query || filterCount ? t.noResults : t.libraryEmptyTitle}
+              text={query || filterCount ? "" : t.libraryEmptyText}
             />
           ) : null}
           {loading ? (

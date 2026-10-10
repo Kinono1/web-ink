@@ -46,7 +46,7 @@ const rpc = async (manager, message) =>
 // Identical production JS, with host access pre-granted in a disposable manifest.
 async function prepareExtension(directory) {
   await cp(
-    path.resolve(process.env.WEB_INK_BUILD || ".output/chrome-mv3"),
+    path.resolve(process.env.WEB_INK_BUILD || ".build-output/chrome-mv3"),
     directory,
     { recursive: true },
   );

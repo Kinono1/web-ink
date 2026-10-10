@@ -16,4 +16,6 @@ Web Ink packages the PDF.js legacy build with the **matching 6.3.289 worker**, p
 
 In particular, do not infer one uniform license for standard fonts, CMaps, WASM codecs, ICC data, or their fallback scripts from the PDF.js library license. Consult the matching files in the release ZIP's `pdfjs/` and `licenses/` directories before redistributing a modified package.
 
-Design references may be mentioned in source history or documentation, but their full clients are not bundled unless explicitly listed in the generated release notices.
+## Implementation references
+
+The pinned selection, navigation and sidebar contracts examined for v0.3.2 are documented in [OPEN_SOURCE_REFERENCES.md](docs/OPEN_SOURCE_REFERENCES.md). Generated notices also retain the full MIT texts for `react-pdf-highlighter` and `shadcn/ui`, and the root BSD-2-Clause plus annotator MIT texts for `hypothesis/client`, from those exact commits. These are implementation-reference notices; the full clients and their dependency graphs are not bundled. PDF.js retains the library and resource notices described above.

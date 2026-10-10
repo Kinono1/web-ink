@@ -1,5 +1,9 @@
 # Validation — Web Ink
 
+## 0.3.2 local candidate — 2026-10-10
+
+[Current candidate checkpoint and remaining gates](VALIDATION-v0.3.2.md): clean-source type/build checks, 285 unit tests, 3 large-data cases, 17 installation/release tests and 57 browser regressions passed. Same-tab PDF, in-place Reload and upgrade coverage use isolated synthetic profiles; native Chrome acceptance, exact-head CI, main integration and the actual user installation remain pending. No public v0.3.2 Release or tag is claimed.
+
 ## 0.3.1 candidate — acceptance gates
 
 The candidate separates ordinary unit tests from single-worker 10k/50k correctness tests (60-second ceiling). Installer tests verify extension identity, unknown-file/symlink refusal, file hashes, backups and rollback after partial-copy failures. Packaging verifies every extracted ZIP entry against the existing tested runtime rather than rebuilding.

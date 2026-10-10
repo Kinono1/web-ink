@@ -1,0 +1,198 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-10T02:31:00+08:00",
+  "title": "Design System: Web Ink",
+  "extensions": {
+    "colorMeta": {
+      "light-canvas": {
+        "theme": "light",
+        "role": "canvas"
+      },
+      "light-panel": {
+        "theme": "light",
+        "role": "panel"
+      },
+      "light-accent": {
+        "theme": "light",
+        "role": "focus-and-selection"
+      },
+      "light-primary": {
+        "theme": "light",
+        "role": "committed-action"
+      },
+      "dark-canvas": {
+        "theme": "dark",
+        "role": "canvas"
+      },
+      "dark-panel": {
+        "theme": "dark",
+        "role": "panel"
+      },
+      "dark-accent": {
+        "theme": "dark",
+        "role": "focus-and-selection"
+      },
+      "dark-primary": {
+        "theme": "dark",
+        "role": "committed-action"
+      }
+    },
+    "typographyMeta": {
+      "meta": {
+        "purpose": "Dates, sources, tags, supporting status."
+      },
+      "body": {
+        "purpose": "Controls, notes, fields."
+      },
+      "title": {
+        "purpose": "Compact headings and records."
+      },
+      "display": {
+        "purpose": "Empty and detail hierarchy."
+      },
+      "excerpt": {
+        "purpose": "Captured reading material only."
+      }
+    },
+    "shadows": [
+      {
+        "name": "light-floating",
+        "value": "0 10px 30px rgba(0,0,0,.10)",
+        "theme": "light",
+        "purpose": "Menus and dialogs."
+      },
+      {
+        "name": "dark-floating",
+        "value": "0 10px 30px rgba(0,0,0,.32)",
+        "theme": "dark",
+        "purpose": "Menus and dialogs."
+      },
+      {
+        "name": "pdf-paper",
+        "value": "0 1px 3px rgb(0 0 0 / 10%), 0 0 0 1px rgb(0 0 0 / 5%)",
+        "purpose": "White page edge."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fast-state",
+        "value": "120ms ease",
+        "purpose": "State transitions; disabled for reduced motion."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "library-split",
+        "value": "700px",
+        "purpose": "Approved split threshold; CSS swaps below 700px."
+      },
+      {
+        "name": "pdf-compact-controls",
+        "value": "600px",
+        "purpose": "Essential reader controls remain."
+      },
+      {
+        "name": "pdf-notes-rail-target",
+        "value": "900px",
+        "purpose": "Integrated 320px rail at 900px and wider; overlay below it."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "primary-action",
+      "description": "One committed action.",
+      "html": "<button class=\"ds-primary\">保存标注</button>",
+      "css": ".ds-primary{min-height:36px;padding:4px 10px;border:0;border-radius:8px;color:var(--ink-primary-text);background:var(--ink-primary);font:500 14px/20px var(--ink-font)}.ds-primary:hover{filter:brightness(.94)}.ds-primary:focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    },
+    {
+      "name": "Quiet action",
+      "kind": "button",
+      "refersTo": "quiet-action",
+      "description": "Secondary utility action.",
+      "html": "<button class=\"ds-quiet\">返回资料库</button>",
+      "css": ".ds-quiet{min-height:36px;padding:4px 10px;border:0;border-radius:8px;color:var(--ink-secondary);background:transparent;font:500 14px/20px var(--ink-font)}.ds-quiet:hover{color:var(--ink-text);background:var(--ink-fill)}.ds-quiet:focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "refersTo": "search-field",
+      "description": "Library query field.",
+      "html": "<input class=\"ds-search\" placeholder=\"搜索文字、笔记、网址或标签\">",
+      "css": ".ds-search{min-height:36px;padding:0 10px;border:0;border-radius:8px;color:var(--ink-text);background:var(--ink-fill);font:14px/20px var(--ink-font)}.ds-search::placeholder{color:var(--ink-secondary)}.ds-search:focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    },
+    {
+      "name": "Segmented navigation",
+      "kind": "nav",
+      "refersTo": "floating-surface",
+      "description": "Selected view is raised, not accent-filled.",
+      "html": "<nav class=\"ds-segments\"><button class=\"ds-current\">当前页面</button><button>资料库</button></nav>",
+      "css": ".ds-segments{display:inline-flex;gap:2px;padding:2px;border-radius:999px;background:var(--ink-fill);font:14px/20px var(--ink-font)}.ds-segments button{min-height:36px;padding:2px 12px;border:0;border-radius:999px;color:var(--ink-secondary);background:transparent}.ds-segments .ds-current{color:var(--ink-text);background:var(--ink-surface-solid);box-shadow:0 1px 2px rgb(0 0 0 / 14%),0 0 0 .5px rgb(0 0 0 / 6%)}.ds-segments button:focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    },
+    {
+      "name": "Annotation record",
+      "kind": "card",
+      "refersTo": "record-row",
+      "description": "Data-owned mark color with normal UI hierarchy.",
+      "html": "<article class=\"ds-record\"><strong>Captured passage</strong><span>Reader note</span><small>Source · 10:24 · #research</small></article>",
+      "css": ".ds-record{--ds-record-color:#facc15;position:relative;display:grid;gap:2px;padding:8px 12px 8px 22px;border-radius:8px;color:var(--ink-text);font:14px/1.5 var(--ink-font)}.ds-record:before{content:'';position:absolute;top:11px;bottom:11px;left:10px;width:3px;border-radius:999px;background:var(--ds-record-color)}.ds-record strong{font:400 16px/1.4 var(--ink-font-serif)}.ds-record span{color:var(--ink-secondary)}.ds-record small{color:var(--ink-tertiary);font-size:12px}.ds-record:hover{background:color-mix(in srgb,var(--ink-text) 4%,transparent)}"
+    },
+    {
+      "name": "PDF reader header",
+      "kind": "nav",
+      "refersTo": "floating-surface",
+      "description": "One total reader toolbar row.",
+      "html": "<header class=\"ds-pdf-header\"><button>返回</button><strong>paper.pdf</strong><span>3 / 18</span><button>笔记</button><button>更多</button></header>",
+      "css": ".ds-pdf-header{box-sizing:border-box;display:flex;align-items:center;gap:8px;height:52px;padding:8px 16px;border-bottom:1px solid var(--ink-separator);color:var(--ink-text);background:var(--ink-panel);font:14px/20px var(--ink-font)}.ds-pdf-header strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}.ds-pdf-header span{color:var(--ink-secondary);white-space:nowrap}.ds-pdf-header button{min-height:36px;padding:4px 10px;border:0;border-radius:8px;color:var(--ink-secondary);background:transparent}.ds-pdf-header button:hover{color:var(--ink-text);background:var(--ink-fill)}.ds-pdf-header button:focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    },
+    {
+      "name": "PDF note",
+      "kind": "card",
+      "refersTo": "record-row",
+      "description": "Reader note rail record.",
+      "html": "<article class=\"ds-note\"><button>Marked text on page 3</button><p>Review this definition.</p><small>p. 3 · #methods</small></article>",
+      "css": ".ds-note{--ds-record-color:#facc15;position:relative;display:grid;gap:4px;padding:8px 12px 8px 22px;border-radius:8px;color:var(--ink-text);font:14px/1.5 var(--ink-font)}.ds-note:before{content:'';position:absolute;top:11px;bottom:11px;left:10px;width:3px;border-radius:999px;background:var(--ds-record-color)}.ds-note button{padding:0;border:0;color:var(--ink-text);background:transparent;text-align:left;font:400 14px/1.5 var(--ink-font-serif)}.ds-note p{margin:0;color:var(--ink-secondary)}.ds-note small{color:var(--ink-tertiary);font-size:12px}"
+    },
+    {
+      "name": "Floating source choice",
+      "kind": "custom",
+      "refersTo": "floating-surface",
+      "description": "Bounded local-file or public-URL entry surface.",
+      "html": "<section class=\"ds-source\"><strong>打开 PDF</strong><input placeholder=\"https://example.com/paper.pdf\"><button>打开公开 URL</button></section>",
+      "css": ".ds-source{display:grid;gap:8px;width:min(320px,calc(100vw - 16px));padding:8px;border-radius:12px;color:var(--ink-text);background:var(--ink-surface);box-shadow:var(--ink-shadow),0 0 0 1px var(--ink-separator);font:14px/1.5 var(--ink-font)}.ds-source input{min-height:36px;padding:8px;border:1px solid var(--ink-separator);border-radius:8px;color:var(--ink-text);background:var(--ink-fill);font:inherit}.ds-source button{min-height:36px;padding:6px 16px;border:0;border-radius:8px;color:var(--ink-text);background:var(--ink-fill);font:500 14px/20px var(--ink-font)}.ds-source button:hover{background:var(--ink-fill-hover)}.ds-source :is(input,button):focus-visible{outline:2px solid var(--ink-accent);outline-offset:2px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Calm document-first workspace",
+    "overview": "Web Ink is an Operate interface for local web and PDF annotation. Document identity, local-data boundaries, and current state stay legible while decoration recedes.",
+    "keyCharacteristics": [
+      "Document identity and local-data scope appear before secondary controls.",
+      "State uses fill, outline, and labels together.",
+      "PDF paper remains white while the workspace theme changes around it."
+    ],
+    "rules": [
+      {
+        "name": "Accent-For-State Rule",
+        "body": "Reserve accent roles for focus, selection, and explicit active state; committed actions use the primary pair.",
+        "section": "colors"
+      },
+      {
+        "name": "Quiet-Surface Rule",
+        "body": "Keep rows and chrome flat at rest; lift only transient or selected surfaces.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do use paired semantic roles in light and dark.",
+      "Do label state as well as color it.",
+      "Do preserve white PDF paper and honor reduced motion."
+    ],
+    "donts": [
+      "Don't use annotation colors as the global accent.",
+      "Don't add a second reader bar, remote font, or decorative imagery.",
+      "Don't treat prototype or CSS as browser acceptance."
+    ]
+  }
+}

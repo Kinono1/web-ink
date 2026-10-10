@@ -18,6 +18,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24.15.0'
@@ -41,8 +44,32 @@ jobs:
           curl -fL --retry 2 https://github.com/Kinono1/web-ink/releases/download/v0.3.0/web-ink-0.3.0-chrome.zip -o "$RUNNER_TEMP/webink-baseline-download/web-ink-0.3.0-chrome.zip"
           curl -fL --retry 2 https://github.com/Kinono1/web-ink/releases/download/v0.3.0/web-ink-0.3.0-chrome.zip.sha256 -o "$RUNNER_TEMP/webink-baseline-download/web-ink-0.3.0-chrome.zip.sha256"
           (cd "$RUNNER_TEMP/webink-baseline-download" && sha256sum -c web-ink-0.3.0-chrome.zip.sha256)
+          (cd "$RUNNER_TEMP/webink-baseline-download" && printf '%s  %s\n' 'd8298aca8ff085ad282595cef898d96bfaef7657e2ec8f4e28110aeb72dfe9a2' 'web-ink-0.3.0-chrome.zip' | sha256sum -c -)
           node scripts/extract-runtime.mjs "$RUNNER_TEMP/webink-baseline-download/web-ink-0.3.0-chrome.zip" "$RUNNER_TEMP/webink-v030"
           echo "WEB_INK_OLD_BUILD=$RUNNER_TEMP/webink-v030" >> "$GITHUB_ENV"
+      - name: Prepare pinned Reload baseline
+        shell: bash
+        run: |
+          BASELINE_COMMIT=d37555855f4d3f8cec0bbd27d28de8afa12f49fc
+          BASELINE_WORKTREE="$RUNNER_TEMP/webink-reload-baseline"
+          git worktree add --detach "$BASELINE_WORKTREE" "$BASELINE_COMMIT"
+          # The pinned baseline ignores directories, not dependency symlinks.
+          # Use a real ignored directory so its clean-source identity stays true.
+          mkdir "$BASELINE_WORKTREE/node_modules"
+          cp -a "$GITHUB_WORKSPACE/node_modules/." "$BASELINE_WORKTREE/node_modules/"
+          # Keep the historical commit's checked-in icons and notices: the
+          # current Linux encoder changes their bytes and dirties that source.
+          (
+            cd "$BASELINE_WORKTREE"
+            node scripts/pdf-assets.mjs
+            node scripts/build-info.mjs
+            npm run build --ignore-scripts
+            node scripts/seal-runtime.mjs
+          )
+          git -C "$BASELINE_WORKTREE" status --porcelain --untracked-files=normal
+          cat "$BASELINE_WORKTREE/.output/chrome-mv3/build-info.json"
+          node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
+          echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
       - name: Verify minimum PDF browser (Chrome 125)
         shell: bash
@@ -51,7 +78,7 @@ jobs:
           PDF_BROWSER_URL=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(x["url"] for x in d["downloads"]["chrome"] if x["platform"] == "linux64"))' "$RUNNER_TEMP/chrome125.json")
           curl -fL --retry 2 "$PDF_BROWSER_URL" -o "$RUNNER_TEMP/chrome125.zip"
           unzip -q "$RUNNER_TEMP/chrome125.zip" -d "$RUNNER_TEMP/chrome125"
-          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts
+          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts tests/e2e/pdf-workspace.spec.ts
           WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/extension.spec.ts -g "query"
       - name: Verify minimum webpage browser (Chrome 120)
         shell: bash
@@ -64,7 +91,7 @@ jobs:
       - run: npm run zip
       - run: node scripts/checksum.mjs
       - name: Verify release checksums
-        working-directory: .output
+        working-directory: .build-output/releases
         run: sha256sum -c *.zip.sha256
       - name: Upload failure diagnostics
         if: failure()
@@ -85,5 +112,5 @@ jobs:
           # Only these two explicit patterns are uploaded; other hidden files stay out.
           include-hidden-files: true
           path: |
-            .output/web-ink-*-chrome.zip
-            .output/web-ink-*-chrome.zip.sha256
+            .build-output/releases/web-ink-*-chrome.zip
+            .build-output/releases/web-ink-*-chrome.zip.sha256

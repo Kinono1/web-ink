@@ -36,7 +36,7 @@ export function createPaletteToggle(
   const style = document.createElement("style");
   style.dataset.webInkPaletteToggle = "true";
   style.textContent = `
-    .web-ink-palette-toggle { position:fixed; width:40px; height:40px; min-height:40px; padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color .16s ease, color .16s ease, transform .16s ease; }
+    .web-ink-palette-toggle { position:fixed; width:40px; height:40px; min-height:var(--ink-control-min-height); padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color var(--ink-motion-fast) ease, color var(--ink-motion-fast) ease, transform var(--ink-motion-fast) ease; }
     .web-ink-palette-toggle:not(:disabled):hover { color:var(--ink-text); transform:translateY(-1px); }
     .web-ink-palette-toggle[data-enabled=true] { color:#fff; background:var(--ink-accent); box-shadow:0 0 0 1px transparent, var(--ink-shadow); }
     .web-ink-palette-toggle[data-enabled=true]:not(:disabled):hover { color:#fff; }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildPdfOpenUrl, getPdfContext } from "../src/pdf/context";
+import { buildPdfOpenUrl, classifyPdfTab, getPdfContext } from "../src/pdf/context";
 
 describe("PDF page context", () => {
   it("recognizes HTTPS PDF paths case-insensitively and preserves query/hash", () => {
@@ -80,5 +80,50 @@ describe("PDF page context", () => {
         ),
       ),
     ).toBe(reader);
+  });
+
+  it("returns an unavailable context for a malformed observed URL", () => {
+    expect(classifyPdfTab(7, "invalid URL")).toMatchObject({ kind: "unavailable", candidates: [], reason: "context-unavailable" });
+  });
+
+  it("keeps credentialed PDF embeds in an explicit unsafe manual fallback even without a MIME hint", () => {
+    expect(classifyPdfTab(7, "https://papers.example.test/article", [
+      { url: "https://user:secret@papers.example.test/paper.pdf", via: "iframe", mimeType: "" },
+    ])).toMatchObject({ kind: "embedded", candidates: [], reason: "unsafe-source" });
+  });
+
+  it("labels known viewers wrapping HTTP or file sources as a local-source fallback", () => {
+    for (const source of ["http://papers.example.test/paper.pdf", "file:///tmp/paper.pdf"])
+      expect(classifyPdfTab(7, `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=${encodeURIComponent(source)}`))
+        .toMatchObject({ kind: "wrapper", candidates: [], reason: "local-source" });
+  });
+
+  it("does not treat arbitrary untyped IEEE wrapper iframes as PDF sources", () => {
+    expect(classifyPdfTab(7, "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", [
+      { url: "https://ads.example.test/frame", via: "iframe", mimeType: "" },
+      { url: "https://ieeexplore.ieee.org/visible-download?document=123", via: "iframe", mimeType: "" },
+      { url: "/navigation/footer", via: "iframe", mimeType: "" },
+    ])).toMatchObject({ kind: "wrapper", candidates: [], reason: "source-unknown" });
+  });
+
+  it("selects only the PDF-hinted iframe from mixed IEEE wrapper content", () => {
+    expect(classifyPdfTab(7, "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", [
+      { url: "https://ads.example.test/frame", via: "iframe", mimeType: "" },
+      { url: "https://papers.example.test/paper.PDF?download=1", via: "iframe", mimeType: "" },
+      { url: "https://papers.example.test/login.pdf", via: "iframe", mimeType: "text/html" },
+    ])).toMatchObject({ kind: "wrapper", candidates: [
+      { url: "https://papers.example.test/paper.PDF?download=1", via: "iframe" },
+    ] });
+  });
+
+  it.each([
+    { url: "https://papers.example.test/paper.pdf", mimeType: "", source: "https://papers.example.test/paper.pdf" },
+    { url: "https://arxiv.org/pdf/2401.01234v2", mimeType: "", source: "https://arxiv.org/pdf/2401.01234v2" },
+    { url: "https://papers.example.test/download?document=123", mimeType: "application/pdf; charset=binary", source: "https://papers.example.test/download?document=123" },
+    { url: `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=${encodeURIComponent("https://papers.example.test/download?document=123")}`, mimeType: "", source: "https://papers.example.test/download?document=123" },
+  ])("keeps an observed IEEE PDF hint for $url", ({ url, mimeType, source }) => {
+    expect(classifyPdfTab(7, "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", [
+      { url, via: "iframe", mimeType },
+    ])).toMatchObject({ kind: "wrapper", candidates: [{ url: source, via: "iframe" }] });
   });
 });

@@ -2,7 +2,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { runtimeFiles, digest } from './lib/runtime.mjs';
 import { createRuntimeIntegrity, validateRuntimeIntegrity, INTEGRITY_FILE } from './lib/integrity.mjs';
-const directory = '.output/chrome-mv3';
+const directory = '.build-output/chrome-mv3';
 const files = await runtimeFiles(directory);
 // Every prepared public asset must survive the WXT copy. This includes dynamic
 // PDF worker/font/CMap/decoder resources that cannot be inferred from imports.
