@@ -146,7 +146,7 @@ export function createPdfHandoffHandler() {
         (!documentId || item.documentId === documentId) &&
         (!pinned || item.contextId === pinned.contextId) && (topTab || sidePanel);
     });
-    if (matches.length !== 1) throw changed();
+    if (matches.length !== 1) throw new PdfNavigationError("PAGE_CHANGED", `The tab or document changed. [diagnostic contexts: ${JSON.stringify(contexts.map(item => ({ type: item.contextType, frame: item.frameId, tab: item.tabId, window: item.windowId, hasDocument: !!item.documentId, hasContext: !!item.contextId, sameUrl: item.documentUrl === sender.url, sameDocument: item.documentId === documentId, matches: matches.length })))}]`);
     const context = matches[0]!;
     if (sender.tab?.id !== undefined && sender.tab.id !== context.tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
     return context;
@@ -166,7 +166,7 @@ export function createPdfHandoffHandler() {
       throw new PdfNavigationError("FORBIDDEN", "Return to the original page from its PDF reader.");
     if (ownPage(sender.url, "sidepanel.html")) {
       const context = await ownContext(sender, "sidepanel.html");
-      if (context.windowId < 0) throw changed();
+      if (context.windowId < 0) throw new PdfNavigationError("PAGE_CHANGED", `The sidebar window is unavailable. [diagnostic window=${context.windowId}; type=${context.contextType}; frame=${context.frameId}]`);
       const activationEpoch = activation(context.windowId);
       const tabId = await activeTab(context.windowId);
       if (activation(context.windowId) !== activationEpoch) throw changed();
