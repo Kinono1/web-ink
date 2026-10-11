@@ -175,11 +175,14 @@ Observed source:
 `/System/Library/PrivateFrameworks/AnnotationKit.framework/Versions/A/Resources/AKAnnotationTheme.plist`.
 Its SHA-256 was
 `9341d39319ccdf58d45cb417e01dee1f1f1bceef6959a8a56b4b33d1e1911968`;
-Preview 11.0 (1147) links this framework. These are verified framework values,
-not a claim of measured Preview pixels or of Preview's final palette overrides.
-The native control request timed out; the user approved this palette while
-leaving the actual Preview comparison pending. No Apple source code, image,
-or resource file is redistributed.
+Preview 11.0 (1147) links this framework. On 2026-10-11 the five colors were
+also applied through Preview's native UI to an original temporary PDF. The
+saved PDF's five `/C` RGB arrays matched this table exactly. Its highlight
+appearance streams use `/BM /Multiply` without reduced alpha. PDF text marks
+therefore use per-record multiply blending against the canvas, inside the
+existing isolated page: white paper takes the selected color and black text
+stays black. Area outlines and webpage highlighting retain their own drawing
+behavior. No Apple source code, image, or resource file is redistributed.
 
 Web and PDF creation, the library editor and default-color controls consume the
 same `COLORS`. A new installation defaults to the new yellow. Existing defaults,

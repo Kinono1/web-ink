@@ -355,15 +355,20 @@ export function PdfPage({
           : t("这页暂时无法显示，请重新打开 PDF。", "This page could not be displayed. Reopen the PDF to try again.")}</p>
         <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
       </div>}
-      {geometry && !failure && geometry.opened === opened && geometry.number === number && (
+      {geometry && !failure && geometry.opened === opened && geometry.number === number &&
+        (["pdf-text", "pdf-area"] as const).map((kind) => (
         <svg
+          key={kind}
           className="pdf-marks"
+          // The outer SVG must blend with the canvas; groups blend records
+          // within it. Keep area outlines outside that compositing boundary.
+          style={kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}
           width={geometry.viewport.width}
           height={geometry.viewport.height}
           aria-hidden="true"
         >
-          {records.map((r) => (
-            <g key={r.id} opacity={r.kind === "pdf-text" ? ".32" : undefined}>
+          {records.filter((r) => r.kind === kind).map((r) => (
+            <g key={r.id} style={r.kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}>
               {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box) : r.target.rects).map((rect, i) => (
                 <rect
                   key={`${r.id}-${i}`}
@@ -376,7 +381,7 @@ export function PdfPage({
               ))}
             </g>
           ))}
-          {preview && (
+          {kind === "pdf-area" && preview && (
             <rect
               {...fromPdfRect(preview, geometry.viewport, geometry.box)}
               fill="none"
@@ -385,7 +390,7 @@ export function PdfPage({
             />
           )}
         </svg>
-      )}
+      ))}
       {ready && geometry && searchRects.length > 0 && <svg className="pdf-search-marks"
         width={geometry.viewport.width} height={geometry.viewport.height} aria-hidden="true">
         {searchRects.map((rect, index) => <rect key={index} className="pdf-search-match"

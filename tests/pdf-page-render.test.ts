@@ -174,14 +174,16 @@ function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas"
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
 
 describe("PdfPage staged rendering", () => {
-  it("composites all fragments of one legacy text annotation at a single opacity", async () => {
+  it("multiplies one merged legacy text annotation against the PDF paper", async () => {
     const record = props.records[0]!;
     const fragments = [record.target.rects[0]!, { ...record.target.rects[0]!, x: 0.15, y: 0.702 }];
     record.target.rects = fragments;
     await paint();
     const mark = host.querySelector(`[data-pdf-annotation="${record.id}"]`)!;
     const layer = mark.closest("g");
-    expect(layer?.getAttribute("opacity")).toBe(".32");
+    expect(layer?.getAttribute("opacity")).toBeNull();
+    expect((layer as SVGGElement).style.mixBlendMode).toBe("multiply");
+    expect((mark.closest("svg") as SVGSVGElement).style.mixBlendMode).toBe("multiply");
     expect(layer?.querySelectorAll("rect")).toHaveLength(1);
     expect(mark.getAttribute("fill-opacity")).toBeNull();
     expect(record.target.rects).toBe(fragments);
@@ -194,9 +196,11 @@ describe("PdfPage staged rendering", () => {
     await paint();
     const groups = [...host.querySelectorAll(".pdf-marks > g")];
     expect(groups).toHaveLength(3);
-    expect(groups.map(g => g.getAttribute("opacity"))).toEqual([".32", ".32", null]);
+    expect(groups.map(g => g.getAttribute("opacity"))).toEqual([null, null, null]);
+    expect(groups.map(g => (g as SVGGElement).style.mixBlendMode)).toEqual(["multiply", "multiply", ""]);
     expect(groups[2]?.querySelector("rect")?.getAttribute("fill")).toBe("none");
     expect(groups[2]?.querySelector("rect")?.getAttribute("stroke")).toBe(original.color);
+    expect((groups[2]?.closest("svg") as SVGSVGElement).style.mixBlendMode).toBe("");
   });
 
   it("opens a highlight when its newly filled small gap is clicked", async () => {
