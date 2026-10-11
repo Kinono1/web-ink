@@ -296,11 +296,15 @@ export function PdfPage({
     setSearchRects(rects);
     if (firstTop !== undefined) callbacks.current.onSearchPosition?.(firstTop);
   }, [ready, geometry, searchRanges]);
-  function capture(event: React.MouseEvent<HTMLDivElement>) {
+  function capture(event: React.MouseEvent<HTMLDivElement> | KeyboardEvent) {
     if (event.target instanceof Element && event.target.closest(".pdf-native-layer")) return;
     if (area || !ready || !geometry || !text.current || root.current?.dataset.ready !== "true") return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
+      if (event instanceof KeyboardEvent) {
+        onSelection(undefined);
+        return;
+      }
       const page = root.current.getBoundingClientRect();
       const x = event.clientX - page.left,
         y = event.clientY - page.top;
@@ -379,6 +383,21 @@ export function PdfPage({
       bottom: Math.max(...clientRects.map((rect) => rect.bottom)),
     } });
   }
+  useEffect(() => {
+    // Keyboard selection can originate from the focusable page scroller,
+    // outside this page node. Only the page owning its anchor may capture it.
+    const recapture = (event: KeyboardEvent) => {
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+      if (event.target instanceof Element && event.target.closest(
+        ".pdf-native-layer, input, textarea, select, button, [contenteditable]:not([contenteditable='false']), [role='textbox']",
+      )) return;
+      const selection = getSelection();
+      if (!text.current || !selection || !text.current.contains(selection.anchorNode)) return;
+      capture(event);
+    };
+    document.addEventListener("keyup", recapture);
+    return () => document.removeEventListener("keyup", recapture);
+  }, [area, ready, geometry, records, number, onSelection, onPick, onError]);
   function position(e: React.PointerEvent) {
     const r = root.current!.getBoundingClientRect();
     return {

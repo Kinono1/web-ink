@@ -195,8 +195,121 @@ async function paint(changes: Partial<ComponentProps<typeof PdfPage>> = {}) {
 function pageRoot() { return host.querySelector<HTMLDivElement>(".pdf-page")!; }
 function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas")!; }
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
+function selectFirstLine() {
+  const first = document.createElement("span"), second = document.createElement("span");
+  first.textContent = "First line.\n";
+  second.textContent = "Second line.";
+  visibleText().replaceChildren(first, second);
+  const range = document.createRange();
+  range.setStart(first.firstChild!, 0);
+  range.setEnd(first.firstChild!, first.textContent.length);
+  // JSDOM has no text layout. Supply the browser boundary's line rectangles;
+  // the real DOM Range still owns the selected text and prefix/suffix.
+  Object.defineProperty(range, "getClientRects", { value: () => [
+    { left: 60, top: 100, right: 240, bottom: 120, width: 180, height: 20 },
+    ...(range.endContainer === second.firstChild
+      ? [{ left: 60, top: 124, right: 300, bottom: 144, width: 240, height: 20 }] : []),
+  ] });
+  host.className = "pdf-pages";
+  host.tabIndex = 0;
+  host.focus();
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  return { first, second, range };
+}
 
 describe("PdfPage staged rendering", () => {
+  it("refreshes a mouse-captured preview after Shift+ArrowDown extends the live selection", async () => {
+    await paint();
+    const { first, second, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(props.onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ target: expect.objectContaining({
+      exact: "First line.", rects: [expect.objectContaining({ x: 0.1, y: 0.85 })],
+    }) }));
+
+    await act(async () => {
+      host.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+      range.setEnd(second.firstChild!, second.textContent!.length);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    const preview = vi.mocked(props.onSelection).mock.calls.at(-1)?.[0]!;
+    expect(preview.target).toMatchObject({ pageNumber: 1, exact: "First line.\nSecond line.", prefix: "", suffix: "" });
+    expect(preview.target.rects).toHaveLength(2);
+    expect(preview.target.rects[0]?.x).toBeCloseTo(0.1);
+    expect(preview.target.rects[0]?.y).toBeCloseTo(0.85);
+    expect(preview.target.rects[0]?.width).toBeCloseTo(0.3);
+    expect(preview.target.rects[0]?.height).toBeCloseTo(0.025);
+    expect(preview.target.rects[1]?.x).toBeCloseTo(0.1);
+    expect(preview.target.rects[1]?.y).toBeCloseTo(0.82);
+    expect(preview.target.rects[1]?.width).toBeCloseTo(0.4);
+    expect(preview.target.rects[1]?.height).toBeCloseTo(0.025);
+    expect(preview.anchor).toEqual({ left: 60, top: 100, right: 300, bottom: 144 });
+    expect(props.onPick).not.toHaveBeenCalled();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a preview when keyboard extension crosses into another page", async () => {
+    await paint();
+    const { first, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    const anotherPage = document.createElement("div");
+    anotherPage.className = "textLayer";
+    anotherPage.textContent = "Other page.";
+    host.append(anotherPage);
+    await act(async () => {
+      range.setEnd(anotherPage.firstChild!, anotherPage.textContent!.length);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenLastCalledWith(undefined);
+    expect(props.onError).toHaveBeenCalledWith(expect.stringContaining("cross-page"));
+  });
+
+  it("clears a captured preview when a plain arrow key collapses the live selection", async () => {
+    await paint();
+    const { first, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => {
+      range.collapse(true);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenLastCalledWith(undefined);
+    expect(props.onPick).not.toHaveBeenCalled();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it.each(["textarea", "input", "button", "contenteditable"])(
+    "keeps %s keyboard activity out of a Web Ink selection preview", async tag => {
+      await paint();
+      const { first, second, range } = selectFirstLine();
+      await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+      const editor = document.createElement(tag === "contenteditable" ? "div" : tag);
+      if (tag === "contenteditable") editor.setAttribute("contenteditable", "true");
+      host.append(editor);
+      await act(async () => {
+        range.setEnd(second.firstChild!, second.textContent!.length);
+        editor.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+      });
+      expect(props.onSelection).toHaveBeenCalledTimes(1);
+      expect(props.onError).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps native Popup keyboard activity out of a Web Ink selection preview", async () => {
+    nativeData = [{ id: "native-note", subtype: "Text", rect: [10, 20, 30, 40],
+      contentsObj: { str: "Original native Popup body" } }];
+    await paint();
+    await act(async () => host.querySelector(".textAnnotation")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const popup = host.querySelector(".popupContent")!;
+    const { first, second, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => {
+      range.setEnd(second.firstChild!, second.textContent!.length);
+      popup.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenCalledTimes(1);
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
   it("reads a native Popup through the official layer without drawing a second original highlight", async () => {
     nativeData = [
       { id: "native-highlight", annotationType: 9, subtype: "Highlight", rect: [60, 560, 180, 600],
@@ -380,6 +493,7 @@ describe("PdfPage staged rendering", () => {
     range.selectNodeContents(oldText!);
     window.getSelection()!.addRange(range);
     await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true })));
     expect(props.onSelection).not.toHaveBeenCalled();
     expect(props.onPick).not.toHaveBeenCalled();
     await paint({ area: true });

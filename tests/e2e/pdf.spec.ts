@@ -184,6 +184,20 @@ test("current-file AI notes include original provenance without becoming a backu
   expect((await rpc({ type: "backup.export" })).schemaVersion).toBe(2);
   expect(await page.locator(".pdf-page canvas").count()).toBeLessThanOrEqual(8);
 });
+test("keyboard extension of an open selection saves the complete multiline text", async () => {
+  await open(fixturePdf(1, "Keyboard selection must follow its live range."));
+  await page.locator(".textLayer span").first().click({ clickCount: 3 });
+  await expect(page.getByRole("toolbar", { name: "选中文字高亮", exact: true })).toBeVisible();
+  await page.keyboard.press("Shift+ArrowDown");
+  const selected = await page.evaluate(() => getSelection()!.toString().trim());
+  expect(selected).toContain("Keyboard selection");
+  expect(selected).toContain("Synthetic reading fixture");
+  await page.getByRole("button", { name: "高亮 #7cc868", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  const [saved] = await rpc({ type: "annotations.list" });
+  expect(saved.target.exact).toBe(selected);
+  expect(saved.target.rects.length).toBeGreaterThanOrEqual(2);
+});
 test("mouse selection preserves complete words in bold PDF text at both zoom levels", async () => {
   await open(fixturePdf(1, "A small example. These priors are dynamically arranged.", { font: "Helvetica-Bold" }));
   for (const [index, scale] of [1, 2].entries()) {
