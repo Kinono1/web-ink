@@ -18,15 +18,17 @@ let page: Page;
 let control: Page;
 let id: string;
 
-function blackTextPdf(): Buffer {
+function blackTextPdf(rotation = 0): Buffer {
   const stream = [
     "1 1 1 rg 0 0 612 360 re f",
-    "0 0 0 rg BT /F1 96 Tf 48 180 Td (MMMM) Tj ET",
+    rotation === 90 ? "0 0 0 rg BT /F1 96 Tf 0 1 -1 0 180 48 Tm (MMMM) Tj ET"
+      : rotation === 270 ? "0 0 0 rg BT /F1 96 Tf 0 -1 1 0 180 320 Tm (MMMM) Tj ET"
+      : "0 0 0 rg BT /F1 96 Tf 48 180 Td (MMMM) Tj ET",
   ].join("\n") + "\n";
   const objects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Count 1 /Kids [3 0 R] >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 360] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 360] /Rotate ${rotation} /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>`,
     "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     `<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}endstream`,
   ];
@@ -52,11 +54,11 @@ async function rpc<T>(message: object): Promise<T> {
   }, message);
 }
 
-async function open() {
+async function open(buffer = blackTextPdf()) {
   await page.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({
     name: "preview-color-fixture.pdf",
     mimeType: "application/pdf",
-    buffer: blackTextPdf(),
+    buffer,
   });
   await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
   const hash = new URL(page.url()).searchParams.get("document");
@@ -212,3 +214,21 @@ test("PDF highlights multiply Preview colors over white paper and preserve black
   expect(black, "A black glyph interior must remain sampled through the yellow mark").toBeDefined();
   expect(Math.max(...black!)).toBeLessThanOrEqual(8);
 });
+
+for (const rotation of [90, 270]) {
+  test(`native ${rotation} degree text fragments stay merged after user rotation`, async () => {
+    const hash = await open(blackTextPdf(rotation));
+    const rects = [
+      { x: 0.15, y: 0.15, width: 0.2, height: 0.3 },
+      { x: 0.15, y: 0.452, width: 0.2, height: 0.3 },
+    ];
+    await rpc({ type: "annotations.put", annotation: textAnnotation("native-rotated", previewColors[0]!, hash, rects), expectedRevision: 0 });
+    await expect(page.locator('[data-pdf-annotation="native-rotated"]')).toHaveCount(1);
+    await page.getByRole("button", { name: "旋转页面", exact: true }).click();
+    await expect(page.locator('.textLayer')).toHaveAttribute("data-main-rotation", String((rotation + 90) % 360));
+    await expect(page.locator('.pdf-page[data-ready=true]')).toBeVisible();
+    await expect(page.locator('[data-pdf-annotation="native-rotated"]')).toHaveCount(1);
+    const saved = await rpc<PdfTextAnnotation[]>({ type: "annotations.list" });
+    expect(saved[0]?.target.rects).toEqual(rects);
+  });
+}

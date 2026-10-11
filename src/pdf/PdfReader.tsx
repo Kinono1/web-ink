@@ -375,6 +375,7 @@ export function PdfReader() {
   }, [settings]);
   useEffect(
     () => () => {
+      documentSessionRef.current++;
       void session.current.dispose();
       const position = positionSession.current;
       positionSession.current = undefined;
@@ -385,17 +386,23 @@ export function PdfReader() {
     },
     [],
   );
-  const refresh = useCallback(async () => {
+  const annotationChangeEpoch = useRef(0);
+  const refresh = useCallback(async (): Promise<void> => {
     if (!key) return;
     const active = documentSession;
+    const epoch = annotationChangeEpoch.current;
     try {
       const all = await request<Annotation[]>({
         type: "annotations.list",
         pageUrl: key,
       });
-      if (active === documentSessionRef.current) updateRecords(all.filter(isPdf));
+      if (active !== documentSessionRef.current) return;
+      if (epoch !== annotationChangeEpoch.current) return refresh();
+      updateRecords(all.filter(isPdf));
     } catch (cause) {
-      if (active === documentSessionRef.current) setError(errorText(cause));
+      if (active !== documentSessionRef.current) return;
+      if (epoch !== annotationChangeEpoch.current) return refresh();
+      setError(errorText(cause));
     }
   }, [key, documentSession]);
   useEffect(() => {
@@ -412,6 +419,7 @@ export function PdfReader() {
         m.type === "annotations.changed" &&
         (!m.pageUrl || m.pageUrl === key)
       ) {
+        annotationChangeEpoch.current++;
         if (m.annotation && isPdf(m.annotation)) {
           const changed = m.annotation;
           updateRecords((old) =>
@@ -425,6 +433,9 @@ export function PdfReader() {
       }
     };
     chrome.runtime.onMessage.addListener(listener);
+    // Parsing can outlive the initial snapshot. Subscribe before refreshing,
+    // and reject snapshots overtaken by a notification while they were read.
+    void refresh();
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, [key, documentSession, refresh]);
   useLayoutEffect(() => {

@@ -201,10 +201,12 @@ async function benchmarkWebpage(temp) {
         node.parentElement.dispatchEvent(
           new MouseEvent("mouseup", { bubbles: true }),
         );
-        document
+        // The disposable profile keeps the first swatch at the stock default across runs.
+        const colorButton = document
           .querySelector("web-ink-ui")
-          .shadowRoot.querySelector('button[aria-label="高亮 #4ade80"]')
-          .click();
+          ?.shadowRoot?.querySelector(".bar.selection button.swatch");
+        if (!colorButton) throw Error("Selection palette color swatch missing");
+        colorButton.click();
         return new Promise((resolve, reject) => {
           const timer = setTimeout(
             () => reject(Error("Capture/save timeout")),

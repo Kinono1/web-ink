@@ -35,6 +35,7 @@ let attempts: Attempt[];
 let pixels: WeakMap<HTMLCanvasElement, string>;
 let cleanupPage: ReturnType<typeof vi.fn>;
 let getPageGate: ReturnType<typeof deferred> | undefined;
+let intrinsicRotation = 0;
 
 beforeEach(() => {
   host = document.createElement("div");
@@ -45,6 +46,7 @@ beforeEach(() => {
   pixels = new WeakMap();
   cleanupPage = vi.fn();
   getPageGate = undefined;
+  intrinsicRotation = 0;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("devicePixelRatio", 1);
   // JSDOM does not implement raster contexts. Track completed image copies at
@@ -59,7 +61,7 @@ beforeEach(() => {
   });
 
   const page = {
-    rotate: 0,
+    get rotate() { return intrinsicRotation; },
     view: [0, 0, 600, 800],
     getViewport: ({ scale, rotation }: { scale: number; rotation: number }) => ({
       width: (rotation % 180 ? 800 : 600) * scale,
@@ -174,6 +176,27 @@ function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas"
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
 
 describe("PdfPage staged rendering", () => {
+  it.each([90, 270])("merges upright text from a page with native rotation %s", async (rotation) => {
+    intrinsicRotation = rotation;
+    const rects = [
+      { x: 0.1, y: 0.2, width: 0.02, height: 0.04 },
+      { x: 0.1, y: 0.241, width: 0.02, height: 0.04 },
+    ];
+    props.records[0]!.target.rects = rects;
+    await paint();
+    expect(host.querySelectorAll("[data-pdf-annotation]")).toHaveLength(1);
+    expect(props.records[0]!.target.rects).toBe(rects);
+  });
+
+  it.each([90, 270])("keeps normal text merged when the user rotates to %s", async (rotation) => {
+    props.records[0]!.target.rects = [
+      { x: 0.1, y: 0.7, width: 0.05, height: 0.05 },
+      { x: 0.151, y: 0.7, width: 0.05, height: 0.05 },
+    ];
+    await paint({ rotation });
+    expect(host.querySelectorAll("[data-pdf-annotation]")).toHaveLength(1);
+  });
+
   it("multiplies one merged legacy text annotation against the PDF paper", async () => {
     const record = props.records[0]!;
     const fragments = [record.target.rects[0]!, { ...record.target.rects[0]!, x: 0.15, y: 0.702 }];

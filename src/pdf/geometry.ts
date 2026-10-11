@@ -1,6 +1,17 @@
 import type { PdfRect } from "../core/model";
-/** Join text fragments in unrotated coordinates; keep scripts and column gaps. */
-export function mergePdfTextRects(rects: PdfRect[], box: number[]): PdfRect[] {
+/** Join default-upright text fragments; return unrotated PDF coordinates. */
+export function mergePdfTextRects(rects: PdfRect[], box: number[], intrinsicRotation = 0): PdfRect[] {
+  // Use the native page frame, never UI rotation, to keep line grouping stable.
+  if (intrinsicRotation === 90 || intrinsicRotation === 270) {
+    const transpose = (rect: PdfRect): PdfRect => ({
+      x: intrinsicRotation === 90 ? rect.y : 1 - rect.y - rect.height,
+      y: intrinsicRotation === 90 ? rect.x : 1 - rect.x - rect.width,
+      width: rect.height,
+      height: rect.width,
+    });
+    // This mapping is its own inverse. Swap point dimensions for gap tolerance.
+    return mergePdfTextRects(rects.map(transpose), [box[1]!, box[0]!, box[3]!, box[2]!]).map(transpose);
+  }
   const rows: { anchor: PdfRect; fragments: PdfRect[] }[] = [];
   for (const rect of [...rects].sort((a, b) => a.y - b.y || a.x - b.x)) {
     let row: typeof rows[number] | undefined;

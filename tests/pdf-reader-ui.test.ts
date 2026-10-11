@@ -278,6 +278,97 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("refreshes the early annotation snapshot after subscribing to the parsed document", async () => {
+    const listeners = runtimeListeners();
+    const parsing = deferred<unknown>();
+    io.parseGate = parsing.promise;
+    const initial = baseRecord();
+    records = [initial];
+    const send = chrome.runtime.sendMessage;
+    let reads = 0;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list" && ++reads === 1
+      ? Promise.resolve({ ok: true, data: [initial] }) : send(message)) as typeof send;
+    await mount();
+    const changed = { ...initial, id: "imported-during-parse", color: "#7cc868" };
+    records = [changed];
+    await act(async () => {
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: initial.pageUrl });
+      parsing.resolve(undefined);
+    });
+    await settle();
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    expect(host.querySelector('[data-pdf-annotation="imported-during-parse"]')?.getAttribute("fill")).toBe("#7cc868");
+  });
+
+  it("does not replace live notification updates with a late refresh snapshot", async () => {
+    const listeners = runtimeListeners();
+    const refreshGate = deferred<unknown>();
+    const initial = baseRecord();
+    records = [initial];
+    const send = chrome.runtime.sendMessage;
+    let reads = 0;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list" && ++reads === 2
+      ? refreshGate.promise : send(message)) as typeof send;
+    await mount();
+    expect(reads).toBe(2);
+    const changed = { ...initial, id: "live-replacement", revision: 2 };
+    records = [changed];
+    await act(async () => {
+      for (const listener of listeners) {
+        listener({ type: "annotations.changed", pageUrl: initial.pageUrl, deletedId: initial.id });
+        listener({ type: "annotations.changed", pageUrl: initial.pageUrl, annotation: changed });
+      }
+      refreshGate.resolve({ ok: true, data: [initial] });
+    });
+    await settle();
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    expect(host.querySelector('[data-pdf-annotation="live-replacement"]')).toBeTruthy();
+    expect(reads).toBe(3);
+  });
+
+  it("rechecks the latest snapshot when an obsolete refresh fails", async () => {
+    const listeners = runtimeListeners();
+    const refreshGate = deferred<unknown>();
+    const initial = baseRecord();
+    records = [initial];
+    const send = chrome.runtime.sendMessage;
+    let reads = 0;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list" && ++reads === 2
+      ? refreshGate.promise : send(message)) as typeof send;
+    await mount();
+    const changed = { ...initial, color: "#7cc868", revision: 2 };
+    records = [changed];
+    await act(async () => {
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: initial.pageUrl, annotation: changed });
+      refreshGate.reject(new Error("obsolete snapshot failed"));
+    });
+    await settle();
+    expect(reads).toBe(3);
+    expect(host.textContent).not.toContain("obsolete snapshot failed");
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')?.getAttribute("fill")).toBe("#7cc868");
+  });
+
+  it("does not reread a disposed document after a queued notification and late refresh", async () => {
+    const listeners = runtimeListeners();
+    const refreshGate = deferred<unknown>();
+    const initial = baseRecord();
+    records = [initial];
+    const send = chrome.runtime.sendMessage;
+    let reads = 0;
+    chrome.runtime.sendMessage = ((message: Request) => message.type === "annotations.list" && ++reads === 2
+      ? refreshGate.promise : send(message)) as typeof send;
+    await mount();
+    const queuedListeners = [...listeners];
+    await act(async () => root!.unmount());
+    root = undefined;
+    await act(async () => {
+      for (const listener of queuedListeners) listener({ type: "annotations.changed", pageUrl: initial.pageUrl, annotation: initial });
+      refreshGate.resolve({ ok: true, data: [initial] });
+    });
+    await settle();
+    expect(reads).toBe(2);
+  });
+
   it("uses a changed default color for the next annotation without recoloring saved marks", async () => {
     const listeners = runtimeListeners();
     records = [baseRecord()];

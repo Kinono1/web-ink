@@ -63,6 +63,7 @@ export function PdfPage({
   const [geometry, setGeometry] = useState<{
       viewport: PageViewport;
       box: number[];
+      intrinsicRotation: number;
       opened: OpenDocument;
       number: number;
     }>(),
@@ -169,7 +170,7 @@ export function PdfPage({
         pageRoot.style.height = `${viewport.height}px`;
         pageRoot.style.setProperty("--total-scale-factor", String(viewport.scale));
         pageRoot.style.setProperty("--scale-factor", String(viewport.scale));
-        setGeometry({ viewport, box: page.view, opened, number });
+        setGeometry({ viewport, box: page.view, intrinsicRotation: page.rotate, opened, number });
         pageRoot.dataset.ready = "true";
         pageRoot.dataset.rendering = "false";
         setReady(true);
@@ -257,7 +258,7 @@ export function PdfPage({
         ...records.filter((record) => record.kind === "pdf-area").reverse(),
         ...records.filter((record) => record.kind === "pdf-text").reverse(),
       ].find((record) =>
-        (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box) : record.target.rects).some((rect) => {
+        (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box, geometry.intrinsicRotation) : record.target.rects).some((rect) => {
           const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
           return (
             x >= bounds.x &&
@@ -373,7 +374,7 @@ export function PdfPage({
         >
           {records.filter((r) => r.kind === kind).map((r) => (
             <g key={r.id} style={r.kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}>
-              {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box) : r.target.rects).map((rect, i) => (
+              {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box, geometry.intrinsicRotation) : r.target.rects).map((rect, i) => (
                 <rect
                   key={`${r.id}-${i}`}
                   data-pdf-annotation={r.id}
