@@ -31,7 +31,9 @@ export async function readRemotePdf(
   const response = await fetch(url, {
     signal,
     credentials: "omit",
-    cache: "no-store",
+    // Revalidate before reuse so repeated reads need not transfer an unchanged
+    // public PDF; file identity still comes from the verified response bytes.
+    cache: "no-cache",
     redirect: "error",
   });
   const finalUrl = pdfSourceUrl(response.url || url.href);

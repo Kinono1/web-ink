@@ -339,7 +339,6 @@ export function PdfReader() {
   useEffect(() => {
     void request<Settings>({ type: "settings.get" }).then((next) => {
       setSettings(next);
-      setColor(next.defaultColor);
       setSettingsReady(true);
     }).catch((cause) => setError(errorText(cause)));
     const listener = (m: { type?: string }) => {
@@ -349,6 +348,9 @@ export function PdfReader() {
     chrome.runtime.onMessage.addListener(listener);
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, []);
+  useEffect(() => {
+    setColor(settings.defaultColor);
+  }, [settings.defaultColor]);
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -373,6 +375,7 @@ export function PdfReader() {
   }, [settings]);
   useEffect(
     () => () => {
+      documentSessionRef.current++;
       void session.current.dispose();
       const position = positionSession.current;
       positionSession.current = undefined;
@@ -383,17 +386,23 @@ export function PdfReader() {
     },
     [],
   );
-  const refresh = useCallback(async () => {
+  const annotationChangeEpoch = useRef(0);
+  const refresh = useCallback(async (): Promise<void> => {
     if (!key) return;
     const active = documentSession;
+    const epoch = annotationChangeEpoch.current;
     try {
       const all = await request<Annotation[]>({
         type: "annotations.list",
         pageUrl: key,
       });
-      if (active === documentSessionRef.current) updateRecords(all.filter(isPdf));
+      if (active !== documentSessionRef.current) return;
+      if (epoch !== annotationChangeEpoch.current) return refresh();
+      updateRecords(all.filter(isPdf));
     } catch (cause) {
-      if (active === documentSessionRef.current) setError(errorText(cause));
+      if (active !== documentSessionRef.current) return;
+      if (epoch !== annotationChangeEpoch.current) return refresh();
+      setError(errorText(cause));
     }
   }, [key, documentSession]);
   useEffect(() => {
@@ -410,6 +419,7 @@ export function PdfReader() {
         m.type === "annotations.changed" &&
         (!m.pageUrl || m.pageUrl === key)
       ) {
+        annotationChangeEpoch.current++;
         if (m.annotation && isPdf(m.annotation)) {
           const changed = m.annotation;
           updateRecords((old) =>
@@ -423,6 +433,9 @@ export function PdfReader() {
       }
     };
     chrome.runtime.onMessage.addListener(listener);
+    // Parsing can outlive the initial snapshot. Subscribe before refreshing,
+    // and reject snapshots overtaken by a notification while they were read.
+    void refresh();
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, [key, documentSession, refresh]);
   useLayoutEffect(() => {
@@ -662,14 +675,14 @@ export function PdfReader() {
             throw Error(t("未授予网站访问权限。", "Site permission was not granted."));
         }
       }
-      const bytes = file
-        ? await readLocalPdf(file)
-        : await readRemotePdf(remote!, signal);
+      const [bytes, api] = await Promise.all([
+        file ? readLocalPdf(file) : readRemotePdf(remote!, signal),
+        import("pdfjs-dist/legacy/build/pdf.mjs"),
+      ]);
       if (!session.current.isCurrent(token)) return;
       const hash = await pdfHash(bytes);
       if (!session.current.isCurrent(token)) return;
       const positionRead = readPdfReadingPosition(hash);
-      const api = await import("pdfjs-dist/legacy/build/pdf.mjs");
       api.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
         "/pdfjs/pdf.worker.min.mjs",
       );
@@ -698,16 +711,19 @@ export function PdfReader() {
         );
         void session.current.disposeCurrent();
       };
-      const doc = await task.promise;
+      const pageUrl = `urn:web-ink:pdf:${hash}`;
+      // Read existing records during parsing, but publish only when both are
+      // ready: a faster first paint must not allow editing an incomplete list.
+      const [doc, all] = await Promise.all([
+        task.promise,
+        request<Annotation[]>({ type: "annotations.list", pageUrl }),
+      ]);
       if (!session.current.isCurrent(token)) return;
       const fileName =
         file?.name ||
         decodeURIComponent(
           new URL(remote!).pathname.split("/").pop() || "Document.pdf",
         );
-      const pageUrl = `urn:web-ink:pdf:${hash}`;
-      const all = await request<Annotation[]>({ type: "annotations.list", pageUrl });
-      if (!session.current.isCurrent(token)) return;
       // Keep the reader URL aligned with the successfully loaded document so
       // a later library/source handoff cannot reuse a tab showing another PDF.
       const readerLocation = new URL(location.href);

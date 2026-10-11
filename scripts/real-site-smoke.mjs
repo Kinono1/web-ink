@@ -43,7 +43,8 @@ try {
       if (!paragraph) throw new Error('No suitable visible paragraph at the documented selector');
       await paragraph.scrollIntoViewIfNeeded();
       await paragraph.evaluate(el => { const r = document.createRange(); r.selectNodeContents(el); const s = window.getSelection(); s.removeAllRanges(); s.addRange(r); el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })); });
-      await page.getByRole('button', { name: '高亮 #facc15', exact: true }).click({ timeout: 10000 });
+      // The temporary profile starts with the first stock color selected.
+      await page.locator('web-ink-ui .bar.selection button.swatch').first().click({ timeout: 10000 });
       await page.waitForFunction(() => CSS.highlights.size > 0, { timeout: 10000 });
       await page.reload({ waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.waitForFunction(() => CSS.highlights.size > 0, { timeout: 10000 });

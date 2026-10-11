@@ -45,8 +45,8 @@ PDF support covers baseline text and area annotations. Coordinates are normalize
 
 - Open a local file or a specifically authorized HTTPS PDF reader page.
 - A single PDF input is limited to **50 MiB**. This protects local rendering and browser memory; it does not mean that the file is stored.
-- HTTPS reading uses exact-site authorization and fetches with `credentials: 'omit'`, `cache: 'no-store'`, and `redirect: 'error'`. Redirects are rejected in the MVP: use the final direct PDF URL or download the file and select it locally.
-- Only SHA-256, file name, optional source URL, page number, text anchors, and area geometry are stored. **PDF bytes are never stored.**
+- HTTPS reading uses exact-site authorization and fetches with `credentials: 'omit'`, `cache: 'no-cache'`, and `redirect: 'error'`. Each open revalidates the server version; unchanged files may reuse Chrome's HTTP cache. Redirects are rejected in the MVP: use the final direct PDF URL or download the file and select it locally.
+- Only SHA-256, file name, optional source URL, page number, text anchors, and area geometry are stored. **Web Ink does not store PDF bytes in its database or backups.** Public HTTPS files may remain in the browser-managed HTTP cache; local files are not cached.
 - Select the original local PDF again to restore its annotations and reading position. Changed file content keeps old annotations separate rather than applying them to the new file.
 - The toolbar offers previous/next page, page-number navigation, 10%–500% zoom entry, fit to width, rotation, and text search. Narrow windows move some actions into **More**.
 - Use **⌘/Ctrl+F** to search PDF text, Enter/Shift+Enter to navigate matches, and Escape to close search. Search markers are temporary and do not create annotations. Scans without searchable text still support area annotations.

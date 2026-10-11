@@ -18,7 +18,9 @@ For image annotations, Web Ink stores source-identification metadata and shape c
 
 ## HTTPS PDF reader requests
 
-When an explicitly authorized HTTPS PDF reader is opened, Web Ink requests the direct PDF using `credentials: 'omit'`, `cache: 'no-store'`, and `redirect: 'error'`. It does not forward cookies, authorization headers, login state, or other credentials. Redirects are rejected in the MVP; use a final direct PDF URL or download and select the file locally.
+When an explicitly authorized HTTPS PDF reader is opened, Web Ink requests the direct PDF using `credentials: 'omit'`, `cache: 'no-cache'`, and `redirect: 'error'`. It does not forward cookies, authorization headers, login state, or other credentials. Redirects are rejected in the MVP; use a final direct PDF URL or download and select the file locally.
+
+Each open revalidates the response with the server. When HTTP validators confirm that a public PDF is unchanged, Chrome may reuse its HTTP cache instead of transferring the body again. This cache is managed by the browser and server cache policy, outside Web Ink's database and backups; clearing Web Ink annotations does not clear the browser HTTP cache. Local file input is not added to this cache. Web Ink does not use an offline fallback when revalidation fails.
 
 Web Ink does not provide OCR, authenticated-page scraping, cloud retrieval, or PDF write-back/editing.
 

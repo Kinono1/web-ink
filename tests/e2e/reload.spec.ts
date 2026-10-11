@@ -167,7 +167,7 @@ async function palettePoint(page: Page) {
   }));
 }
 
-async function mark(page: Page, selector: string) {
+async function mark(page: Page, selector: string, color: string) {
   await page.locator(selector).scrollIntoViewIfNeeded();
   await page.locator(selector).evaluate((element) => {
     const range = document.createRange();
@@ -177,7 +177,7 @@ async function mark(page: Page, selector: string) {
     selection.addRange(range);
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
-  await page.getByRole("button", { name: "高亮 #facc15", exact: true }).click();
+  await page.getByRole("button", { name: `高亮 ${color}`, exact: true }).click();
 }
 
 test("in-place extension Reload replaces old runtimes three times without navigating existing pages", async ({}, testInfo) => {
@@ -358,7 +358,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     await enabled.locator(".web-ink-palette-toggle").click();
     await expect(enabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
     await expect(disabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
-    await mark(enabled, "#selection strong");
+    await mark(enabled, "#selection strong", "#facc15");
     await expect.poll(async () => (await rpc<Annotation[]>(manager, { type: "annotations.list" })).length).toBe(1);
     const [record] = await rpc<Annotation[]>(manager, { type: "annotations.list" });
     await rpc(manager, {
@@ -505,7 +505,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
         },
       });
       expect(navigationCounts).toEqual([0, 0]);
-      await mark(enabled, ["#repeat-a", "#repeat-b", "#ending"][round]!);
+      await mark(enabled, ["#repeat-a", "#repeat-b", "#ending"][round]!, "#facd5a");
       await expect.poll(async () => (await rpc<Annotation[]>(manager, { type: "annotations.list" })).length).toBe(before.records.length + 1);
       const after = await durableState();
       for (const saved of before.records) expect(after.records.find((row) => row.id === saved.id)).toEqual(saved);

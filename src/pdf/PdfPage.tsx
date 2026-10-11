@@ -6,7 +6,7 @@ import type {
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { Language, PdfRect } from "../core/model";
 import type { PdfSearchMatch } from "./search";
-import { fromPdfRect, toPdfRect } from "./geometry";
+import { fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
 import {
   errorText,
   type OpenDocument,
@@ -63,6 +63,7 @@ export function PdfPage({
   const [geometry, setGeometry] = useState<{
       viewport: PageViewport;
       box: number[];
+      intrinsicRotation: number;
       opened: OpenDocument;
       number: number;
     }>(),
@@ -169,7 +170,7 @@ export function PdfPage({
         pageRoot.style.height = `${viewport.height}px`;
         pageRoot.style.setProperty("--total-scale-factor", String(viewport.scale));
         pageRoot.style.setProperty("--scale-factor", String(viewport.scale));
-        setGeometry({ viewport, box: page.view, opened, number });
+        setGeometry({ viewport, box: page.view, intrinsicRotation: page.rotate, opened, number });
         pageRoot.dataset.ready = "true";
         pageRoot.dataset.rendering = "false";
         setReady(true);
@@ -252,8 +253,12 @@ export function PdfPage({
       const page = root.current.getBoundingClientRect();
       const x = event.clientX - page.left,
         y = event.clientY - page.top;
-      const picked = [...records].reverse().find((record) =>
-        record.target.rects.some((rect) => {
+      // Area outlines paint above the text SVG, regardless of record age.
+      const picked = [
+        ...records.filter((record) => record.kind === "pdf-area").reverse(),
+        ...records.filter((record) => record.kind === "pdf-text").reverse(),
+      ].find((record) =>
+        (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box, geometry.intrinsicRotation) : record.target.rects).some((rect) => {
           const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
           return (
             x >= bounds.x &&
@@ -355,27 +360,33 @@ export function PdfPage({
           : t("这页暂时无法显示，请重新打开 PDF。", "This page could not be displayed. Reopen the PDF to try again.")}</p>
         <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
       </div>}
-      {geometry && !failure && geometry.opened === opened && geometry.number === number && (
+      {geometry && !failure && geometry.opened === opened && geometry.number === number &&
+        (["pdf-text", "pdf-area"] as const).map((kind) => (
         <svg
+          key={kind}
           className="pdf-marks"
+          // The outer SVG must blend with the canvas; groups blend records
+          // within it. Keep area outlines outside that compositing boundary.
+          style={kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}
           width={geometry.viewport.width}
           height={geometry.viewport.height}
           aria-hidden="true"
         >
-          {records.flatMap((r) =>
-            r.target.rects.map((rect, i) => (
-              <rect
-                key={`${r.id}-${i}`}
-                data-pdf-annotation={r.id}
-                {...fromPdfRect(rect, geometry.viewport, geometry.box)}
-                fill={r.kind === "pdf-text" ? r.color : "none"}
-                fillOpacity=".32"
-                stroke={r.kind === "pdf-area" ? r.color : "none"}
-                strokeWidth="2"
-              />
-            )),
-          )}
-          {preview && (
+          {records.filter((r) => r.kind === kind).map((r) => (
+            <g key={r.id} style={r.kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}>
+              {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box, geometry.intrinsicRotation) : r.target.rects).map((rect, i) => (
+                <rect
+                  key={`${r.id}-${i}`}
+                  data-pdf-annotation={r.id}
+                  {...fromPdfRect(rect, geometry.viewport, geometry.box)}
+                  fill={r.kind === "pdf-text" ? r.color : "none"}
+                  stroke={r.kind === "pdf-area" ? r.color : "none"}
+                  strokeWidth="2"
+                />
+              ))}
+            </g>
+          ))}
+          {kind === "pdf-area" && preview && (
             <rect
               {...fromPdfRect(preview, geometry.viewport, geometry.box)}
               fill="none"
@@ -384,7 +395,7 @@ export function PdfPage({
             />
           )}
         </svg>
-      )}
+      ))}
       {ready && geometry && searchRects.length > 0 && <svg className="pdf-search-marks"
         width={geometry.viewport.width} height={geometry.viewport.height} aria-hidden="true">
         {searchRects.map((rect, index) => <rect key={index} className="pdf-search-match"

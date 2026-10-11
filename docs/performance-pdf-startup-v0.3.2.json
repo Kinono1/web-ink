@@ -1,0 +1,732 @@
+{
+  "measuredAt": "2026-10-11 Asia/Shanghai",
+  "baseline": "4e74a0f5c50d80de896a719927c0eac32e653ed1",
+  "candidateSourceSha256": {
+    "src/pdf/source.ts": "e4a9f3a6cc78760c15c5ce8991beb35447411553b3d93fde5f3d52d060ea1547",
+    "src/pdf/PdfReader.tsx": "6febb4fbcdd0ca2b847cefa72b7f3a3a9705e2a3c5c98f68c17f1ce58c8f2fbc"
+  },
+  "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "source": "https://papers.miccai.org/miccai-2026/paper/2353_paper.pdf",
+  "bytes": 836561,
+  "sourceSha256": "ee24a28429a7ad0ee32e8d08f452170185b6dd3850c2a5a2eb221773d80ed599",
+  "method": "Separate disposable preauthorized Chromium profiles; no Computer Use or screenshots. Remote: 3 sequential opens per build, no warmup, small diagnostic sample affected by network variance. Fixture: same downloaded public PDF replayed via Playwright route, 3 discarded warmups and 30 measured navigations per build, warm module cache; excludes actual network and disables HTTP cache. Times from navigation performance origin to data-ready=true (canvas and text committed); budgets/annotations remain unchanged.",
+  "cases": {
+    "before-remote": {
+      "discardedWarmups": 0,
+      "samples": [
+        {
+          "firstPageMs": 2121.8,
+          "downloadMs": 1853.6,
+          "hashMs": 0.4,
+          "afterDownloadMs": 162.0,
+          "annotationReadMs": 15.4,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 2007.2,
+          "downloadMs": 1860.3,
+          "hashMs": 0.8,
+          "afterDownloadMs": 114.7,
+          "annotationReadMs": 1.2,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 776.6,
+          "downloadMs": 624.7,
+          "hashMs": 0.8,
+          "afterDownloadMs": 118.2,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        }
+      ],
+      "measuredCount": 3,
+      "p50Ms": 2007.2,
+      "p95Ms": 2121.8
+    },
+    "after-remote": {
+      "discardedWarmups": 0,
+      "samples": [
+        {
+          "firstPageMs": 2009.1,
+          "downloadMs": 1828.6,
+          "hashMs": 1.2,
+          "afterDownloadMs": 116.4,
+          "annotationReadMs": 11.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 1029.4,
+          "downloadMs": 897.0,
+          "hashMs": 0.6,
+          "afterDownloadMs": 95.8,
+          "annotationReadMs": 1.4,
+          "transferSize": 300,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 347.6,
+          "downloadMs": 207.8,
+          "hashMs": 0.6,
+          "afterDownloadMs": 108.0,
+          "annotationReadMs": 2.7,
+          "transferSize": 300,
+          "maxCanvas": 3
+        }
+      ],
+      "measuredCount": 3,
+      "p50Ms": 1029.4,
+      "p95Ms": 2009.1
+    },
+    "before-fixture": {
+      "discardedWarmups": 3,
+      "samples": [
+        {
+          "firstPageMs": 202.8,
+          "downloadMs": 10.5,
+          "hashMs": 0.3,
+          "afterDownloadMs": 112.8,
+          "annotationReadMs": 6.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 132.7,
+          "downloadMs": 9.2,
+          "hashMs": 0.3,
+          "afterDownloadMs": 98.7,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 103.4,
+          "downloadMs": 9.1,
+          "hashMs": 0.3,
+          "afterDownloadMs": 69.0,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 106.7,
+          "downloadMs": 8.8,
+          "hashMs": 0.2,
+          "afterDownloadMs": 73.1,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.3,
+          "downloadMs": 7.7,
+          "hashMs": 0.5,
+          "afterDownloadMs": 87.8,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 117.5,
+          "downloadMs": 8.0,
+          "hashMs": 0.5,
+          "afterDownloadMs": 88.2,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.7,
+          "downloadMs": 8.7,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.1,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 106,
+          "downloadMs": 9.2,
+          "hashMs": 0.3,
+          "afterDownloadMs": 73.8,
+          "annotationReadMs": 0.4,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 115.5,
+          "downloadMs": 8.1,
+          "hashMs": 0.5,
+          "afterDownloadMs": 86.4,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 104.6,
+          "downloadMs": 8.2,
+          "hashMs": 0.4,
+          "afterDownloadMs": 73.5,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 130.6,
+          "downloadMs": 8.7,
+          "hashMs": 0.4,
+          "afterDownloadMs": 95.1,
+          "annotationReadMs": 0.4,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 125.1,
+          "downloadMs": 7.1,
+          "hashMs": 0.3,
+          "afterDownloadMs": 88.4,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119,
+          "downloadMs": 8.5,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.5,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 136.9,
+          "downloadMs": 8.3,
+          "hashMs": 0.4,
+          "afterDownloadMs": 95.7,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 125.9,
+          "downloadMs": 7.8,
+          "hashMs": 0.3,
+          "afterDownloadMs": 91.1,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 120.6,
+          "downloadMs": 8.1,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.3,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 103.2,
+          "downloadMs": 8.2,
+          "hashMs": 0.5,
+          "afterDownloadMs": 72.8,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 124.4,
+          "downloadMs": 9.4,
+          "hashMs": 0.2,
+          "afterDownloadMs": 95.5,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 123.4,
+          "downloadMs": 8.2,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.7,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.4,
+          "downloadMs": 7.8,
+          "hashMs": 0.3,
+          "afterDownloadMs": 87.8,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.8,
+          "downloadMs": 7.8,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.4,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.3,
+          "downloadMs": 7.8,
+          "hashMs": 0.3,
+          "afterDownloadMs": 88.1,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.8,
+          "downloadMs": 8.1,
+          "hashMs": 0.3,
+          "afterDownloadMs": 88.4,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 105.3,
+          "downloadMs": 8.4,
+          "hashMs": 0.4,
+          "afterDownloadMs": 73.6,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 110.6,
+          "downloadMs": 8.4,
+          "hashMs": 0.4,
+          "afterDownloadMs": 72.8,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 105.2,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 75.1,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 117,
+          "downloadMs": 8.6,
+          "hashMs": 0.3,
+          "afterDownloadMs": 85,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 104.6,
+          "downloadMs": 8.6,
+          "hashMs": 0.3,
+          "afterDownloadMs": 73.3,
+          "annotationReadMs": 0.4,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 122.6,
+          "downloadMs": 10.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 85.4,
+          "annotationReadMs": 0.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 106.5,
+          "downloadMs": 8.2,
+          "hashMs": 0.3,
+          "afterDownloadMs": 72.1,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 123.8,
+          "downloadMs": 7.6,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.7,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.6,
+          "downloadMs": 7.7,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.9,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 105.1,
+          "downloadMs": 8.2,
+          "hashMs": 0.5,
+          "afterDownloadMs": 71.4,
+          "annotationReadMs": 0.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        }
+      ],
+      "measuredCount": 30,
+      "p50Ms": 118.3,
+      "p95Ms": 130.6
+    },
+    "after-fixture": {
+      "discardedWarmups": 3,
+      "samples": [
+        {
+          "firstPageMs": 172.4,
+          "downloadMs": 14.7,
+          "hashMs": 0.4,
+          "afterDownloadMs": 109.6,
+          "annotationReadMs": 7.2,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.9,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 86.2,
+          "annotationReadMs": 2.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 129.9,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 91.0,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 121.1,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 92.6,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.3,
+          "downloadMs": 8.7,
+          "hashMs": 0.5,
+          "afterDownloadMs": 85.3,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 126.4,
+          "downloadMs": 7.8,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.2,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 151.8,
+          "downloadMs": 9.4,
+          "hashMs": 0.5,
+          "afterDownloadMs": 100.7,
+          "annotationReadMs": 1.0,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 129.1,
+          "downloadMs": 8.6,
+          "hashMs": 0.4,
+          "afterDownloadMs": 88.2,
+          "annotationReadMs": 1.1,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.3,
+          "downloadMs": 9.2,
+          "hashMs": 0.4,
+          "afterDownloadMs": 84.2,
+          "annotationReadMs": 1.1,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 113.8,
+          "downloadMs": 7.9,
+          "hashMs": 0.4,
+          "afterDownloadMs": 86.9,
+          "annotationReadMs": 2.0,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 113.9,
+          "downloadMs": 8.3,
+          "hashMs": 0.4,
+          "afterDownloadMs": 83.4,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 129.8,
+          "downloadMs": 7.6,
+          "hashMs": 0.5,
+          "afterDownloadMs": 90.8,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.1,
+          "downloadMs": 9.6,
+          "hashMs": 0.5,
+          "afterDownloadMs": 85.1,
+          "annotationReadMs": 0.9,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.4,
+          "downloadMs": 8.7,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.1,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 117,
+          "downloadMs": 7.2,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.4,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 115.1,
+          "downloadMs": 9.5,
+          "hashMs": 0.5,
+          "afterDownloadMs": 83.7,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 131.2,
+          "downloadMs": 7.4,
+          "hashMs": 0.3,
+          "afterDownloadMs": 90.9,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 120.7,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 86.3,
+          "annotationReadMs": 1.1,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.5,
+          "downloadMs": 8.0,
+          "hashMs": 0.4,
+          "afterDownloadMs": 89.1,
+          "annotationReadMs": 2.2,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.8,
+          "downloadMs": 7.9,
+          "hashMs": 0.4,
+          "afterDownloadMs": 90.5,
+          "annotationReadMs": 1.5,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 120.3,
+          "downloadMs": 9.2,
+          "hashMs": 0.3,
+          "afterDownloadMs": 69.7,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 122.2,
+          "downloadMs": 8.4,
+          "hashMs": 0.3,
+          "afterDownloadMs": 87.3,
+          "annotationReadMs": 1.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 126.6,
+          "downloadMs": 7.7,
+          "hashMs": 0.3,
+          "afterDownloadMs": 91.3,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 119.9,
+          "downloadMs": 7.5,
+          "hashMs": 0.4,
+          "afterDownloadMs": 87.5,
+          "annotationReadMs": 0.9,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 117.4,
+          "downloadMs": 8.2,
+          "hashMs": 0.4,
+          "afterDownloadMs": 86.4,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 117,
+          "downloadMs": 8.4,
+          "hashMs": 0.5,
+          "afterDownloadMs": 82.6,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 128,
+          "downloadMs": 7.9,
+          "hashMs": 0.3,
+          "afterDownloadMs": 88.8,
+          "annotationReadMs": 0.7,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 118.3,
+          "downloadMs": 7.8,
+          "hashMs": 0.3,
+          "afterDownloadMs": 87.3,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.1,
+          "downloadMs": 8.6,
+          "hashMs": 0.3,
+          "afterDownloadMs": 83.8,
+          "annotationReadMs": 1.4,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 115.9,
+          "downloadMs": 7.9,
+          "hashMs": 0.4,
+          "afterDownloadMs": 85.3,
+          "annotationReadMs": 0.8,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 105.5,
+          "downloadMs": 9.3,
+          "hashMs": 0.4,
+          "afterDownloadMs": 73.2,
+          "annotationReadMs": 1.6,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 121.1,
+          "downloadMs": 8.6,
+          "hashMs": 0.3,
+          "afterDownloadMs": 82.4,
+          "annotationReadMs": 1.1,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        },
+        {
+          "firstPageMs": 116.8,
+          "downloadMs": 7.9,
+          "hashMs": 0.4,
+          "afterDownloadMs": 69.4,
+          "annotationReadMs": 1.0,
+          "transferSize": 836861,
+          "maxCanvas": 3
+        }
+      ],
+      "measuredCount": 30,
+      "p50Ms": 119.4,
+      "p95Ms": 131.2
+    }
+  },
+  "cacheContract": {
+    "requests": [
+      {
+        "status": 200
+      },
+      {
+        "status": 304,
+        "validator": "\"v1\""
+      },
+      {
+        "status": 200,
+        "validator": "\"v1\""
+      },
+      {
+        "status": 503,
+        "validator": "\"v2\""
+      }
+    ],
+    "hashes": [
+      "d0977da4fe334d41eafc63f9e62a1eb316d4f5581a5f4006026b3a1a3a20c4d2",
+      "d0977da4fe334d41eafc63f9e62a1eb316d4f5581a5f4006026b3a1a3a20c4d2",
+      "040d56ef77551823af4b50533f7d04282294dfb189359d8ba2e6ab4cbee679cf"
+    ],
+    "expectedHashes": [
+      "d0977da4fe334d41eafc63f9e62a1eb316d4f5581a5f4006026b3a1a3a20c4d2",
+      "040d56ef77551823af4b50533f7d04282294dfb189359d8ba2e6ab4cbee679cf"
+    ],
+    "readyOnFailure": 0
+  },
+  "limits": [
+    "First open still downloads full validated bytes before rendering.",
+    "Every cached open still waits for server validation; no offline fallback.",
+    "Servers can disable caching or return new full responses; repeated-open benefit is conditional.",
+    "One public 11-page text PDF; not a benchmark of all scanned PDFs, origins, personal Chrome, or real user latency.",
+    "Local processing difference is not evidence of a rendering speedup."
+  ]
+}

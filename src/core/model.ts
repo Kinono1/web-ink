@@ -1,12 +1,12 @@
 /** Durable, versioned records. DOM nodes and viewport coordinates never enter storage. */
 export const SCHEMA_VERSION = 2 as const;
+// Apple AnnotationKit's light-paper highlight palette; provenance in DESIGN.md.
 export const COLORS = [
-  "#facc15",
-  "#4ade80",
-  "#38bdf8",
-  "#c084fc",
-  "#fb7185",
-  "#fb923c",
+  "#facd5a",
+  "#7cc868",
+  "#69b0f1",
+  "#fb5c89",
+  "#c885da",
 ] as const;
 export type Language = "zh-CN" | "en";
 export interface Settings {

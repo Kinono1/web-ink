@@ -35,6 +35,7 @@ let attempts: Attempt[];
 let pixels: WeakMap<HTMLCanvasElement, string>;
 let cleanupPage: ReturnType<typeof vi.fn>;
 let getPageGate: ReturnType<typeof deferred> | undefined;
+let intrinsicRotation = 0;
 
 beforeEach(() => {
   host = document.createElement("div");
@@ -45,6 +46,7 @@ beforeEach(() => {
   pixels = new WeakMap();
   cleanupPage = vi.fn();
   getPageGate = undefined;
+  intrinsicRotation = 0;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("devicePixelRatio", 1);
   // JSDOM does not implement raster contexts. Track completed image copies at
@@ -59,7 +61,7 @@ beforeEach(() => {
   });
 
   const page = {
-    rotate: 0,
+    get rotate() { return intrinsicRotation; },
     view: [0, 0, 600, 800],
     getViewport: ({ scale, rotation }: { scale: number; rotation: number }) => ({
       width: (rotation % 180 ? 800 : 600) * scale,
@@ -174,6 +176,79 @@ function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas"
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
 
 describe("PdfPage staged rendering", () => {
+  it.each([90, 270])("merges upright text from a page with native rotation %s", async (rotation) => {
+    intrinsicRotation = rotation;
+    const rects = [
+      { x: 0.1, y: 0.2, width: 0.02, height: 0.04 },
+      { x: 0.1, y: 0.241, width: 0.02, height: 0.04 },
+    ];
+    props.records[0]!.target.rects = rects;
+    await paint();
+    expect(host.querySelectorAll("[data-pdf-annotation]")).toHaveLength(1);
+    expect(props.records[0]!.target.rects).toBe(rects);
+  });
+
+  it.each([90, 270])("keeps normal text merged when the user rotates to %s", async (rotation) => {
+    props.records[0]!.target.rects = [
+      { x: 0.1, y: 0.7, width: 0.05, height: 0.05 },
+      { x: 0.151, y: 0.7, width: 0.05, height: 0.05 },
+    ];
+    await paint({ rotation });
+    expect(host.querySelectorAll("[data-pdf-annotation]")).toHaveLength(1);
+  });
+
+  it("multiplies one merged legacy text annotation against the PDF paper", async () => {
+    const record = props.records[0]!;
+    const fragments = [record.target.rects[0]!, { ...record.target.rects[0]!, x: 0.15, y: 0.702 }];
+    record.target.rects = fragments;
+    await paint();
+    const mark = host.querySelector(`[data-pdf-annotation="${record.id}"]`)!;
+    const layer = mark.closest("g");
+    expect(layer?.getAttribute("opacity")).toBeNull();
+    expect((layer as SVGGElement).style.mixBlendMode).toBe("multiply");
+    expect((mark.closest("svg") as SVGSVGElement).style.mixBlendMode).toBe("multiply");
+    expect(layer?.querySelectorAll("rect")).toHaveLength(1);
+    expect(mark.getAttribute("fill-opacity")).toBeNull();
+    expect(record.target.rects).toBe(fragments);
+    expect(record.target.rects).toHaveLength(2);
+  });
+
+  it("keeps distinct annotations independent and area outlines at full opacity", async () => {
+    const original = props.records[0]!;
+    props.records = [original, { ...original, id: "second-mark" }, { ...original, id: "area-mark", kind: "pdf-area" }];
+    await paint();
+    const groups = [...host.querySelectorAll(".pdf-marks > g")];
+    expect(groups).toHaveLength(3);
+    expect(groups.map(g => g.getAttribute("opacity"))).toEqual([null, null, null]);
+    expect(groups.map(g => (g as SVGGElement).style.mixBlendMode)).toEqual(["multiply", "multiply", ""]);
+    expect(groups[2]?.querySelector("rect")?.getAttribute("fill")).toBe("none");
+    expect(groups[2]?.querySelector("rect")?.getAttribute("stroke")).toBe(original.color);
+    expect((groups[2]?.closest("svg") as SVGSVGElement).style.mixBlendMode).toBe("");
+  });
+
+  it("opens a highlight when its newly filled small gap is clicked", async () => {
+    const record = props.records[0]!;
+    record.target.rects = [
+      { x: 0.1, y: 0.7, width: 0.05, height: 0.05 },
+      { x: 0.151, y: 0.7, width: 0.05, height: 0.05 },
+    ];
+    await paint({ zoom: 3 });
+    await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true, clientX: 271, clientY: 660,
+    })));
+    expect(props.onPick).toHaveBeenCalledWith(record);
+  });
+
+  it("picks the top area layer before a later overlapping text annotation", async () => {
+    const text = props.records[0]!;
+    const area = { ...text, id: "area-mark", kind: "pdf-area" as const };
+    await paint({ records: [area, text] });
+    await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true, clientX: 90, clientY: 220,
+    })));
+    expect(props.onPick).toHaveBeenCalledWith(area);
+  });
+
   it("keeps the committed page visible until the new raster and text both finish", async () => {
     await paint();
     const canvas = visibleCanvas();
