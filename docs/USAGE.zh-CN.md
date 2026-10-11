@@ -4,7 +4,7 @@ Web Ink 是本地优先的 Chrome 标注工具：网页文字、图片绘制，�
 
 [English](../README.en.md) · [隐私说明](../PRIVACY.md) · [第三方许可](../THIRD_PARTY_NOTICES.md) · [发布流程](RELEASING.md)
 
-> 源码候选版本为 v0.3.5，公开下载包可能较早。支持范围与实际测试边界见 [验证记录](VALIDATION.md)，既有性能数据见 [测量报告](PERFORMANCE.md)。
+> 当前源码版本见 [package.json](../package.json)，实际安装版本和构建提交见设置页；公开下载包可能较早。本轮专注阅读与快捷标注见 [0.3.6 验证记录](VALIDATION-v0.3.6.md)，历史支持边界见 [验证记录](VALIDATION.md)，既有性能数据见 [测量报告](PERFORMANCE.md)。
 
 ## v0.3 的优化
 
