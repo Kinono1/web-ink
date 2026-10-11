@@ -254,8 +254,10 @@ test("preset editor retains keyboard focus inside its dialog while a write is pe
   });
   await editor.getByRole("button", { name: "保存", exact: true }).click();
   await expect(editor).toHaveAttribute("aria-busy", "true");
+  await expect(editor).toBeFocused();
   expect(await editor.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Tab");
+  await expect(editor).toBeFocused();
   expect(await editor.evaluate(element => element.contains(document.activeElement))).toBe(true);
   await page.keyboard.press("Escape");
   await expect(editor).toBeVisible();

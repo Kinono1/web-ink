@@ -260,6 +260,27 @@ describe("annotation preset editor", () => {
     expect(document.activeElement).toBe(button(host, "Cancel"));
   });
 
+  it("moves focus from the clicked Save button to the dialog before controls become disabled", async () => {
+    const completion = deferred();
+    const onClose = vi.fn();
+    const host = await mountEditor({ onSave: () => completion.promise, onClose });
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
+    const save = button(host, "Save");
+    await act(async () => save.focus());
+    expect(document.activeElement).toBe(save);
+
+    await act(async () => save.click());
+    expect(dialog.getAttribute("aria-busy")).toBe("true");
+    expect(save.disabled).toBe(true);
+    expect(document.activeElement).toBe(dialog);
+    await act(async () => { dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true })); });
+    expect(document.activeElement).toBe(dialog);
+    await act(async () => { dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })); });
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => completion.resolve());
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it("localizes editor controls and cancels without mutating supplied presets", async () => {
     const onClose = vi.fn();
     const onSave = vi.fn(async (_value: AnnotationPreset[]) => undefined);

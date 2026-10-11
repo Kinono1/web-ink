@@ -103,6 +103,9 @@ export function AnnotationPresetEditor({ presets, language, onSave, onClose, onD
   async function save() {
     if (savePending.current || !validatedDrafts) return;
     savePending.current = true;
+    // A focused control can lose browser focus when disabled; hand it to the
+    // stable dialog before locking the form.
+    dialog.current?.focus({ preventScroll: true });
     setSaving(true);
     setSaveError("");
     let succeeded = false;
