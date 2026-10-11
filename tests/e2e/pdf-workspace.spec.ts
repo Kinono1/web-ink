@@ -220,12 +220,20 @@ test("floating pen directly opens the current PDF without enabling webpage annot
 
 test("floating menu fits a narrow dark page and selects embedded PDF sources explicitly", async () => {
   const second = 'https://papers.example.test/second.pdf';
-  const original = await htmlPage(wrapper, `<iframe width="280" height="120" src="${source}"></iframe><object width="280" height="120" type="application/pdf" data="${second}"></object>`);
-  await activeTab(original);
-  await context.route(second, route => route.fulfill({ contentType: 'application/pdf', body: fixturePdf() }));
+  // Keep both embedding boxes readable and inside the narrow viewport. Bytes
+  // are validated by the reader only after the explicit source choice.
+  for (const url of [source, second]) await context.route(url, route => route.fulfill(
+    route.request().resourceType() === 'document'
+      ? { contentType: 'text/html', body: '<p>Controlled embedded viewer.</p>' }
+      : { contentType: 'application/pdf', body: fixturePdf() },
+  ));
+  const original = await htmlPage(wrapper, `<iframe style="display:block" width="280" height="100" src="${source}"></iframe><iframe style="display:block" width="280" height="100" src="${second}"></iframe>`);
+  const tabId = await activeTab(original);
   const settings = await rpc<Settings>(control, { type: 'settings.get' });
   await rpc(control, { type: 'settings.put', settings: { ...settings, theme: 'dark' } });
   await original.setViewportSize({ width: 320, height: 360 });
+  const detected = await rpc<PdfTabContext>(control, { type: 'pdf.context.get', tabId, expectedUrl: wrapper });
+  expect(detected.candidates.map(candidate => candidate.url).sort()).toEqual([source, second].sort());
   const pen = original.locator('.web-ink-palette-toggle'); await expect(pen).toBeEnabled(); await pen.click();
   await expect(original.getByRole('menuitem', { name: '打开 second.pdf', exact: true })).toBeVisible();
   const menu = original.locator('.web-ink-palette-menu');
