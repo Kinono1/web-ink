@@ -37,6 +37,8 @@ import type {
 } from "./management/types";
 import { COPY } from "./management/copy";
 import { openPdfTab } from "./management/openPdf";
+import { readPdfPaperIdentity } from "../pdf/paper-identity";
+import { rememberPdfPaperReopen } from "../pdf/paper-reopen";
 import {
   tagText,
   parseTags,
@@ -79,6 +81,10 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
   const [query, setQuery] = useState("");
+  const [libraryDocument, setLibraryDocument] = useState(() => {
+    const hash = new URLSearchParams(location.search).get("document");
+    return mode === "library" && hash && /^[a-f0-9]{64}$/.test(hash) ? `urn:web-ink:pdf:${hash}` : undefined;
+  });
   const [kind, setKind] = useState<FilterKind>("all");
   const [color, setColor] = useState("");
   const [tag, setTag] = useState("");
@@ -119,7 +125,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
   const { records, setRecords, nextCursor, loading, loadRecords } =
     useAnnotationQuery(
-      { mode, pageUrl, kind, color, tag, query },
+      { mode, pageUrl: mode === "library" ? libraryDocument : pageUrl, kind, color, tag, query },
       setError,
       (items) =>
         setSelectedId((current) =>
@@ -568,11 +574,18 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       setBusyImport(false);
     }
   };
-  const showPdf = async (url: string) => {
+  const showPdf = async (record?: Annotation) => {
     if (pdfOpenPending.current) return;
     pdfOpenPending.current = true;
     setOpeningPdf(true);
-    try { await openPdfTab(url); }
+    try {
+      const identity = record && isPdf(record)
+        ? await readPdfPaperIdentity(record.target.documentHash, record.target.sourceUrl) : undefined;
+      const url = pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record, identity);
+      const tabId = await openPdfTab(url);
+      if (record && isPdf(record) && new URL(url).protocol === "https:")
+        await rememberPdfPaperReopen(record.target, identity?.doi, tabId);
+    }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { pdfOpenPending.current = false; setOpeningPdf(false); }
   };
@@ -621,7 +634,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     });
   };
   const openPdf = (record?: Annotation) => {
-    void showPdf(pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record));
+    void showPdf(record);
   };
   const filterCount =
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
@@ -744,6 +757,15 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           </button>
         </div>
       </header>
+      {mode === "library" && screen === "library" && libraryDocument && <div className="alert notice" role="status">
+        <span>{language === "zh-CN" ? "之前版本的标注" : "Annotations from the previous version"}</span>
+        <button className="quiet" onClick={() => {
+          setLibraryDocument(undefined);
+          const url = new URL(location.href);
+          url.searchParams.delete("document");
+          history.replaceState(null, "", url.href);
+        }}>{language === "zh-CN" ? "查看全部" : "View all"}</button>
+      </div>}
       {error ? (
         <Alert
           kind="error"

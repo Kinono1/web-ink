@@ -10,6 +10,7 @@ const WRAPPER = `${IEEE}/stamp/stamp.jsp?tp=&arnumber=11643626`;
 const TICKET = "session-only-ticket";
 const DOWNLOAD = `${IEEE}/rest/observed-download?ticket=${TICKET}`;
 const PUBLIC = "https://papers.example.test/public.pdf";
+const DOI = "10.9999/web-ink.synthetic-paper";
 
 type RequestEvidence = {
   url: string;
@@ -24,6 +25,8 @@ let folder = "";
 let extensionId = "";
 let ieeeMode: "pdf" | "html" | "redirect" | "unavailable" = "pdf";
 let requests: RequestEvidence[] = [];
+let paperMetadata = false;
+let pdfRevision = 0;
 
 async function rpc<T>(message: object): Promise<T> {
   return control.evaluate(async (message) => {
@@ -94,7 +97,10 @@ async function ieeeRoute(route: Route): Promise<void> {
     await route.fulfill({ status: 302, headers: { location: `${IEEE}/login` }, body: "" });
     return;
   }
-  await route.fulfill({ contentType: "application/pdf", body: fixturePdf(1, "IEEE session fixture") });
+  await route.fulfill({ contentType: "application/pdf", body: fixturePdf(1, "IEEE session fixture", {
+    ...(paperMetadata ? { metadata: { title: "Synthetic IEEE paper", doi: DOI } } : {}),
+    ...(pdfRevision ? { paddingBytes: 20 } : {}),
+  }) });
 }
 
 async function selectAndHighlight(reader: Page): Promise<PdfTextAnnotation> {
@@ -144,11 +150,16 @@ test.beforeEach(async () => {
   extensionId = new URL(worker.url()).host;
   requests = [];
   ieeeMode = "pdf";
+  paperMetadata = false;
+  pdfRevision = 0;
   // The intercepted request already carries headers from Chromium's disposable
   // cookie jar. Record those headers before fulfilling the synthetic response;
   // this is cookie-routing evidence, not a real IEEE network assertion.
   await context.route(/^https?:\/\//, async (route) => {
     const url = new URL(route.request().url());
+    if (url.href === `https://doi.org/${DOI}`) {
+      return route.fulfill({ contentType: "text/html", body: `<!doctype html><title>Synthetic DOI resolver</title><a href="${IEEE}/document/11643626">Publisher paper</a>` });
+    }
     if (url.origin === IEEE) return ieeeRoute(route);
     if (url.href === PUBLIC) {
       requests.push(await requestEvidence(route));
@@ -200,6 +211,43 @@ test("saved IEEE records reopen through the article and a fresh same-tab session
   await openThroughSidepanel(article);
   expect(await activeTab(article)).toBe(tabId);
   await expect(article.locator(`[data-pdf-annotation="${record.id}"]`)).toBeVisible();
+});
+
+test("legacy IEEE Open PDF prefers the learned DOI, restores the same file, and links changed copies to old marks", async () => {
+  paperMetadata = true;
+  const reader = await context.newPage();
+  await reader.goto(WRAPPER);
+  await openThroughSidepanel(reader);
+  const record = await selectAndHighlight(reader);
+  // Simulate a saved record from before DOI display existed. Its data remains
+  // valid and the independent learned paper index supplies the stable entry.
+  const legacy = await rpc<PdfTextAnnotation>({ type: "annotations.put", expectedRevision: record.revision,
+    annotation: { ...record, pageTitle: "IEEE-11643626.pdf", target: { ...record.target, sourceUrl: WRAPPER, fileName: "IEEE-11643626.pdf" } } });
+  const library = await context.newPage();
+  await library.goto(`chrome-extension://${extensionId}/library.html`);
+  await library.getByRole("button", { name: new RegExp(legacy.target.exact) }).first().click();
+  const reopenLegacy = async () => {
+    await library.locator(".detail-actions").getByRole("button", { name: "打开 PDF", exact: true }).click();
+    await expect.poll(() => context.pages().map(page => page.url())).toContain(`https://doi.org/${DOI}`);
+    const paper = context.pages().find(page => page.url() === `https://doi.org/${DOI}`)!;
+    await paper.reload(); // Attach before serving the offline DOI resolver fixture.
+    await paper.getByRole("link", { name: "Publisher paper", exact: true }).click();
+    await paper.getByRole("link", { name: "PDF", exact: true }).click();
+    await openThroughSidepanel(paper);
+    return paper;
+  };
+  let paper = await reopenLegacy();
+  await expect(paper.locator(`[data-pdf-annotation="${legacy.id}"]`)).toBeVisible();
+  expect((await rpc<Annotation[]>({ type: "annotations.list" }))[0]?.id).toBe(legacy.id);
+
+  pdfRevision = 1; // A synthetic watermark-only byte change still needs review.
+  paper = await reopenLegacy();
+  await expect(paper.locator(`[data-pdf-annotation="${legacy.id}"]`)).toHaveCount(0);
+  await paper.getByRole("button", { name: "查看之前的标注", exact: true }).click();
+  await expect(paper).toHaveURL(`chrome-extension://${extensionId}/library.html?document=${legacy.target.documentHash}`);
+  await expect(paper.getByText("之前版本的标注", { exact: true })).toBeVisible();
+  await expect(paper.getByRole("button", { name: new RegExp(legacy.target.exact) }).first()).toBeVisible();
+  expect((await rpc<Annotation[]>({ type: "annotations.list" })).map(item => item.id)).toEqual([legacy.id]);
 });
 
 test("sidepanel IEEE session handoff keeps the ticket out of reader and persistent data, requires a fresh grant after reload, then restores saved marks in the same tab", async () => {

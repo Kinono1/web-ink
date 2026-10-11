@@ -55,7 +55,7 @@ export function useAnnotationQuery(
       active.current = requestId;
       setLoading(true);
       const query: AnnotationQuery = {
-        ...(value.mode === "sidepanel" ? { pageUrl: value.pageUrl } : {}),
+        ...(value.pageUrl ? { pageUrl: value.pageUrl } : {}),
         ...(value.kind === "all" ? {} : { kind: value.kind }),
         ...(value.color ? { color: value.color } : {}),
         ...(value.tag ? { tag: value.tag } : {}),

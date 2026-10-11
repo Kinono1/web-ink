@@ -1,5 +1,5 @@
 /** Reuse an existing reader without replacing its document or unsaved notes. */
-export async function openPdfTab(url: string): Promise<void> {
+export async function openPdfTab(url: string): Promise<number> {
   const target = new URL(url);
   const normalizeSource = (raw: string | null) => {
     if (!raw) return null;
@@ -26,5 +26,9 @@ export async function openPdfTab(url: string): Promise<void> {
   if (existing?.id !== undefined) {
     await chrome.tabs.update(existing.id, { active: true });
     if (existing.windowId !== undefined) await chrome.windows.update(existing.windowId, { focused: true });
-  } else await chrome.tabs.create({ url });
+    return existing.id;
+  }
+  const tab = await chrome.tabs.create({ url });
+  if (tab.id === undefined) throw Error("The PDF tab could not be identified.");
+  return tab.id;
 }

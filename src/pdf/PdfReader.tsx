@@ -36,7 +36,9 @@ import { Icon } from "../ui/management/helpers";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { readIeeePdf, ieeeSourceUrl, IeeePdfError } from "./ieee";
 import { ieeePaperUrl, isIeeeSessionPage, isIeeePdfWrapper } from "./context";
-import { pdfDisplayName } from "./metadata";
+import { pdfDisplayName, pdfDoi } from "./metadata";
+import { doiUrl, learnPdfPaperIdentity, readPdfPaperIdentity } from "./paper-identity";
+import { readPdfPaperReopen } from "./paper-reopen";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
 import {
@@ -64,7 +66,7 @@ const dirtyDraft = (draft: PdfNoteDraft) =>
   draft.color !== draft.base.color ||
   noteTags(draft.tags).join("\0") !== draft.base.tags.join("\0");
 type LeaveAction =
-  | { kind: "return" | "source" | "paper" | "library" | "choose" }
+  | { kind: "return" | "source" | "paper" | "library" | "previous" | "choose" }
   | { kind: "open"; file?: File; source: string };
 type PositionSession = {
   session: number;
@@ -100,6 +102,8 @@ export function PdfReader() {
   const autoOpenAttempted = useRef(false);
   const [source, setSource] = useState(initialParams.get("source") || "");
   const [opened, setOpened] = useState<OpenDocument>();
+  const [paperDoi, setPaperDoi] = useState<string>();
+  const [previousHash, setPreviousHash] = useState<string>();
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
   const recordsRef = useRef(records);
   recordsRef.current = records;
@@ -670,6 +674,8 @@ export function PdfReader() {
       signal: AbortSignal | undefined;
     setError("");
     setNotice("");
+    setPreviousHash(undefined);
+    setPaperDoi(undefined);
     setIeeeRecovery(undefined);
     setBusy(true);
     // Invalidate every async callback from the currently displayed document
@@ -792,6 +798,12 @@ export function PdfReader() {
       const metadata = await doc.getMetadata().catch(() => ({}));
       if (!session.current.isCurrent(token)) return;
       const fileName = pdfDisplayName(metadata, fallbackName);
+      const doi = pdfDoi(metadata);
+      const tabId = await chrome.tabs.getCurrent().then(tab => tab?.id).catch(() => undefined);
+      const reopen = await readPdfPaperReopen(remote, doi, tabId);
+      if (!session.current.isCurrent(token)) return;
+      setPaperDoi(doi);
+      void learnPdfPaperIdentity(hash, metadata, remote);
       // Keep the reader URL aligned with the successfully loaded document so
       // a later library/source handoff cannot reuse a tab showing another PDF.
       const readerLocation = new URL(location.href);
@@ -813,8 +825,8 @@ export function PdfReader() {
       setDocumentSession(documentSessionRef.current);
       updateRecords(all.filter(isPdf));
       setArea(false);
-      const expected = openingParams.get("document");
-      const requestedPage = openingParams.get("page");
+      const expected = openingParams.get("document") || reopen?.documentHash;
+      const requestedPage = openingParams.get("page") || (reopen ? String(reopen.pageNumber) : null);
       const explicitPage = requestedPage && /^[1-9]\d*$/.test(requestedPage) && (!expected || expected === hash) && Number(requestedPage) <= doc.numPages
         ? Number(requestedPage) : undefined;
       const position: PositionSession = {
@@ -840,25 +852,31 @@ export function PdfReader() {
         setPositionEpoch((epoch) => epoch + 1);
       });
       let changed = !!expected && expected !== hash;
+      let earlierHash: string | undefined;
       if (remote && !changed) {
+        const citation = doiUrl(doi) || remote;
         const earlier = await request<AnnotationPage>({
           type: "annotations.query",
-          query: { text: remote, limit: 50 },
+          query: { text: citation, limit: 50 },
         });
-        changed = earlier.items.some(
+        const previous = earlier.items.find(
           (r) =>
             isPdf(r) &&
-            r.target.sourceUrl === remote &&
+            (r.target.sourceUrl === citation || r.target.sourceUrl === remote) &&
             r.target.documentHash !== hash,
         );
+        if (previous && isPdf(previous)) { changed = true; earlierHash = previous.target.documentHash; }
       }
-      if (session.current.isCurrent(token) && changed)
+      if (session.current.isCurrent(token) && changed) {
+        const oldHash = expected || earlierHash;
+        if (oldHash && /^[a-f0-9]{64}$/.test(oldHash)) setPreviousHash(oldHash);
         setNotice(
           t(
             "文档版本已变化：旧标注已保留，没有套用到这份文件。",
             "Document changed: previous annotations are preserved and were not applied to this file.",
           ),
         );
+      }
     } catch (cause) {
       if (token && session.current.isCurrent(token) && !signal?.aborted) {
         if (siteSession && cause instanceof IeeePdfError) {
@@ -940,13 +958,13 @@ export function PdfReader() {
   }
   const currentParams = new URLSearchParams(location.search);
   const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
-  const paperUrl = ieeePaperUrl(handoff?.returnUrl || publicUrl);
+  const paperUrl = doiUrl(paperDoi) || ieeePaperUrl(handoff?.returnUrl || publicUrl);
   async function executeLeave(action: LeaveAction) {
     if (leaving) return;
     setLeaving(true);
     try {
       await flushPosition();
-      if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "source" || action.kind === "paper"))
+      if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "previous" || action.kind === "source" || action.kind === "paper"))
         await request({ type: "pdf.handoff.revoke", token: handoff.token });
       switch (action.kind) {
         case "return":
@@ -954,14 +972,19 @@ export function PdfReader() {
           await request<PdfReturnResult>({ type: "pdf.returnOriginal", token: handoff.token });
           break;
         case "source":
-          if (publicUrl) location.assign(ieeePaperUrl(publicUrl) || publicUrl);
+          if (publicUrl) location.assign(doiUrl(paperDoi) || ieeePaperUrl(publicUrl) || publicUrl);
           else setSourceOpen(true);
           break;
         case "paper":
-          if (paperUrl) location.assign(paperUrl);
+          const identity = await readPdfPaperIdentity(currentParams.get("document") || undefined, handoff?.returnUrl || publicUrl);
+          const destination = doiUrl(paperDoi || identity?.doi) || paperUrl;
+          if (destination) location.assign(destination);
           else setSourceOpen(true);
           break;
         case "library": location.assign(chrome.runtime.getURL("/library.html")); break;
+        case "previous":
+          if (previousHash) location.assign(chrome.runtime.getURL(`/library.html?document=${previousHash}`));
+          break;
         case "choose": setSourceOpen(true); break;
         case "open": await loadPdf(action.file, false, action.source); break;
       }
@@ -1079,11 +1102,13 @@ export function PdfReader() {
   ) {
     if (!opened || !key || locked || annotationWrites.current.size) return;
     const now = new Date().toISOString();
+    const recordSource = opened.sourceUrl && isIeeeSessionPage(opened.sourceUrl)
+      ? doiUrl(paperDoi) || opened.sourceUrl : opened.sourceUrl;
     const pdfTarget: PdfTarget = {
       ...target,
       documentHash: opened.hash,
       fileName: opened.fileName,
-      ...(opened.sourceUrl ? { sourceUrl: opened.sourceUrl } : {}),
+      ...(recordSource ? { sourceUrl: recordSource } : {}),
     };
     void save({
       id: crypto.randomUUID(),
@@ -1324,7 +1349,9 @@ export function PdfReader() {
       {positionError && <div className="pdf-message error" role="status"><span>{positionError}</span>
         <button onClick={() => void flushPosition()}>{t("重试保存阅读位置", "Retry reading position")}</button>
         <button onClick={() => setPositionError("")}>{t("关闭", "Dismiss")}</button></div>}
-      {notice && <div className="pdf-message" role="status">{notice}</div>}
+      {notice && <div className="pdf-message" role="status"><span>{notice}</span>
+        {previousHash && <button disabled={locked} onClick={() => requestLeave({ kind: "previous" })}>{t("查看之前的标注", "View previous annotations")}</button>}
+      </div>}
       {!opened && ieeeRecovery && (error || notice) && <div className="pdf-message">
         {ieeeRecovery === "return" ? <button disabled={busy || leaving} onClick={() => requestLeave(paperUrl ? { kind: "paper" } : backAction)}>{t("返回 IEEE", "Return to IEEE")}</button>
           : handoff && <button disabled={busy || leaving} onClick={() => void loadPdf(undefined, false, handoff.returnUrl, true)}>

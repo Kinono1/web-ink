@@ -6,18 +6,23 @@ const INVALID_TEXT_PATTERN =
   /[\p{Surrogate}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
 
 type PdfMetadata = { get(name: string): unknown };
-type PdfMetadataInput = {
+export type PdfMetadataInput = {
   info?: object;
   metadata?: PdfMetadata | null;
 };
+
+export function pdfDoi(input: PdfMetadataInput): string | undefined {
+  return (
+    parseDoi(readMetadata(input, "prism:doi")) ??
+    parseDoi(readMetadata(input, "dc:identifier"))
+  );
+}
 
 export function pdfDisplayName(input: PdfMetadataInput, fallback: string): string {
   const metadataTitle = cleanText(readMetadata(input, "dc:title"));
   const infoTitle = cleanText(readInfoTitle(input));
   const title = metadataTitle || infoTitle;
-  const doi =
-    cleanDoi(readMetadata(input, "prism:doi")) ??
-    cleanDoi(readMetadata(input, "dc:identifier"));
+  const doi = pdfDoi(input);
 
   if (title) {
     const suffix = doi ? ` — DOI: ${doi}` : "";
@@ -52,7 +57,7 @@ function cleanText(value: unknown): string | undefined {
   return normalized || undefined;
 }
 
-function cleanDoi(value: unknown): string | undefined {
+export function parseDoi(value: unknown): string | undefined {
   const text = cleanText(value);
   if (!text) return;
 

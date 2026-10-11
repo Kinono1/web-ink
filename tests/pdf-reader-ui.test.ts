@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DEFAULT_SETTINGS, type Annotation, type PdfHandoff, type Request } from "../src/core/model";
 import type { PdfReadingPosition } from "../src/pdf/reading-position";
+import { rememberPdfPaperReopen } from "../src/pdf/paper-reopen";
 
 const io = vi.hoisted(() => ({
   hash: "a".repeat(64),
@@ -190,6 +191,7 @@ beforeEach(() => {
   ] });
   Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 100, top: 180, right: 240, bottom: 200, width: 140, height: 20 }) });
   vi.stubGlobal("chrome", {
+    tabs: { getCurrent: async () => ({ id: 8 }) },
     permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true) },
     storage: { local: {
       get: async (key: string) => { readKeys.push(key); return readGate ? readGate.promise : { [key]: storedPosition }; },
@@ -219,6 +221,12 @@ beforeEach(() => {
       },
     },
   });
+  const sessionValues: Record<string, unknown> = {};
+  Object.assign(chrome.storage, { session: {
+    get: async (keys: string[]) => Object.fromEntries(keys.map(key => [key, sessionValues[key]])),
+    set: async (entries: Record<string, unknown>) => Object.assign(sessionValues, entries),
+    remove: async (key: string) => { delete sessionValues[key]; },
+  } });
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -444,6 +452,44 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("saves the explicit metadata DOI as the source for new signed-in IEEE annotations", async () => {
+    io.metadataDoi = "10.1109/TII.2026.3716639";
+    handoff = { token: TOKEN, tabId: 8, returnUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626",
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    await selectPage();
+    await click("高亮 #facd5a");
+    const saved = puts()[0]?.annotation;
+    expect(saved?.kind === "pdf-text" && saved.target.sourceUrl).toBe("https://doi.org/10.1109/TII.2026.3716639");
+  });
+  it("restores the selected legacy record page after a fresh IEEE login handoff", async () => {
+    const original = baseRecord();
+    const saved = { ...original, target: { ...original.target, pageNumber: 3,
+      sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626" } };
+    records = [saved];
+    await rememberPdfPaperReopen(saved.target, undefined, 8);
+    handoff = { token: TOKEN, tabId: 8, returnUrl: saved.target.sourceUrl,
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("3");
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).not.toBeNull();
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("offers previous annotations without overlaying them on a changed IEEE download", async () => {
+    const original = baseRecord();
+    const saved = { ...original, target: { ...original.target,
+      sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626" } };
+    await rememberPdfPaperReopen(saved.target, undefined, 8);
+    io.hash = "b".repeat(64);
+    handoff = { token: TOKEN, tabId: 8, returnUrl: saved.target.sourceUrl,
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    expect(host.textContent).toContain("旧标注已保留");
+    expect([...host.querySelectorAll("button")].some(button => button.textContent === "查看之前的标注")).toBe(true);
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    expect(puts()).toHaveLength(0);
+  });
   it("refreshes the early annotation snapshot after subscribing to the parsed document", async () => {
     const listeners = runtimeListeners();
     const parsing = deferred<unknown>();

@@ -2,6 +2,8 @@ import type { Annotation, AnchorState, Language } from "../../core/model";
 import type { FilterKind, AnnotationKind } from "./types";
 import { ICON_PATHS, type IconName } from "../icons";
 import { ieeePaperUrl } from "../../pdf/context";
+import { doiUrl, type PdfPaperIdentity } from "../../pdf/paper-identity";
+import { ieeeSourceUrl } from "../../pdf/ieee";
 export function tagText(tags: string[]): string {
   return tags.join(", ");
 }
@@ -51,16 +53,25 @@ export function isPdf(
 ): annotation is Extract<Annotation, { kind: "pdf-text" | "pdf-area" }> {
   return annotation.kind === "pdf-text" || annotation.kind === "pdf-area";
 }
-export function pdfReaderUrl(readerBase: string, record?: Annotation): string {
+export function pdfReaderUrl(readerBase: string, record?: Annotation, identity?: PdfPaperIdentity): string {
+  let ieeeSource = false;
   if (record && isPdf(record)) {
-    const paper = ieeePaperUrl(record.target.sourceUrl);
+    const storedDoiSource = doiUrl(record.target.sourceUrl);
+    if (storedDoiSource) return storedDoiSource;
+    const paper = ieeePaperUrl(identity?.paperUrl) || ieeePaperUrl(record.target.sourceUrl);
+    if (record.target.sourceUrl) {
+      try { ieeeSourceUrl(record.target.sourceUrl); ieeeSource = true; }
+      catch { /* Ordinary PDFs retain their direct reader flow. */ }
+    }
+    const doi = doiUrl(identity?.doi);
+    if (doi && (paper || ieeeSource)) return doi;
     if (paper) return paper;
   }
   const url = new URL(readerBase);
   if (record && isPdf(record)) {
     url.searchParams.set("document", record.target.documentHash);
     url.searchParams.set("page", String(record.target.pageNumber));
-    if (record.target.sourceUrl)
+    if (record.target.sourceUrl && !ieeeSource)
       url.searchParams.set("source", record.target.sourceUrl);
   }
   return url.href;
