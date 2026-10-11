@@ -49,6 +49,10 @@ function gestureFixture() {
 }
 
 describe('palette dragging', () => {
+  it('does not let saved position replace a keyboard interaction already started', () => {
+    const f = gestureFixture(); f.click(0); f.control.setPosition({ x: 0, y: 0 });
+    expect(f.button.style.left).toBe('1142px'); expect(f.button.style.top).toBe('842px');
+  });
   it('keeps small diagonal motion clickable but latches a drag after returning to the start', () => {
     const f = gestureFixture();
     f.pointer('pointerdown', 1162, 862); f.pointer('pointermove', 1158, 858); f.pointer('pointerup', 1158, 858); f.click();

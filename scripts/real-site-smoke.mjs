@@ -31,8 +31,11 @@ try {
     try {
       await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 25000 });
       await page.locator('web-ink-ui').waitFor({ state: 'attached', timeout: 10000 });
-      const toggle = page.locator('.web-ink-palette-toggle');
-      if (await toggle.getAttribute('aria-pressed') !== 'true') await toggle.click();
+      const toggle = page.locator('web-ink-ui .web-ink-palette-toggle');
+      if (await toggle.getAttribute('aria-pressed') !== 'true') {
+        await toggle.click();
+        await page.locator('web-ink-ui [data-action="toggle"]').click({ timeout: 10000 });
+      }
       await page.waitForFunction(() => document.querySelector('web-ink-ui')?.shadowRoot?.querySelector('.web-ink-palette-toggle')?.getAttribute('aria-pressed') === 'true');
       const paragraphs = page.locator(selector);
       let paragraph;

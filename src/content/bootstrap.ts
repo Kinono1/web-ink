@@ -4,9 +4,12 @@ import {
   type PageMode,
   type RuntimeHealth,
   type Settings,
+  type PdfTabContext,
 } from "../core/model";
 import { pageKey } from "../core/url";
 import { createPaletteToggle } from "./palette-toggle";
+import { createPaletteMenu, type PaletteAction, type PaletteMenuItem } from "./palette-menu";
+import { getPdfContext } from "../pdf/context";
 import { readPalettePosition } from "./palette-position";
 import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
@@ -85,8 +88,10 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   let busy = true;
   let language: Settings["language"] = DEFAULT_SETTINGS.language;
   let currentUrl = pageKey(location.href);
-  const updateToggle = () =>
+  const updateToggle = () => {
     toggle.update({ enabled, blocked, busy, language });
+    menu.update({ language, items: menuItems() });
+  };
   const raw = async <T>(message: object): Promise<T> => {
     const response = (await chrome.runtime.sendMessage(message)) as
       | RawResult<T>
@@ -220,9 +225,89 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   );
   const toggle = createPaletteToggle(
     view.root,
-    () => { void setEnabled(!enabled); },
-    positionWriter.save,
+    () => menu.toggle(),
+    position => { menu.close(); positionWriter.save(position); },
   );
+  let menuEpoch = 0;
+  let menuContext: PdfTabContext | undefined;
+  let opening = false;
+  const menuItems = (): PaletteMenuItem[] => {
+    const zh = language === "zh-CN";
+    const items: PaletteMenuItem[] = [];
+    if (menuContext?.candidates.length) {
+      for (const candidate of menuContext.candidates) {
+        const filename = new URL(candidate.url).pathname.split("/").pop();
+        items.push({ action: "open-pdf", icon: "pdf", primary: true,
+          label: menuContext.candidates.length === 1
+            ? zh ? "用 Web Ink 标注此 PDF" : "Annotate this PDF in Web Ink"
+            : `${zh ? "打开" : "Open"} ${filename || new URL(candidate.url).hostname}`,
+          candidateUrl: candidate.url });
+      }
+    } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
+      items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
+        label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
+          : enabled ? "Disable annotations on this page" : "Enable annotations on this page" });
+    }
+    items.push(
+      { action: "local-pdf", icon: "pdf", label: zh ? "打开本地 PDF" : "Open local PDF" },
+      { action: "sidebar", icon: "note", label: zh ? "查看本篇标注" : "Page annotations" },
+      { action: "library", icon: "library", label: zh ? "资料库" : "Library" },
+    );
+    return items;
+  };
+  const loadMenu = async () => {
+    const epoch = ++menuEpoch;
+    const url = location.href;
+    menuContext = undefined;
+    menu.update({ items: menuItems(), loading: true, pending: opening, error: "" });
+    try {
+      const context = await request<PdfTabContext>({ type: "pdf.context.get", expectedUrl: url });
+      if (disposed || epoch !== menuEpoch || location.href !== url || !menu.isOpen()) return;
+      menuContext = context;
+      const recovery = context.reason && context.reason !== "not-pdf" && !context.candidates.length;
+      menu.update({ items: menuItems(), loading: false, error: recovery
+        ? language === "zh-CN" ? "无法取得 PDF 来源，请打开已下载的本地文件。" : "PDF source unavailable. Open the downloaded file instead."
+        : "" });
+    } catch (cause) {
+      if (disposed || epoch !== menuEpoch || location.href !== url || !menu.isOpen()) return;
+      menu.update({ loading: false, error: cause instanceof Error ? cause.message : String(cause), items: [
+        { action: "retry", icon: "refresh", label: language === "zh-CN" ? "重试识别" : "Retry detection" }, ...menuItems(),
+      ] });
+    }
+  };
+  const runMenuAction = async (action: PaletteAction, candidateUrl?: string) => {
+    if (disposed || opening) return;
+    if (action === "retry") { void loadMenu(); return; }
+    const url = location.href;
+    const epoch = menuEpoch;
+    if (menuContext?.url && pageKey(menuContext.url) !== pageKey(url)) {
+      void loadMenu(); return;
+    }
+    opening = true;
+    menu.update({ pending: true, error: "" });
+    try {
+      if (action === "open-pdf") {
+        if (window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
+          throw Error(language === "zh-CN" ? "请先保存正在编辑的内容。" : "Save your current edits first.");
+        await request({ type: "pdf.openCurrent", expectedUrl: url, ...(candidateUrl ? { candidateUrl } : {}) });
+      } else if (action === "toggle") {
+        if (!await setEnabled(!enabled)) throw Error(language === "zh-CN" ? "未能切换标注，请重试。" : "Could not change annotations. Try again.");
+      } else {
+        // Send in the click's message turn so Chrome retains sidePanel.open activation.
+        await request({ type: "ui.open", target: action });
+      }
+      if (!disposed && epoch === menuEpoch && location.href === url) menu.close();
+    } catch (cause) {
+      if (!disposed && epoch === menuEpoch && location.href === url)
+        menu.update({ error: cause instanceof Error ? cause.message : String(cause) });
+    } finally {
+      opening = false;
+      if (!disposed) menu.update({ pending: false, items: menuItems() });
+    }
+  };
+  const menu = createPaletteMenu(view.root, toggle.button, open => {
+    if (open) void loadMenu(); else menuEpoch++;
+  }, (action, candidate) => { void runMenuAction(action, candidate); });
   // Read once per content-script lifetime. Other open pages keep their position;
   // settings/theme changes and SPA routes must not restore this preference again.
   void Promise.resolve().then(() => chrome.storage.local.get(PALETTE_POSITION_KEY))
@@ -237,6 +322,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   ) => {
     if (disposed) return false;
     if (message.type === "permissions.revoked") {
+      menu.close();
       permissionEpoch++;
       blocked = true;
       enabled = false;
@@ -279,7 +365,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   };
   const route = () => {
     if (disposed) return;
-    if (pageKey(location.href) !== currentUrl) void refreshMode();
+    if (pageKey(location.href) !== currentUrl) { menu.close(); void refreshMode(); }
   };
   const bootstrap: ContentBootstrap = {
     health,
@@ -301,6 +387,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         // A legacy bridge must not interrupt the palette's cleanup.
       }
       positionWriter.dispose();
+      menu.dispose();
       toggle.dispose();
       view.host.remove();
       if (window.__webInkBootstrap === bootstrap) delete window.__webInkBootstrap;

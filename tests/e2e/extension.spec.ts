@@ -89,6 +89,20 @@ async function enable() {
     .toBe(true);
   await rpc(manager, { type: "permissions.enable" });
 }
+async function selectPageMode(page: Page, enabled: boolean) {
+  await page
+    .getByRole("menuitem", {
+      name: enabled ? "开启本页标注" : "关闭本页标注",
+      exact: true,
+    })
+    .click();
+}
+async function setPageMode(page: Page, enabled: boolean) {
+  const launcher = page.locator(".web-ink-palette-toggle");
+  if ((await launcher.getAttribute("aria-pressed")) === String(enabled)) return;
+  await launcher.click();
+  await selectPageMode(page, enabled);
+}
 async function article(activate = true) {
   const page = await context.newPage();
   await page.goto("http://127.0.0.1:4173/article");
@@ -96,7 +110,7 @@ async function article(activate = true) {
   const toggle = page.locator(".web-ink-palette-toggle");
   await expect(toggle).toBeEnabled();
   if (activate && (await toggle.getAttribute("aria-pressed")) === "false")
-    await toggle.click();
+    await setPageMode(page, true);
   if (activate) await expect(toggle).toHaveAttribute("aria-pressed", "true");
   return page;
 }
@@ -571,7 +585,7 @@ test("SPA URL changes and streaming updates do not trigger cross-page errors", a
     "aria-pressed",
     "false",
   );
-  await page.getByRole("button", { name: "开启本页标注", exact: true }).click();
+  await setPageMode(page, true);
   await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -785,10 +799,12 @@ test('palette dragging saves locally, leaves open pages alone, and survives brow
   await expect.poll(() => palettePoint(reopened)).toEqual(moved);
   await reopened.locator('.web-ink-palette-toggle').focus();
   await reopened.keyboard.press('Enter');
+  await selectPageMode(reopened, true);
   await expect(reopened.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'true');
   await expect(reopened.locator('.web-ink-palette-toggle')).toBeEnabled();
   await reopened.locator('.web-ink-palette-toggle').focus();
   await reopened.keyboard.press('Space');
+  await selectPageMode(reopened, false);
   await expect(reopened.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'false');
 });
 
@@ -807,7 +823,7 @@ test('palette dragging cancels cleanly and clamps safely when the viewport chang
   expect(await palettePoint(page)).toEqual({ left: 12, top: 12 });
   await page.setViewportSize({ width: 320, height: 240 });
   expect(await palettePoint(page)).toEqual({ left: 12, top: 12 });
-  await page.locator('.web-ink-palette-toggle').click();
+  await setPageMode(page, true);
   await expect(page.locator('.web-ink-palette-toggle')).toHaveAttribute('aria-pressed', 'true');
 });
 
@@ -848,7 +864,7 @@ test("palette is quiet by default and remembers the page switch without deleting
   await select();
   await expect(page.locator(".selection")).not.toBeVisible();
   await expect(page.locator(".toast")).not.toBeVisible();
-  await toggle.click();
+  await setPageMode(page, true);
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await selectAndMark(page);
   const stored = await rpc<any[]>(manager, { type: "annotations.list" });
@@ -858,7 +874,7 @@ test("palette is quiet by default and remembers the page switch without deleting
   await expect
     .poll(() => page.evaluate(() => CSS.highlights.size))
     .toBeGreaterThan(0);
-  await toggle.click();
+  await setPageMode(page, false);
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
   await select();
@@ -870,7 +886,7 @@ test("palette is quiet by default and remembers the page switch without deleting
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect(page.locator(".toast")).not.toBeVisible();
   await page.screenshot({ path: "test-results/palette-off.png" });
-  await toggle.click();
+  await setPageMode(page, true);
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await expect
     .poll(() => page.evaluate(() => CSS.highlights.size))
@@ -1098,12 +1114,12 @@ test("existing image marks can be removed directly after reload", async () => {
   await page.reload();
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(1);
   const toggle = page.locator(".web-ink-palette-toggle");
-  await toggle.click();
+  await setPageMode(page, false);
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(0);
   expect((await rpc<any[]>(manager, { type: "annotations.list" })).length).toBe(
     1,
   );
-  await toggle.click();
+  await setPageMode(page, true);
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(1);
   await page
     .locator("#diagram")

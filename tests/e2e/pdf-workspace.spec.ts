@@ -195,6 +195,49 @@ test.afterEach(async ({}, info) => {
   if (folder) await rm(folder, { recursive: true, force: true });
 });
 
+test("floating pen directly opens the current PDF without enabling webpage annotations", async () => {
+  const { original, tabId } = await publicPdfOriginal();
+  const count = context.pages().length;
+  const pen = original.locator('.web-ink-palette-toggle');
+  await expect(pen).toBeEnabled();
+  await pen.click();
+  await expect(original.getByRole('menuitem', { name: '用 Web Ink 标注此 PDF', exact: true })).toBeVisible();
+  await expect(pen).toHaveAttribute('aria-pressed', 'false');
+  await pen.click(); await expect(original.locator('.web-ink-palette-menu')).toBeHidden();
+  await pen.click();
+  await original.getByRole('menuitem', { name: '用 Web Ink 标注此 PDF', exact: true }).click();
+  await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
+  await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
+  expect(context.pages()).toHaveLength(count);
+  expect(await activeTab(original)).toBe(tabId);
+  expect((await rpc<any>(control, { type: 'page.mode.get', pageUrl: source })).enabled).toBe(false);
+  const mark = await highlight(original);
+  await original.reload(); await expect(original.locator(`[data-pdf-annotation="${mark.id}"]`)).toBeVisible();
+  await original.getByRole('button', { name: '返回原阅读器', exact: true }).click();
+  await expect(original).toHaveURL(source);
+  expect(await activeTab(original)).toBe(tabId);
+});
+
+test("floating menu fits a narrow dark page and selects embedded PDF sources explicitly", async () => {
+  const second = 'https://papers.example.test/second.pdf';
+  const original = await htmlPage(wrapper, `<iframe src="${source}"></iframe><object type="application/pdf" data="${second}"></object>`);
+  await activeTab(original);
+  await context.route(second, route => route.fulfill({ contentType: 'application/pdf', body: fixturePdf() }));
+  const settings = await rpc<Settings>(control, { type: 'settings.get' });
+  await rpc(control, { type: 'settings.put', settings: { ...settings, theme: 'dark' } });
+  await original.setViewportSize({ width: 320, height: 360 });
+  const pen = original.locator('.web-ink-palette-toggle'); await expect(pen).toBeEnabled(); await pen.click();
+  await expect(original.getByRole('menuitem', { name: '打开 second.pdf', exact: true })).toBeVisible();
+  const menu = original.locator('.web-ink-palette-menu');
+  const box = (await menu.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(12); expect(box.y).toBeGreaterThanOrEqual(12);
+  expect(box.x + box.width).toBeLessThanOrEqual(308); expect(box.y + box.height).toBeLessThanOrEqual(348);
+  await original.keyboard.press('Escape'); await expect(menu).toBeHidden();
+  await pen.click(); await original.getByRole('menuitem', { name: '打开 second.pdf', exact: true }).click();
+  await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
+  expect(new URL(original.url()).searchParams.get('source')).toBe(second);
+});
+
 test("current PDF API preserves the tab through single-flight same-tab opening and return", async () => {
   const { original, tabId } = await publicPdfOriginal();
   const before = context.pages().length;

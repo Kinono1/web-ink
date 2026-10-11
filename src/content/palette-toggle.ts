@@ -165,7 +165,7 @@ export function createPaletteToggle(
       event.stopImmediatePropagation();
       return;
     }
-    if (!button.disabled && !disposed) onToggle();
+    if (!button.disabled && !disposed) { interacted = true; onToggle(); }
   };
   button.addEventListener("click", click, { signal: events.signal });
   button.addEventListener("pointerdown", down, { signal: events.signal });
