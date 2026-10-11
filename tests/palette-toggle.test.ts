@@ -143,14 +143,15 @@ describe('palette toggle', () => {
     expect(control.button.title).toBe('关闭本页标注');
   });
 
-  it('does not toggle while busy or blocked and localizes normal titles', () => {
+  it('blocks busy input but keeps the launcher available on a paused site', () => {
     const callback = vi.fn(); const control = createPaletteToggle(fixture(), callback);
     controls.push(control);
     control.update({ enabled: false, busy: true, language: 'en' });
     expect(control.button.disabled).toBe(true); expect(control.button.title).toBe('Enable annotations on this page'); control.button.click();
     control.update({ enabled: true, blocked: true, language: 'en' });
-    expect(control.button.title).toBe('This site is paused. Resume it from the side panel.'); control.button.click();
-    expect(callback).not.toHaveBeenCalled();
+    expect(control.button.title).toBe('This site is paused. Resume it from the side panel.');
+    expect(control.button.disabled).toBe(false); control.button.click();
+    expect(callback).toHaveBeenCalledOnce();
   });
 
   it('updates in place and removes both button and style on dispose', () => {

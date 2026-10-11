@@ -43,6 +43,46 @@ it('runs a mouse action without letting an embedded reader steal focus before cl
   expect(f.action).toHaveBeenCalledWith('open-pdf', undefined);
 });
 
+it('keeps a focused common action when PDF detection prepends menu items', () => {
+  const f = fixture(); f.menu.toggle();
+  const sidebar = f.panel.querySelector<HTMLButtonElement>('[data-action=sidebar]')!;
+  sidebar.focus();
+  f.menu.update({ items: [
+    { action: 'retry', label: 'Retry detection', icon: 'refresh' },
+    { action: 'open-pdf', label: 'Annotate this PDF', icon: 'pdf', primary: true },
+    { action: 'sidebar', label: 'Page annotations', icon: 'note' },
+  ] });
+  expect(f.root.activeElement?.getAttribute('data-action')).toBe('sidebar');
+});
+
+it('keeps the focused PDF source when another candidate changes its index', () => {
+  const f = fixture(); f.menu.update({ items: [
+    { action: 'open-pdf', label: 'Alpha.pdf', icon: 'pdf', candidateUrl: 'https://example.test/alpha.pdf' },
+    { action: 'open-pdf', label: 'Beta.pdf', icon: 'pdf', candidateUrl: 'https://example.test/beta.pdf' },
+    { action: 'sidebar', label: 'Page annotations', icon: 'note' },
+  ] }); f.menu.toggle();
+  [...f.panel.querySelectorAll<HTMLButtonElement>('[data-action=open-pdf]')][1]!.focus();
+  f.menu.update({ items: [
+    { action: 'retry', label: 'Retry detection', icon: 'refresh' },
+    { action: 'open-pdf', label: 'Alpha.pdf', icon: 'pdf', candidateUrl: 'https://example.test/alpha.pdf' },
+    { action: 'open-pdf', label: 'Beta.pdf', icon: 'pdf', candidateUrl: 'https://example.test/beta.pdf' },
+    { action: 'sidebar', label: 'Page annotations', icon: 'note' },
+  ] });
+  expect(f.root.activeElement?.textContent).toContain('Beta.pdf');
+  (f.root.activeElement as HTMLButtonElement).click();
+  expect(f.action).toHaveBeenCalledWith('open-pdf', 'https://example.test/beta.pdf');
+});
+
+it('returns focus to the pen when the focused menu action is removed', () => {
+  const f = fixture(); f.menu.toggle();
+  f.panel.querySelector<HTMLButtonElement>('[data-action=sidebar]')!.focus();
+  f.menu.update({ items: [
+    { action: 'retry', label: 'Retry detection', icon: 'refresh' },
+    { action: 'open-pdf', label: 'Annotate this PDF', icon: 'pdf', primary: true },
+  ] });
+  expect(f.root.activeElement).toBe(f.anchor);
+});
+
 it('dismisses on outside input or Escape, keeps inside clicks open and supports arrow focus', () => {
   const f = fixture(); f.menu.toggle();
   f.panel.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, composed: true }));

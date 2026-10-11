@@ -161,7 +161,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         bootstrap.dispose();
         return;
       }
-      // The palette remains visible and disabled until a later permission/mode event.
+      // Keep page annotation off until a later permission/mode refresh.
       enabled = false;
       stopEngine();
     } finally {
@@ -235,12 +235,18 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     const zh = language === "zh-CN";
     const items: PaletteMenuItem[] = [];
     if (menuContext?.candidates.length) {
-      for (const candidate of menuContext.candidates) {
-        const filename = new URL(candidate.url).pathname.split("/").pop();
+      const candidates = menuContext.candidates.map(candidate => {
+        const url = new URL(candidate.url);
+        return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
+      });
+      const nameCounts = new Map<string, number>();
+      for (const { filename } of candidates) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
+      for (const { candidate, filename } of candidates) {
+        const sourceLabel = nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename;
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
             ? zh ? "打开当前 PDF" : "Open current PDF"
-            : `${zh ? "打开" : "Open"} ${filename || new URL(candidate.url).hostname}`,
+            : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
     } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
@@ -279,12 +285,13 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     if (disposed || opening) return;
     if (action === "retry") { void loadMenu(); return; }
     const url = location.href;
-    const epoch = menuEpoch;
+    const epoch = ++menuEpoch;
     if (menuContext?.url && pageKey(menuContext.url) !== pageKey(url)) {
       void loadMenu(); return;
     }
     opening = true;
-    menu.update({ pending: true, error: "" });
+    // Ignore an outstanding context result so it cannot erase this action's error.
+    menu.update({ pending: true, loading: false, error: "" });
     try {
       if (action === "open-pdf") {
         if (window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))

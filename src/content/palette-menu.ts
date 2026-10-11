@@ -117,6 +117,7 @@ export function createPaletteMenu(
     if (disposed) return;
     const focused = root.activeElement as HTMLButtonElement | null;
     const activeIndex = [...panel.querySelectorAll('button')].indexOf(focused!);
+    const focusedItem = activeIndex >= 0 ? state.items[activeIndex] : undefined;
     state = { ...state, ...next };
     const label = state.language === 'zh-CN' ? '打开 Web Ink 菜单' : 'Open Web Ink menu';
     anchor.title = label; anchor.setAttribute('aria-label', label);
@@ -149,7 +150,13 @@ export function createPaletteMenu(
     }
     if (!panel.hidden) {
       position();
-      if (activeIndex >= 0) panel.querySelectorAll<HTMLButtonElement>('button')[activeIndex]?.focus();
+      if (focusedItem) {
+        const nextIndex = state.items.findIndex(item =>
+          item.action === focusedItem.action && item.candidateUrl === focusedItem.candidateUrl,
+        );
+        if (nextIndex >= 0) panel.querySelectorAll<HTMLButtonElement>('button')[nextIndex]?.focus();
+        else anchor.focus();
+      }
     }
   };
   update({});

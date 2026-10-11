@@ -187,7 +187,7 @@ export function createPaletteToggle(
     const blocked = state.blocked === true;
     const busy = state.busy === true;
     const enabled = state.enabled;
-    if (busy || blocked) cancel();
+    if (busy) cancel();
     const normal =
       state.language === "zh-CN"
         ? enabled
@@ -200,7 +200,8 @@ export function createPaletteToggle(
     button.dataset.blocked = String(blocked);
     button.setAttribute("aria-pressed", String(enabled));
     button.setAttribute("aria-busy", String(busy));
-    button.disabled = busy || blocked;
+    // Pausing annotations must leave the launcher available to open its side panel.
+    button.disabled = busy;
     const label = blocked
       ? state.language === "zh-CN"
         ? "此网站已暂停，请从侧栏恢复"
