@@ -2,11 +2,13 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   PDFPageProxy,
   RenderTask,
+  TextItem,
 } from "pdfjs-dist/types/src/display/api";
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { Language, PdfRect } from "../core/model";
 import type { PdfSearchMatch } from "./search";
 import { fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
+import { alignPdfTextFonts } from "./text-fonts";
 import {
   errorText,
   type OpenDocument,
@@ -141,8 +143,15 @@ export function PdfPage({
         await render.promise;
         render = undefined;
         if (dead) return;
+        const textItems: TextItem[] = [];
+        const textSource = page.streamTextContent().pipeThrough(new TransformStream({
+          transform(chunk, controller) {
+            for (const item of chunk.items) if ("str" in item) textItems.push(item);
+            controller.enqueue(chunk);
+          },
+        }));
         layer = new opened.api.TextLayer({
-          textContentSource: page.streamTextContent(),
+          textContentSource: textSource,
           container: stagedText,
           viewport,
         });
@@ -150,6 +159,7 @@ export function PdfPage({
         const finishedLayer = layer;
         layer = undefined;
         if (dead || !pageRoot.isConnected) return;
+        alignPdfTextFonts(page, finishedLayer, textItems, viewport.scale);
 
         // Keep React's canvas node, then commit the finished image, text and
         // viewport in one task so the browser never paints an empty zoom frame.

@@ -3,7 +3,7 @@ import { openPdfTab } from '../src/ui/management/openPdf';
 afterEach(() => vi.unstubAllGlobals());
 const base = 'chrome-extension://webink/pdf.html';
 function browser(tabs: {id: number; url: string; windowId?: number}[]) {
-  const create = vi.fn(async () => ({})), update = vi.fn(async () => ({})), focus = vi.fn(async () => ({}));
+  const create = vi.fn(async () => ({ id: 9 })), update = vi.fn(async () => ({})), focus = vi.fn(async () => ({}));
   vi.stubGlobal('chrome', { runtime: { getContexts: async () => tabs.map(t => ({ tabId: t.id, documentUrl: t.url, windowId: t.windowId })) }, tabs: { query: async () => tabs, create, update }, windows: { update: focus } });
   return { create, update, focus };
 }

@@ -102,6 +102,58 @@ async function mount(mode: "sidepanel" | "library") {
 }
 
 describe("management UI", () => {
+  it("Open PDF uses a learned DOI for a legacy IEEE record and carries its recovery target", async () => {
+    const hash = "a".repeat(64);
+    const pdf: Annotation = { ...record, id: "legacy-ieee", kind: "pdf-text", pageUrl: `urn:web-ink:pdf:${hash}`,
+      pageTitle: "IEEE-11643626.pdf", target: { documentHash: hash, fileName: "IEEE-11643626.pdf",
+        sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626&ticket=expired",
+        pageNumber: 3, rects: [{ x: .1, y: .2, width: .3, height: .1 }], exact: "priors", prefix: "", suffix: "" } };
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [pdf] } };
+      return { ok: true, data: true };
+    });
+    const preferences = { [`ui.pdfPaperIdentity.${hash}`]: { doi: "10.1109/TII.2026.3716639",
+      paperUrl: "https://ieeexplore.ieee.org/document/11643626" } };
+    const sessionValues: Record<string, unknown> = {};
+    Object.assign(chrome, { storage: { local: { get: async () => preferences }, session: {
+      set: async (entries: Record<string, unknown>) => Object.assign(sessionValues, entries),
+    } } });
+    Object.assign(chrome.runtime, { getContexts: async () => [] });
+    const host = await mount("library");
+    await act(async () => (host.querySelector(".annotation-row") as HTMLButtonElement).click());
+    await act(async () => {
+      [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")].find(button => button.textContent === "打开 PDF")!.click();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    });
+    expect(chrome.tabs.create).toHaveBeenCalledWith({ url: "https://doi.org/10.1109/TII.2026.3716639" });
+    expect(sessionValues["pdf.paperReopen.9"]).toEqual(expect.objectContaining({ documentHash: hash, pageNumber: 3 }));
+    expect(pdf.target.sourceUrl).toContain("ticket=expired");
+  });
+  it("opens the previous PDF version's records as a scoped library and allows returning to all records", async () => {
+    const originalUrl = location.href;
+    history.replaceState(null, "", `/library.html?document=${"a".repeat(64)}`);
+    try {
+      const queries: Array<{ pageUrl?: string }> = [];
+      installChrome(message => {
+        if (message.type === "settings.get") return { ok: true, data: settings };
+        if (message.type === "annotations.query") {
+          queries.push(message.query as { pageUrl?: string });
+          return { ok: true, data: { items: [] } };
+        }
+        return { ok: true, data: true };
+      });
+      const host = await mount("library");
+      expect(queries.at(-1)?.pageUrl).toBe(`urn:web-ink:pdf:${"a".repeat(64)}`);
+      expect(host.textContent).toContain("之前版本的标注");
+      await act(async () => {
+        [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "查看全部")!.click();
+        await new Promise(resolve => setTimeout(resolve, 30));
+      });
+      expect(queries.at(-1)?.pageUrl).toBeUndefined();
+      expect(host.textContent).not.toContain("之前版本的标注");
+    } finally { history.replaceState(null, "", originalUrl); }
+  });
   it("finishes management listener cleanup when Reload invalidates Chrome events", async () => {
     installChrome((message) => {
       if (message.type === "settings.get") return { ok: true, data: settings };

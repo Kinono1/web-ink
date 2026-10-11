@@ -3,6 +3,7 @@ import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DEFAULT_SETTINGS, type Annotation, type PdfHandoff, type Request } from "../src/core/model";
 import type { PdfReadingPosition } from "../src/pdf/reading-position";
+import { rememberPdfPaperReopen } from "../src/pdf/paper-reopen";
 
 const io = vi.hoisted(() => ({
   hash: "a".repeat(64),
@@ -15,6 +16,9 @@ const io = vi.hoisted(() => ({
   rejectOversizedImage: false,
   renderGates: {} as Record<number, Promise<unknown> | undefined>,
   parseGate: undefined as Promise<unknown> | undefined,
+  metadataTitle: "",
+  metadataDoi: "",
+  metadataFailure: false,
 }));
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
@@ -45,6 +49,12 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
       destroy: async () => undefined,
       promise: (io.parseGate ?? Promise.resolve()).then(() => ({
         numPages: io.pageCount,
+        getMetadata: async () => {
+          if (io.metadataFailure) throw Error("metadata unavailable");
+          return { info: { Title: io.metadataTitle }, metadata: {
+            get: (name: string) => name === "dc:title" ? io.metadataTitle : name === "prism:doi" ? io.metadataDoi : null,
+          } };
+        },
         getPage: async (number: number) => {
           io.pagesRead.push(number);
           const width = 600;
@@ -140,6 +150,9 @@ beforeEach(() => {
   io.rejectOversizedImage = false;
   io.renderGates = {};
   io.parseGate = undefined;
+  io.metadataTitle = "";
+  io.metadataDoi = "";
+  io.metadataFailure = false;
   records = [];
   messages = [];
   writes = [];
@@ -178,6 +191,7 @@ beforeEach(() => {
   ] });
   Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => ({ left: 100, top: 180, right: 240, bottom: 200, width: 140, height: 20 }) });
   vi.stubGlobal("chrome", {
+    tabs: { getCurrent: async () => ({ id: 8 }) },
     permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true) },
     storage: { local: {
       get: async (key: string) => { readKeys.push(key); return readGate ? readGate.promise : { [key]: storedPosition }; },
@@ -207,6 +221,12 @@ beforeEach(() => {
       },
     },
   });
+  const sessionValues: Record<string, unknown> = {};
+  Object.assign(chrome.storage, { session: {
+    get: async (keys: string[]) => Object.fromEntries(keys.map(key => [key, sessionValues[key]])),
+    set: async (entries: Record<string, unknown>) => Object.assign(sessionValues, entries),
+    remove: async (key: string) => { delete sessionValues[key]; },
+  } });
 });
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -385,6 +405,29 @@ async function selectPage(number = 1) {
   await settle();
 }
 function puts() { return messages.filter((message) => message.type === "annotations.put"); }
+it("uses PDF metadata for the reader and new annotations without renaming old records", async () => {
+  io.metadataTitle = "A scientific paper";
+  io.metadataDoi = "10.1109/TII.2026.3716639";
+  records = [baseRecord()];
+  await mount();
+  const display = "A scientific paper — DOI: 10.1109/TII.2026.3716639";
+  expect(host.querySelector(".pdf-name")?.textContent).toBe(display);
+  await selectPage();
+  await click("高亮 #facd5a");
+  const write = puts().at(-1)!;
+  if (write.type !== "annotations.put") throw Error("Missing annotation write");
+  expect(write.annotation.pageTitle).toBe(display);
+  if (write.annotation.kind !== "pdf-text") throw Error("Not a text annotation");
+  expect(write.annotation.target.fileName).toBe(display);
+  expect(records.find(record => record.id === "saved-highlight")?.pageTitle).toBe("fixture.pdf");
+});
+it("keeps a PDF usable when reading its metadata fails", async () => {
+  io.metadataFailure = true;
+  await mount();
+  expect(host.querySelector(".pdf-name")?.textContent).toBe("fixture.pdf");
+  await selectPage();
+  expect(host.querySelector(".pdf-selection")).not.toBeNull();
+});
 function unloadBlocked() {
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);
@@ -409,6 +452,44 @@ function runtimeListeners() {
 }
 
 describe("PDF reader workspace", () => {
+  it("saves the explicit metadata DOI as the source for new signed-in IEEE annotations", async () => {
+    io.metadataDoi = "10.1109/TII.2026.3716639";
+    handoff = { token: TOKEN, tabId: 8, returnUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626",
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    await selectPage();
+    await click("高亮 #facd5a");
+    const saved = puts()[0]?.annotation;
+    expect(saved?.kind === "pdf-text" && saved.target.sourceUrl).toBe("https://doi.org/10.1109/TII.2026.3716639");
+  });
+  it("restores the selected legacy record page after a fresh IEEE login handoff", async () => {
+    const original = baseRecord();
+    const saved = { ...original, target: { ...original.target, pageNumber: 3,
+      sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626" } };
+    records = [saved];
+    await rememberPdfPaperReopen(saved.target, undefined, 8);
+    handoff = { token: TOKEN, tabId: 8, returnUrl: saved.target.sourceUrl,
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="页码"]')?.value).toBe("3");
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).not.toBeNull();
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("offers previous annotations without overlaying them on a changed IEEE download", async () => {
+    const original = baseRecord();
+    const saved = { ...original, target: { ...original.target,
+      sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626" } };
+    await rememberPdfPaperReopen(saved.target, undefined, 8);
+    io.hash = "b".repeat(64);
+    handoff = { token: TOKEN, tabId: 8, returnUrl: saved.target.sourceUrl,
+      accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 60000 };
+    await mount(`?handoff=${TOKEN}`, false);
+    expect(host.textContent).toContain("旧标注已保留");
+    expect([...host.querySelectorAll("button")].some(button => button.textContent === "查看之前的标注")).toBe(true);
+    expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
+    expect(puts()).toHaveLength(0);
+  });
   it("refreshes the early annotation snapshot after subscribing to the parsed document", async () => {
     const listeners = runtimeListeners();
     const parsing = deferred<unknown>();

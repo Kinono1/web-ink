@@ -6,6 +6,8 @@ export type PdfFixtureOptions = {
   oversizedImage?: boolean;
   /** Per-page MediaBox dimensions; omitted entries retain the default letter page. */
   pageSizes?: Array<{ width: number; height: number }>;
+  font?: "Helvetica" | "Helvetica-Bold";
+  metadata?: { title: string; doi: string };
 };
 export function fixturePdf(
   pages = 1,
@@ -25,7 +27,7 @@ export function fixturePdf(
     objects.push(
       "<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>",
     );
-  } else objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  } else objects.push(`<< /Type /Font /Subtype /Type1 /BaseFont /${options.font || "Helvetica"} >>`);
   const encoded = (value: string) =>
     unicode
       ? `<${Array.from(value, (c) => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}>`
@@ -49,6 +51,12 @@ export function fixturePdf(
     );
   }
   objects[1] = `<< /Type /Pages /Count ${pages} /Kids [${kids.map((n) => `${n} 0 R`).join(" ")}] >>`;
+  if (options.metadata) {
+    const xmlText = (value: string) => value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const xml = `<?xpacket begin="\uFEFF" id="W5M0MpCehiHzreSzNTczkc9d"?><x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:prism="http://prismstandard.org/namespaces/basic/2.0/"><dc:title><rdf:Alt><rdf:li xml:lang="x-default">${xmlText(options.metadata.title)}</rdf:li></rdf:Alt></dc:title><prism:doi>${xmlText(options.metadata.doi)}</prism:doi></rdf:Description></rdf:RDF></x:xmpmeta><?xpacket end="w"?>`;
+    const metadataId = objects.push(`<< /Type /Metadata /Subtype /XML /Length ${Buffer.byteLength(xml)} >>\nstream\n${xml}\nendstream`);
+    objects[0] = `<< /Type /Catalog /Pages 2 0 R /Metadata ${metadataId} 0 R >>`;
+  }
   let output = "%PDF-1.7\n";
   const offsets = [0];
   for (let i = 0; i < objects.length; i++) {
