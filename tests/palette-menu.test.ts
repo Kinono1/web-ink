@@ -83,6 +83,31 @@ it('returns focus to the pen when the focused menu action is removed', () => {
   expect(f.root.activeElement).toBe(f.anchor);
 });
 
+it('restores the focused action after pending menu updates complete', () => {
+  const f = fixture(); f.menu.update({ items: [
+    { action: 'library', label: 'Library', icon: 'library' },
+    { action: 'sidebar', label: 'Page annotations', icon: 'note' },
+  ] }); f.menu.toggle();
+  f.panel.querySelector<HTMLButtonElement>('[data-action=library]')!.focus();
+  f.menu.update({ pending: true });
+  f.menu.update({ error: 'Open failed.' });
+  f.menu.update({ pending: false });
+  expect(f.root.activeElement?.getAttribute('data-action')).toBe('library');
+  (f.root.activeElement as HTMLButtonElement).click();
+  expect(f.action).toHaveBeenCalledWith('library', undefined);
+});
+
+it('does not restore pending menu focus after the menu closes', () => {
+  const f = fixture(); f.menu.toggle();
+  f.panel.querySelector<HTMLButtonElement>('[data-action=sidebar]')!.focus();
+  f.menu.update({ pending: true });
+  f.menu.close();
+  const outside = document.createElement('button'); document.body.append(outside); outside.focus();
+  f.menu.update({ error: 'Open failed.' });
+  f.menu.update({ pending: false });
+  expect(document.activeElement).toBe(outside);
+});
+
 it('dismisses on outside input or Escape, keeps inside clicks open and supports arrow focus', () => {
   const f = fixture(); f.menu.toggle();
   f.panel.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, composed: true }));
