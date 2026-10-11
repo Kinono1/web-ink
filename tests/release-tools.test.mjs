@@ -20,6 +20,31 @@ const sourceName = '.build-output/chrome-mv3';
 const targetName = '.output/chrome-mv3';
 const receiptName = '.local-install/receipt.json';
 
+test('generated license notices use LF and remain stable across repeated builds', async t => {
+  const repo = fileURLToPath(new URL('..', import.meta.url));
+  const folder = await mkdtemp(path.join(tmpdir(), 'web-ink-license-lines-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  await symlink(path.join(repo, 'node_modules'), path.join(folder, 'node_modules'), 'dir');
+  await cp(path.join(repo, 'scripts/vendor-licenses'), path.join(folder, 'scripts/vendor-licenses'), { recursive: true });
+  const ownLicense = await readFile(path.join(repo, 'LICENSE'), 'utf8');
+  await writeFile(path.join(folder, 'LICENSE'), ownLicense.replace(/\r?\n/g, '\r\n'));
+  const reference = path.join(folder, 'scripts/vendor-licenses/WXT-MIT.txt');
+  await writeFile(reference, (await readFile(reference, 'utf8')).replace(/\r?\n/g, '\r\n'));
+  const generate = () => {
+    const result = spawnSync(process.execPath, [path.join(repo, 'scripts/licenses.mjs')], { cwd: folder, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  generate();
+  const noticePath = path.join(folder, 'public/licenses/THIRD_PARTY_LICENSES.txt');
+  const notices = await readFile(noticePath, 'utf8');
+  assert.doesNotMatch(notices, /\r/);
+  assert.equal(await readFile(path.join(folder, 'public/licenses/WEB_INK_LICENSE.txt'), 'utf8'), ownLicense);
+  assert.match(notices, /pdf-lib 1\.17\.1/);
+  assert.match(notices, /lib\/zlib \(Zlib\)/);
+  generate();
+  assert.equal(await readFile(noticePath, 'utf8'), notices);
+});
+
 function manifest(version) {
   return {
     ...identity,
