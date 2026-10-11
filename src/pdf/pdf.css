@@ -159,6 +159,12 @@
 .pdf-page .textLayer {
   z-index: 2;
 }
+.pdf-native-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+}
 .pdf-marks {
   position: absolute;
   inset: 0;

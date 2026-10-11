@@ -9,6 +9,7 @@ The exact bundled set is generated during packaging. The release ZIP contains fu
 | Dexie | 4.4.6 | Apache-2.0 | IndexedDB storage |
 | perfect-freehand | 1.2.3 | MIT | Freehand stroke rendering |
 | PDF.js / `pdfjs-dist` | 6.3.289 | Apache-2.0 for the PDF.js library | PDF rendering and text extraction |
+| pdf-lib | 1.17.1 | MIT | On-demand standard PDF annotation export |
 
 ## PDF.js packaged resources
 

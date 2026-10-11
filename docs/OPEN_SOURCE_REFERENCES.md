@@ -225,3 +225,41 @@ requires review when upgrading PDF.js. The distributed PDF.js Apache-2.0
 license remains included. Resource budgets are unchanged. Tests use an original
 synthetic oversized image declaration and a healthy follow-up file, with actual
 PDF.js operator-list and browser rendering coverage.
+
+## Editable native PDF annotation export (pdf-lib 1.17.1)
+
+The writer pins npm `pdf-lib` to **1.17.1**, corresponding to upstream tag
+[`v1.17.1`](https://github.com/Hopding/pdf-lib/tree/v1.17.1). The initial contract
+was exercised in the ignored `.local-install/probe` installation before adding
+the runtime dependency. The dependency is loaded only inside the export worker;
+the reader and independent PDF.js verifier do not import it.
+
+| Examined source at v1.17.1 | Input and output | Adopted boundary |
+| --- | --- | --- |
+| [`PDFDocument.load/save`](https://github.com/Hopding/pdf-lib/blob/v1.17.1/src/api/PDFDocument.ts#L126-L150) | Original bytes to parsed context; context to new PDF bytes | `updateMetadata:false`, `throwOnInvalidObject:true`, default encrypted-input rejection; `updateFieldAppearances:false` and `addDefaultPage:false` when saving. No parser or serializer is copied. |
+| [`PDFContext.obj/register/formXObject`](https://github.com/Hopding/pdf-lib/blob/v1.17.1/src/core/PDFContext.ts#L197-L258) | Typed PDF objects and graphics operators to indirect dictionaries and Form XObjects | New standard Highlight/Square dictionaries and local appearance resources; numeric geometry uses the unrotated CropBox/MediaBox intersection. `obj()` strings denote names, so textual values explicitly use PDF string classes. |
+| [`PDFPageLeaf.addAnnot`](https://github.com/Hopding/pdf-lib/blob/v1.17.1/src/core/structures/PDFPageLeaf.ts#L135-L138) | Annotation reference to `/Annots` entry | Reviewed but not called: `normalizedEntries()` also normalizes existing Contents/Resources. The adapter instead appends via `PDFArray.push`, creating `/Annots` only when absent. |
+| [`PDFHexString.fromText`](https://github.com/Hopding/pdf-lib/blob/v1.17.1/src/core/objects/PDFHexString.ts#L17-L26) | Unicode text to UTF-16 PDF hex string | Contents, NM and Subj are data strings, including emoji/newlines. Dates use ASCII `PDFString` values so PDF.js can parse the date syntax. |
+
+New highlights build rectangle subpaths and paint them in **one nonzero-winding
+fill** with Multiply and alpha 0.42. This prevents fragments within one saved
+annotation from darkening overlapping regions. Squares have no fill and a 2-point
+opaque border. Annotation creation/modification dates come from the saved record.
+The first trailer `/ID` is retained; a fresh second revision ID makes even an
+empty-snapshot export a distinct file. Existing page streams, native dictionaries,
+custom appearance streams, Popup and reply links are not intentionally rewritten.
+
+`tests/pdf-export*.test.ts` checks independent PDF.js annotation readback,
+original semantic fingerprints/relationships, custom AP stream preservation,
+CropBox/rotation/mixed sizes, exact palette RGB, Unicode contents, overlapping
+paths, capability rejection, snapshots and worker ownership. Runtime
+`verifyPdfExport` reads both documents with PDF.js and checks semantic annotations
+and AP presence/metadata before download. It does not prove arbitrary appearance
+pixel equivalence or byte-preserving rewrites. Synthetic and real-reader visual
+acceptance remain separately recorded in the task evidence.
+
+The package is [MIT licensed](https://github.com/Hopding/pdf-lib/blob/v1.17.1/LICENSE.md).
+`scripts/licenses.mjs` includes the installed license texts for pdf-lib and its
+locked runtime dependencies: `@pdf-lib/standard-fonts` 1.0.0 (MIT),
+`@pdf-lib/upng` 1.0.1 (MIT), `pako` 1.0.11 (MIT AND Zlib), and `tslib` 1.14.1
+(0BSD). Verify those notices in the actual release artifact after bundling.

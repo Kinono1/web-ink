@@ -13,4 +13,8 @@ for (const directory of ["cmaps", "standard_fonts", "wasm", "iccs"]) {
     recursive: true,
   });
 }
+await mkdir(`${destination}/images`);
+for (const name of ["note", "comment", "key", "help", "newparagraph", "paragraph", "insert"]) {
+  await copyFile(`${source}/web/images/annotation-${name}.svg`, `${destination}/images/annotation-${name}.svg`);
+}
 await copyFile(`${source}/LICENSE`, `${destination}/LICENSE`);

@@ -243,6 +243,20 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     };
   }, [closeMore, moreOpen]);
   useEffect(() => {
+    const activated = () => {
+      if (mode === "sidepanel") void refreshContext();
+    };
+    const updated = (_id: number, change: { url?: string }) => {
+      if (mode === "sidepanel" && change.url) void refreshContext();
+    };
+    chrome.tabs.onActivated.addListener(activated);
+    chrome.tabs.onUpdated.addListener(updated);
+    return () => {
+      releaseChromeListener(() => chrome.tabs.onActivated.removeListener(activated));
+      releaseChromeListener(() => chrome.tabs.onUpdated.removeListener(updated));
+    };
+  }, [mode, refreshContext]);
+  useEffect(() => {
     const listener = (message: NoticeMessage) => {
       if (message.type === "pdf.reader.changed" && mode === "sidepanel") {
         void refreshContext();
@@ -303,18 +317,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       void loadRecords();
     };
     chrome.runtime.onMessage.addListener(listener);
-    const activated = () => {
-      if (mode === "sidepanel") void refreshContext();
-    };
-    const updated = (_id: number, change: { url?: string }) => {
-      if (mode === "sidepanel" && change.url) void refreshContext();
-    };
-    chrome.tabs.onActivated.addListener(activated);
-    chrome.tabs.onUpdated.addListener(updated);
     return () => {
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
-      releaseChromeListener(() => chrome.tabs.onActivated.removeListener(activated));
-      releaseChromeListener(() => chrome.tabs.onUpdated.removeListener(updated));
     };
   }, [
     color,

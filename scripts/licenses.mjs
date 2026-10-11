@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-const packages = ['react', 'react-dom', 'scheduler', 'dexie', 'perfect-freehand', 'pdfjs-dist', 'wxt', '@wxt-dev/browser'];
+const packages = ['react', 'react-dom', 'scheduler', 'dexie', 'perfect-freehand', 'pdfjs-dist', 'pdf-lib', '@pdf-lib/standard-fonts', '@pdf-lib/upng', 'pako', 'tslib', 'wxt', '@wxt-dev/browser'];
 const sections = [];
 for (const name of packages) {
   const folder = path.join('node_modules', name);
@@ -14,6 +14,13 @@ for (const name of packages) {
   if (!license && (name === 'wxt' || name.startsWith('@wxt-dev/'))) license = await readFile('scripts/vendor-licenses/WXT-MIT.txt', 'utf8');
   if (!license) throw new Error(`License text missing for ${name}`);
   sections.push(`${name} ${pkg.version}\n${'='.repeat(64)}\n${license.trim()}\n`);
+  if (name === 'pako') {
+    // Pako's top-level LICENSE covers MIT files; lib/zlib has a separate notice.
+    const source = await readFile(path.join(folder, 'lib/zlib/deflate.js'), 'utf8');
+    const zlibNotice = source.match(/^\/\/ \(C\) [\s\S]*?^\/\/ 3\. This notice may not be removed or altered from any source distribution\.$/m)?.[0];
+    if (!zlibNotice) throw new Error('Pako Zlib notice is missing or changed');
+    sections.push(`pako ${pkg.version} lib/zlib (Zlib)\n${'='.repeat(64)}\n${zlibNotice}\n`);
+  }
   try { sections.push(await readFile(path.join(folder, 'NOTICE'), 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 }
 // Preserve the notices for the examined selection/navigation/sidebar contracts.

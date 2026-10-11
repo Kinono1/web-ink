@@ -169,6 +169,72 @@ afterEach(async () => {
 });
 
 describe("PDF sidebar", () => {
+  it("filters original annotations in the same sidebar and exposes only a scoped focus command", async () => {
+    const host = await mount();
+    const port = ports[0]!;
+    const key = `${HASH_A}:2:10R`;
+    const native = { key, documentHash: HASH_A, pageNumber: 2, id: "10R", subtype: "Text", contents: "Original note <script>inert</script>",
+      author: "Preview author", replies: [{ id: "11R", subtype: "Text", contents: "A reply" }] };
+    await sendState(port, state({ nativeFilter: "all", nativeRecords: [native], nativeLoading: true, nativeProgress: { completed: 2, total: 10 } }));
+
+    const original = host.querySelector(`[data-native-annotation="${key}"]`);
+    expect(original?.textContent).toContain("原文件·只读");
+    expect(original?.textContent).toContain("Original note <script>inert</script>");
+    expect(original?.textContent).toContain("A reply");
+    expect(original?.textContent).toContain("原文件笔记");
+    expect(original?.textContent).toContain("日期未知");
+    expect(original?.querySelector("script, textarea, input")).toBeNull();
+    expect([...original!.querySelectorAll("button")].some((button) => /编辑|删除|移除/.test(button.textContent ?? ""))).toBe(false);
+    expect(host.querySelector('[data-pdf-note="pdf-note-a"]')).toBeTruthy();
+    await act(async () => original!.querySelector<HTMLButtonElement>("button")!.click());
+    expect(lastCommand(port).command).toEqual({ type: "focus-native", key });
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "原文件")!.click());
+    expect(lastCommand(port).command).toEqual({ type: "filter", filter: "original" });
+    await sendState(port, state({ nativeFilter: "original", nativeRecords: [native] }));
+    expect(host.querySelector('[data-pdf-note="pdf-note-a"]')).toBeNull();
+    expect(host.querySelector(`[data-native-annotation="${key}"]`)).toBeTruthy();
+  });
+
+  it("keeps original scan failures visible and sends cancellation without a write command", async () => {
+    const host = await mount();
+    const port = ports[0]!;
+    await sendState(port, state({ nativeFilter: "original", nativeRecords: [], nativeLoading: true,
+      nativeProgress: { completed: 8, total: 100 }, nativeError: "Original annotations unavailable" }));
+    expect(host.textContent).toContain("8 / 100");
+    expect(host.textContent).toContain("Original annotations unavailable");
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "取消读取")!.click());
+    expect(lastCommand(port).command).toEqual({ type: "cancel-native" });
+  });
+
+  it("shows the original count read so far and pages original cards without a second panel", async () => {
+    const host = await mount();
+    const port = ports[0]!;
+    const nativeRecords = Array.from({ length: 5 }, (_, i) => ({ key: `${HASH_A}:2:${i}R`, documentHash: HASH_A,
+      pageNumber: 2, id: `${i}R`, subtype: "Text", contents: `Original ${i}` }));
+    await sendState(port, state({ records: [], totalCount: 0, nativeFilter: "original", nativeRecords,
+      nativeTotalCount: 5, nativeOffset: 0, nativeLimit: 50, nativePageEnd: 5, nativeProgress: { completed: 2, total: 10 } }));
+    expect(host.querySelector(".pdf-sidebar-context span")?.textContent).toContain("原文件标注 5");
+    expect(host.querySelector(".pdf-sidebar-context span")?.textContent).toContain("已读取");
+    await sendState(port, state({ nativeFilter: "original", nativeRecords, nativeTotalCount: 60,
+      nativeOffset: 0, nativeLimit: 50, nativePageEnd: 5 }));
+    await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent === "下一页原文件标注")!.click());
+    expect(lastCommand(port).command).toEqual({ type: "more-native" });
+  });
+
+  it.each([
+    ["Highlight", "高亮"], ["Underline", "下划线"], ["StrikeOut", "删除线"],
+    ["Square", "矩形"], ["Text", "便签"], ["Ink", "手写标注"],
+  ])("uses an ordinary localized label for %s with a single read-only badge", async (subtype, label) => {
+    const host = await mount();
+    const key = `${HASH_A}:2:10R`;
+    await sendState(ports[0]!, state({ nativeFilter: "original", nativeRecords: [{ key, documentHash: HASH_A,
+      pageNumber: 2, id: "10R", subtype, contents: "Original note" }] }));
+    const note = host.querySelector(`[data-native-annotation="${key}"]`)!;
+    expect(note.querySelector("strong")?.textContent).toContain(label);
+    expect(note.textContent).not.toContain(subtype);
+    expect(note.textContent?.match(/只读/g)).toHaveLength(1);
+  });
+
   it("renders the current reader document notes through the sidebar port", async () => {
     const host = await mount();
     const port = ports[0]!;

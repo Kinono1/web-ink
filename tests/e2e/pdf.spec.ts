@@ -9,6 +9,7 @@ import { cp, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fixturePdf } from "../pdf-fixture";
+import { createNativePdfFixture, NATIVE_FIXTURE_NOTES } from "../pdf-native-fixture";
 let context: BrowserContext, folder: string, page: Page, control: Page, id: string;
 const rpc = async (message: object) =>
   page.evaluate(async (message) => {
@@ -107,6 +108,82 @@ async function viewAction(name: "旋转页面" | "适合宽度") {
   if (await toolbarAction.isVisible()) await toolbarAction.click();
   else await moreAction(name);
 }
+test("original PDF notes stay read-only and new notes travel in one exported PDF", async () => {
+  const original = Buffer.from(await createNativePdfFixture());
+  await open(original, "original-notes.pdf");
+  const originalAppearancePixel = async () => page.locator(".pdf-page canvas").first().evaluate((element) => {
+    const canvas = element as HTMLCanvasElement;
+    const context = canvas.getContext("2d")!;
+    // A paper-only point inside the fixture's custom green AP: native PDF
+    // coordinates (80,647), CropBox [20,30,580,770], zoom 100%.
+    const scale = canvas.width / 560;
+    return Array.from(context.getImageData(Math.round(60 * scale), Math.round(123 * scale), 1, 1).data);
+  });
+  const originalPixel = await originalAppearancePixel();
+  expect(originalPixel[1]).toBeGreaterThan(originalPixel[0]!);
+  await openPdfSidebar();
+  await control.getByRole("button", { name: "原文件", exact: true }).click();
+  const nativeCards = control.locator("[data-native-annotation]");
+  await expect(nativeCards).toHaveCount(3);
+  await expect(control.locator(".pdf-sidebar")).toContainText(NATIVE_FIXTURE_NOTES.text);
+  await expect(control.locator(".pdf-sidebar")).toContainText(NATIVE_FIXTURE_NOTES.reply);
+  await expect(nativeCards.getByRole("button", { name: /^(编辑|取消标注)$/ })).toHaveCount(0);
+  expect(await rpc({ type: "annotations.list" })).toEqual([]);
+  await control.getByRole("button", { name: "Web Ink", exact: true }).click();
+  await page.locator(".textLayer span").first().evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  await control.locator(".pdf-note").getByRole("button", { name: "编辑", exact: true }).click();
+  const note = "新增中文笔记 🙂\nKeep the original annotations.";
+  await control.getByLabel("笔记", { exact: true }).fill(note);
+  await control.getByRole("button", { name: "保存", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" }))[0]?.note).toBe(note);
+  const saved = await rpc({ type: "annotations.list" });
+  const downloads: Buffer[] = [];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const downloaded = page.waitForEvent("download");
+    await moreAction("导出带标注的 PDF…");
+    const download = await downloaded;
+    expect(download.suggestedFilename()).toBe("original-notes-annotated.pdf");
+    downloads.push(await readFile((await download.path())!));
+  }
+  expect(await rpc({ type: "annotations.list" })).toEqual(saved);
+  await open(downloads[1]!, "shared.pdf");
+  await openPdfSidebar();
+  await control.getByRole("button", { name: "原文件", exact: true }).click();
+  await expect(control.locator("[data-native-annotation]")).toHaveCount(4);
+  await expect(control.locator(".pdf-sidebar")).toContainText(note);
+  await expect(control.locator(".pdf-sidebar")).toContainText(NATIVE_FIXTURE_NOTES.highlight);
+  expect(await originalAppearancePixel()).toEqual(originalPixel);
+  await expect(page.locator("[data-pdf-annotation]")).toHaveCount(0);
+  expect(await rpc({ type: "annotations.list" })).toEqual(saved);
+  // H1 is independent; the source buffer remains byte-identical after export.
+  expect(original).toEqual(Buffer.from(await createNativePdfFixture()));
+});
+
+test("current-file AI notes include original provenance without becoming a backup", async () => {
+  await open(Buffer.from(await createNativePdfFixture(12)), "native-ai-notes.pdf");
+  await openPdfSidebar();
+  const downloaded = page.waitForEvent("download");
+  await moreAction("导出给 AI");
+  const download = await downloaded;
+  const data = JSON.parse(await readFile((await download.path())!, "utf8"));
+  expect(data).toMatchObject({ format: "web-ink-pdf-notes", schemaVersion: 1, annotations: [] });
+  expect(data.document.documentHash).toMatch(/^[0-9a-f]{64}$/);
+  expect(data.nativeAnnotations).toHaveLength(3);
+  expect(data.nativeAnnotations.some((record: { contents: string }) => record.contents === NATIVE_FIXTURE_NOTES.text)).toBe(true);
+  expect(data.nativeAnnotations.every((record: { documentHash: string }) => record.documentHash === data.document.documentHash)).toBe(true);
+  expect(await rpc({ type: "annotations.list" })).toEqual([]);
+  expect((await rpc({ type: "backup.export" })).schemaVersion).toBe(2);
+  expect(await page.locator(".pdf-page canvas").count()).toBeLessThanOrEqual(8);
+});
 test("mouse selection preserves complete words in bold PDF text at both zoom levels", async () => {
   await open(fixturePdf(1, "A small example. These priors are dynamically arranged.", { font: "Helvetica-Bold" }));
   for (const [index, scale] of [1, 2].entries()) {

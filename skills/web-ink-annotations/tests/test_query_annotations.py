@@ -41,7 +41,219 @@ def run_backup(backup: dict[str, object], *args: str) -> tuple[int, dict[str, ob
         return run_cli(*args, "--file", str(backup_path))
 
 
+def native_pdf_notes() -> dict[str, object]:
+    """A standalone current-PDF snapshot; it is deliberately not a database backup."""
+    backup = fixture_backup()
+    document_hash = "0" * 64
+    return {
+        "format": "web-ink-pdf-notes",
+        "schemaVersion": 1,
+        "exportedAt": "2026-10-11T03:00:00.000Z",
+        "document": {
+            "documentHash": document_hash,
+            "fileName": "study.pdf",
+            "sourceUrl": "https://example.test/study.pdf",
+        },
+        "annotations": [annotation for annotation in backup["annotations"]
+                        if annotation["kind"].startswith("pdf-")],
+        "nativeAnnotations": [
+            {
+                "key": "0" * 64 + ":7:pdf-finding",
+                "documentHash": document_hash,
+                "pageNumber": 7,
+                "id": "pdf-finding",
+                "subtype": "Highlight",
+                "contents": "Original PDF reader note.",
+                "author": "PDF Author",
+                "inReplyTo": "root-note",
+                "replyType": "Group",
+                "updatedAt": "2026-10-10T07:00:00.000Z",
+                "rect": [10, 20, 40, 60],
+                "color": [255, 204, 0],
+                "replies": [{
+                    "id": "reply-1",
+                    "subtype": "Popup",
+                    "contents": "A native reply.",
+                    "inReplyTo": "pdf-finding",
+                    "replyType": "popup",
+                }],
+            },
+            {
+                "key": "0" * 64 + ":8:pdf-region",
+                "documentHash": document_hash,
+                "pageNumber": 8,
+                "id": "pdf-region",
+                "subtype": "Text",
+                "contents": "Only a native note; no selected source excerpt.",
+            },
+        ],
+    }
+
+
 class QueryAnnotationsTest(unittest.TestCase):
+    def test_preserves_reversed_native_parent_and_reply_dates(self) -> None:
+        """Would fail if valid original PDF dates were reordered or rejected by chronology."""
+        cases = {
+            "parent": lambda notes: notes["nativeAnnotations"][0].update({
+                "createdAt": "2026-10-11T00:00:00.000Z",
+                "updatedAt": "2026-10-10T00:00:00.000Z",
+            }),
+            "reply": lambda notes: notes["nativeAnnotations"][0]["replies"][0].update({
+                "createdAt": "2026-10-11T00:00:00.000Z",
+                "updatedAt": "2026-10-10T00:00:00.000Z",
+            }),
+        }
+        for name, mutate in cases.items():
+            with self.subTest(name=name):
+                notes = native_pdf_notes()
+                mutate(notes)
+                code, output = run_backup(
+                    notes, "show", "--id", "native:" + "0" * 64 + ":7:pdf-finding",
+                )
+                self.assertEqual(code, 0)
+                if name == "parent":
+                    self.assertEqual(output["createdAt"], "2026-10-11T00:00:00.000Z")
+                    self.assertEqual(output["updatedAt"], "2026-10-10T00:00:00.000Z")
+                else:
+                    self.assertEqual(output["replies"][0]["createdAt"], "2026-10-11T00:00:00.000Z")
+                    self.assertEqual(output["replies"][0]["updatedAt"], "2026-10-10T00:00:00.000Z")
+
+    def test_keeps_web_ink_updated_at_chronology_validation(self) -> None:
+        """Would fail if the native exception weakened saved Web Ink record validation."""
+        backup = fixture_backup()
+        backup["annotations"][0]["updatedAt"] = "2026-09-30T09:00:00.000Z"
+
+        code, output = run_backup(backup, "inspect")
+
+        self.assertEqual(code, 2)
+        self.assertIn("updatedAt precedes createdAt", output["error"])
+
+    def test_accepts_producer_shaped_reply_relationships(self) -> None:
+        """Would fail if NativePdfAnnotation inReplyTo/replyType fields were rejected."""
+        code, output = run_backup(
+            native_pdf_notes(), "show", "--id", "native:" + "0" * 64 + ":7:pdf-finding",
+        )
+
+        self.assertEqual(code, 0)
+        self.assertEqual(output["inReplyTo"], "root-note")
+        self.assertEqual(output["replyType"], "Group")
+        self.assertEqual(output["replies"][0]["inReplyTo"], "pdf-finding")
+        self.assertEqual(output["replies"][0]["replyType"], "popup")
+
+    def test_accepts_native_producer_text_and_author_maxima(self) -> None:
+        """Would fail if valid producer-maximum native text was rejected below the file limit."""
+        notes = native_pdf_notes()
+        notes["nativeAnnotations"] = [notes["nativeAnnotations"][0]]
+        native = notes["nativeAnnotations"][0]
+        native["contents"] = "n" * 1_000_000
+        native["author"] = "a" * 4_096
+
+        code, output = run_backup(notes, "show", "--id", "native:" + "0" * 64 + ":7:pdf-finding")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(len(output["contents"]), 1_000_000)
+        self.assertEqual(len(output["author"]), 4_096)
+
+    def test_rejects_native_text_and_author_above_producer_maxima(self) -> None:
+        """Would fail if per-record bounds no longer matched the native producer contract."""
+        mutations = {
+            "contents": lambda native: native.__setitem__("contents", "n" * 1_000_001),
+            "author": lambda native: native.__setitem__("author", "a" * 4_097),
+        }
+        for field, mutate in mutations.items():
+            with self.subTest(field=field):
+                notes = native_pdf_notes()
+                notes["nativeAnnotations"] = [notes["nativeAnnotations"][0]]
+                mutate(notes["nativeAnnotations"][0])
+                code, output = run_backup(notes, "inspect")
+                self.assertEqual(code, 2)
+                self.assertIn(field, output["error"])
+
+    def test_reads_standalone_pdf_notes_with_separate_web_and_native_ids(self) -> None:
+        """Would fail if a current-PDF note snapshot were mistaken for an import backup."""
+        code, output = run_backup(native_pdf_notes(), "inspect")
+
+        self.assertEqual(code, 0)
+        self.assertEqual(output["format"], "web-ink-pdf-notes")
+        self.assertEqual(output["schemaVersion"], 1)
+        self.assertEqual(output["total"], 4)
+        self.assertEqual(output["countsByKind"], {
+            "native-pdf": 2, "pdf-area": 1, "pdf-text": 1,
+        })
+        self.assertEqual(output["document"], {
+            "documentHash": "0" * 64,
+            "fileName": "study.pdf",
+            "sourceUrl": "https://example.test/study.pdf",
+        })
+
+        code, output = run_backup(native_pdf_notes(), "search", "--text", "note")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            [item["id"] for item in output["items"]],
+            ["native:" + "0" * 64 + ":8:pdf-region", "native:" + "0" * 64 + ":7:pdf-finding"],
+        )
+
+        code, output = run_backup(
+            native_pdf_notes(), "show", "--id", "native:" + "0" * 64 + ":7:pdf-finding",
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(output["id"], "native:" + "0" * 64 + ":7:pdf-finding")
+        self.assertEqual(output["nativeAnnotationId"], "pdf-finding")
+        self.assertEqual(output["contents"], "Original PDF reader note.")
+        self.assertEqual(output["citation"], {
+            "annotationId": "pdf-finding",
+            "title": "study.pdf",
+            "sourceUrl": "https://example.test/study.pdf",
+            "documentHash": "0" * 64,
+            "pageNumber": 7,
+            "createdAt": None,
+            "createdAtKnown": False,
+            "updatedAt": "2026-10-10T07:00:00.000Z",
+            "updatedAtKnown": True,
+        })
+        self.assertNotIn("savedExcerpt", output)
+
+        code, output = run_backup(native_pdf_notes(), "show", "--id", "web:pdf-finding")
+        self.assertEqual(code, 0)
+        self.assertEqual(output["id"], "web:pdf-finding")
+        self.assertEqual(output["savedExcerpt"], "The model improves accuracy.")
+
+    def test_rejects_malformed_or_cross_document_pdf_notes_records(self) -> None:
+        """Would fail if unsafe native records could be presented as original-file evidence."""
+        mutations = {
+            "wrong native hash": (lambda notes: notes["nativeAnnotations"][0].__setitem__("documentHash", "a" * 64), "documentHash"),
+            "invalid page": (lambda notes: notes["nativeAnnotations"][0].__setitem__("pageNumber", 0), "pageNumber"),
+            "invalid date": (lambda notes: notes["nativeAnnotations"][0].__setitem__("createdAt", "2026-10-10"), "createdAt"),
+            "lone surrogate": (lambda notes: notes["nativeAnnotations"][0].__setitem__("contents", "bad\ud800text"), "contents"),
+            "invalid rectangle order": (lambda notes: notes["nativeAnnotations"][0].__setitem__("rect", [40, 20, 10, 60]), "rect"),
+            "non-byte color": (lambda notes: notes["nativeAnnotations"][0].__setitem__("color", [256, 0, 0]), "color"),
+            "cross-document web annotation": (lambda notes: notes["annotations"][0]["target"].__setitem__("documentHash", "a" * 64), "pageUrl"),
+        }
+        for name, (mutate, expected_error) in mutations.items():
+            with self.subTest(name=name):
+                notes = native_pdf_notes()
+                mutate(notes)
+                code, output = run_backup(notes, "inspect")
+                self.assertEqual(code, 2)
+                self.assertIn(expected_error, output["error"])
+                self.assertNotIn("Traceback", output["error"])
+
+    def test_rejects_ambiguous_prefixed_ids_and_unknown_top_level_fields(self) -> None:
+        """Would fail if the two record namespaces could collide or unknown data were silently read."""
+        notes = native_pdf_notes()
+        notes["nativeAnnotations"][1]["key"] = notes["nativeAnnotations"][0]["key"]
+        notes["nativeAnnotations"][1]["id"] = notes["nativeAnnotations"][0]["id"]
+        notes["nativeAnnotations"][1]["pageNumber"] = notes["nativeAnnotations"][0]["pageNumber"]
+        code, output = run_backup(notes, "inspect")
+        self.assertEqual(code, 2)
+        self.assertIn("duplicate", output["error"])
+
+        notes = native_pdf_notes()
+        notes["extra"] = "untrusted"
+        code, output = run_backup(notes, "inspect")
+        self.assertEqual(code, 2)
+        self.assertIn("unknown field", output["error"])
+
     def test_inspect_reports_coverage_and_hides_settings(self) -> None:
         """Would fail if inspect omitted scope metadata or exposed settings."""
         code, output = run_cli("inspect", "--file", str(FIXTURE))

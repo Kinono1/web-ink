@@ -7,7 +7,7 @@ import type {
   PdfSidebarState,
   PdfSidebarUpdate,
 } from "../pdf/sidebar-types";
-import type { PdfAnnotation } from "../pdf/types";
+import type { NativePdfAnnotation, PdfAnnotation } from "../pdf/types";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Reader = { port: chrome.runtime.Port; state?: PdfSidebarState | null };
@@ -50,18 +50,68 @@ function noteDraft(value: unknown, pageUrl: string, id: string): PdfNoteDraft | 
   if (!base || base.id !== id) return;
   return { note: value.note, tags: value.tags, color: value.color, base, editing: value.editing };
 }
+function originalNote(value: unknown, reply = false): value is Record<string, unknown> {
+  if (!object(value) || !text(value.id, 512, false) || !text(value.subtype, 128, false) || !text(value.contents, 1_000_000) ||
+    (value.author !== undefined && !text(value.author, 4096)) ||
+    (value.inReplyTo !== undefined && !text(value.inReplyTo, 512, false)) || (value.replyType !== undefined && !text(value.replyType, 64, false))) return false;
+  for (const name of ["createdAt", "updatedAt"]) {
+    const date = value[name];
+    if (date !== undefined) {
+      if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(date) || !Number.isFinite(Date.parse(date))) return false;
+      const canonical = new Date(date).toISOString();
+      if (date !== canonical && date !== canonical.replace(".000Z", "Z")) return false;
+    }
+  }
+  return !reply || onlyKeys(value, ["id", "subtype", "contents", "author", "createdAt", "updatedAt", "inReplyTo", "replyType"]);
+}
+function originalRecord(value: unknown, hash: string): NativePdfAnnotation | undefined {
+  if (!originalNote(value) || !onlyKeys(value, ["key", "documentHash", "pageNumber", "id", "subtype", "contents", "author", "createdAt", "updatedAt", "rect", "color", "replies", "inReplyTo", "replyType"]) ||
+    value.documentHash !== hash || !Number.isSafeInteger(value.pageNumber) || (value.pageNumber as number) < 1 ||
+    value.key !== `${hash}:${value.pageNumber}:${value.id}`) return;
+  if (value.rect !== undefined && (!Array.isArray(value.rect) || value.rect.length !== 4 || !value.rect.every((entry) => typeof entry === "number" && Number.isFinite(entry)))) return;
+  if (value.color !== undefined && (!Array.isArray(value.color) || value.color.length !== 3 || !value.color.every((entry) => Number.isInteger(entry) && entry >= 0 && entry <= 255))) return;
+  if (value.replies !== undefined && (!Array.isArray(value.replies) || value.replies.length > 500 || !value.replies.every((entry) => originalNote(entry, true)))) return;
+  return value as NativePdfAnnotation;
+}
 function sidebarState(value: unknown): PdfSidebarState | null | undefined {
   if (value === null) return null;
   if (!object(value) || !onlyKeys(value, [
     "pageUrl", "sessionId", "fileName", "records", "totalCount", "drafts", "conflicts", "locked",
-    "noteSaving", "removing", "undoRecord", "error", "notice",
+    "noteSaving", "removing", "undoRecord", "error", "notice", "nativeFilter", "nativeRecords", "nativeLoading", "nativeProgress", "nativeError",
+    "nativeTotalCount", "nativeOffset", "nativeLimit", "nativePageEnd",
   ]) || typeof value.pageUrl !== "string" || !/^urn:web-ink:pdf:[0-9a-f]{64}$/.test(value.pageUrl) ||
     typeof value.sessionId !== "string" || !UUID.test(value.sessionId) || !text(value.fileName, 512, false) ||
     !Array.isArray(value.records) || !Number.isSafeInteger(value.totalCount) || (value.totalCount as number) < value.records.length ||
     !object(value.drafts) || !object(value.conflicts) || typeof value.locked !== "boolean" || typeof value.removing !== "boolean" ||
     (value.noteSaving !== undefined && !identifier(value.noteSaving)) ||
     (value.error !== undefined && !text(value.error, 20_000)) ||
-    (value.notice !== undefined && !text(value.notice, 20_000))) return;
+    (value.notice !== undefined && !text(value.notice, 20_000)) ||
+    (value.nativeError !== undefined && !text(value.nativeError, 20_000)) ||
+    (value.nativeFilter !== undefined && !["all", "web-ink", "original"].includes(value.nativeFilter as string)) ||
+    (value.nativeLoading !== undefined && typeof value.nativeLoading !== "boolean")) return;
+  const progress = value.nativeProgress;
+  if (progress !== undefined && (!object(progress) || !onlyKeys(progress, ["completed", "total"]) ||
+    !Number.isSafeInteger(progress.completed) || !Number.isSafeInteger(progress.total) ||
+    (progress.completed as number) < 0 || (progress.total as number) < 1 || (progress.completed as number) > (progress.total as number))) return;
+  const nativeRecords: NativePdfAnnotation[] = [];
+  if (value.nativeRecords !== undefined) {
+    if (!Array.isArray(value.nativeRecords) || value.nativeRecords.length > 50) return;
+    const keys = new Set<string>();
+    for (const input of value.nativeRecords) {
+      const record = originalRecord(input, value.pageUrl.slice("urn:web-ink:pdf:".length));
+      if (!record || keys.has(record.key)) return;
+      nativeRecords.push(record);
+      keys.add(record.key);
+    }
+    if (JSON.stringify(nativeRecords).length > 10 * 1024 * 1024) return;
+  }
+  const total = value.nativeTotalCount ?? nativeRecords.length, offset = value.nativeOffset ?? 0;
+  const limit = value.nativeLimit ?? 50, end = value.nativePageEnd ?? (offset as number) + nativeRecords.length;
+  if (!Number.isSafeInteger(total) || (total as number) < nativeRecords.length || (total as number) > 50_000 ||
+    !Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) + nativeRecords.length > (total as number) ||
+    !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 50 || nativeRecords.length > (limit as number) ||
+    !Number.isSafeInteger(end) || (end as number) < (offset as number) + nativeRecords.length ||
+    (end as number) > (total as number) || (end as number) - (offset as number) > (limit as number)) return;
   const records: PdfAnnotation[] = [];
   const ids = new Set<string>();
   for (const input of value.records) {
@@ -81,12 +131,24 @@ function sidebarState(value: unknown): PdfSidebarState | null | undefined {
   }
   const undoRecord = value.undoRecord === undefined ? undefined : pdfRecord(value.undoRecord, value.pageUrl);
   if (value.undoRecord !== undefined && !undoRecord) return;
-  return { ...value, records, drafts, conflicts: { ...value.conflicts }, ...(undoRecord ? { undoRecord } : {}) } as PdfSidebarState;
+  return { ...value, records, drafts, conflicts: { ...value.conflicts },
+    ...(value.nativeRecords === undefined ? {} : { nativeRecords }), ...(undoRecord ? { undoRecord } : {}) } as PdfSidebarState;
 }
 function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarCommand | undefined {
   if (!object(value)) return;
   if (value.type === "more" && onlyKeys(value, ["type"])) return { type: "more" };
   if (value.type === "undo" && onlyKeys(value, ["type"]) && state.undoRecord) return { type: "undo" };
+  if (value.type === "cancel-native" && onlyKeys(value, ["type"]) && state.nativeLoading) return { type: "cancel-native" };
+  if (value.type === "more-native" && onlyKeys(value, ["type"]) &&
+    (state.nativePageEnd ?? state.nativeRecords?.length ?? 0) < (state.nativeTotalCount ?? state.nativeRecords?.length ?? 0)) return { type: "more-native" };
+  if (value.type === "previous-native" && onlyKeys(value, ["type"]) && (state.nativeOffset ?? 0) > 0) return { type: "previous-native" };
+  if (value.type === "filter" && onlyKeys(value, ["type", "filter"]) && ["all", "web-ink", "original"].includes(value.filter as string))
+    return { type: "filter", filter: value.filter as "all" | "web-ink" | "original" };
+  if (value.type === "focus-native") {
+    if (onlyKeys(value, ["type", "key"]) && typeof value.key === "string" && state.nativeRecords?.some((record) => record.key === value.key))
+      return { type: "focus-native", key: value.key };
+    return;
+  }
   if (!identifier(value.id)) return;
   const record = state.records.find((item) => item.id === value.id);
   if (value.type === "focus" || value.type === "save" || value.type === "remove") {
