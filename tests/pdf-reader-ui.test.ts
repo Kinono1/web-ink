@@ -19,7 +19,17 @@ const io = vi.hoisted(() => ({
   metadataTitle: "",
   metadataDoi: "",
   metadataFailure: false,
+  annotationsRead: [] as number[],
+  renderedPages: [] as number[],
+  nativeByPage: {} as Record<number, unknown[]>,
+  annotationGates: {} as Record<number, Promise<unknown[]> | undefined>,
+  dataReads: 0,
 }));
+const exportIo = vi.hoisted(() => ({
+  writer: vi.fn(), verify: vi.fn(),
+}));
+vi.mock("../src/pdf/export-client", () => ({ exportPdfInWorker: exportIo.writer }));
+vi.mock("../src/pdf/export-verify", () => ({ verifyPdfExport: exportIo.verify }));
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
   return { ...actual, readIeeePdf: async (input: { pageUrl: string; sourceUrl?: string }) => {
@@ -49,6 +59,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
       destroy: async () => undefined,
       promise: (io.parseGate ?? Promise.resolve()).then(() => ({
         numPages: io.pageCount,
+        getData: async () => { io.dataReads++; return new Uint8Array([37, 80, 68, 70]); },
         getMetadata: async () => {
           if (io.metadataFailure) throw Error("metadata unavailable");
           return { info: { Title: io.metadataTitle }, metadata: {
@@ -68,8 +79,10 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
               scale,
               convertToPdfPoint: (x: number, y: number) => [x / scale, height - y / scale],
               convertToViewportPoint: (x: number, y: number) => [x * scale, (height - y) * scale],
+              clone() { return { ...this }; },
             }),
             render: () => {
+              io.renderedPages.push(number);
               // Model the strict stream error after the build-time PDF.js fix.
               const oversizedImage = number === 1 && io.rejectOversizedImage && options.stopAtErrors === true;
               const promise = io.renderGates[number] ?? (oversizedImage
@@ -82,6 +95,7 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
               controller.close();
             } }),
             cleanup: () => undefined,
+            getAnnotations: async () => { io.annotationsRead.push(number); return io.annotationGates[number] ?? io.nativeByPage[number] ?? []; },
           };
         },
       })),
@@ -100,6 +114,8 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
     }
     cancel() {}
   },
+  AnnotationType: { TEXT: 1, HIGHLIGHT: 9, SQUARE: 5 },
+  AnnotationLayer: class { async render() {} destroy() {} },
 }));
 
 function deferred<T>() {
@@ -128,6 +144,8 @@ let returnErrorCode: string | undefined;
 let prefFailure = false;
 let frames: Map<number, FrameRequestCallback>;
 let frameId = 0;
+let downloads: Array<{ blob: Blob; fileName: string }>;
+const objectUrlDescriptors = ["createObjectURL", "revokeObjectURL"].map((name) => [name, Object.getOwnPropertyDescriptor(URL, name)] as const);
 const baseRecord = () => ({
   id: "saved-highlight", kind: "pdf-text" as const, pageUrl: `urn:web-ink:pdf:${HASH}`,
   pageTitle: "fixture.pdf", color: "#facc15", note: "", tags: [], revision: 3,
@@ -153,6 +171,11 @@ beforeEach(() => {
   io.metadataTitle = "";
   io.metadataDoi = "";
   io.metadataFailure = false;
+  io.annotationsRead = [];
+  io.renderedPages = [];
+  io.nativeByPage = {};
+  io.annotationGates = {};
+  io.dataReads = 0;
   records = [];
   messages = [];
   writes = [];
@@ -166,6 +189,20 @@ beforeEach(() => {
   returnErrorCode = "CONTEXT_UNAVAILABLE";
   prefFailure = false;
   frames = new Map();
+  exportIo.writer.mockReset().mockImplementation(async (_bytes, _hash, snapshot) => ({ bytes: new Uint8Array([37, 80, 68, 70, 45]), fileName: "fixture-annotated.pdf", count: snapshot.length }));
+  exportIo.verify.mockReset().mockImplementation(async (_source, _output, sourceHash, snapshot) => ({ count: snapshot.length, sourceHash, outputHash: "c".repeat(64) }));
+  downloads = [];
+  const blobs = new Map<string, Blob>();
+  Object.defineProperty(URL, "createObjectURL", { configurable: true, writable: true, value: vi.fn((blob: Blob) => {
+    const url = `blob:export-${blobs.size}`;
+    blobs.set(url, blob);
+    return url;
+  }) });
+  Object.defineProperty(URL, "revokeObjectURL", { configurable: true, writable: true, value: vi.fn((url: string) => blobs.delete(url)) });
+  vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+    const blob = blobs.get(this.href);
+    if (blob) downloads.push({ blob, fileName: this.download });
+  });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
     const id = ++frameId;
@@ -236,6 +273,10 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  for (const [name, descriptor] of objectUrlDescriptors) {
+    if (descriptor) Object.defineProperty(URL, name, descriptor);
+    else Reflect.deleteProperty(URL, name);
+  }
 });
 async function settle() {
   for (let round = 0; round < 12; round++) {
@@ -450,6 +491,342 @@ function runtimeListeners() {
   chrome.runtime.onMessage.removeListener = ((listener: (message: object) => void) => listeners.delete(listener)) as typeof chrome.runtime.onMessage.removeListener;
   return listeners;
 }
+
+function sidebarPort() {
+  const outgoing: any[] = [];
+  const listeners = new Set<(message: any) => void>();
+  Object.assign(chrome.runtime, { id: "test", connect: () => ({
+    postMessage: (message: any) => outgoing.push(message),
+    onMessage: { addListener: (listener: (message: any) => void) => listeners.add(listener), removeListener: (listener: (message: any) => void) => listeners.delete(listener) },
+    onDisconnect: { addListener() {} }, disconnect() {},
+  }) });
+  return {
+    state: () => outgoing.filter((message) => message.type === "state").at(-1)?.state,
+    command: async (command: object) => {
+      const state = outgoing.filter((message) => message.type === "state").at(-1).state;
+      await act(async () => { for (const listener of listeners) listener({ type: "command", commandId: crypto.randomUUID(), pageUrl: state.pageUrl, sessionId: state.sessionId, command }); });
+      await settle();
+    },
+  };
+}
+
+function blobText(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(blob);
+  });
+}
+
+describe("PDF annotation export and original notes", () => {
+  it.each(["导出带标注的 PDF…", "导出给 AI"])("reveals a dirty Web Ink editor after Keep editing from Original while requesting %s", async (label) => {
+    io.pageCount = 2;
+    records = [baseRecord()];
+    await mount();
+    await editNote("Keep this Web Ink draft");
+    await click("原文件");
+    expect(host.querySelector("textarea")).toBeNull();
+    await click("更多");
+    await click(label);
+    await click("继续编辑");
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this Web Ink draft");
+    expect(host.querySelector<HTMLTextAreaElement>("textarea")?.disabled).toBe(false);
+    expect(host.querySelector('.pdf-annotation-filters button[aria-pressed="true"]')?.textContent).toBe("Web Ink");
+    expect(unloadBlocked()).toBe(true);
+    expect(puts()).toHaveLength(0);
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("reveals an orphan editor and keeps its conflict state after failed Save and continue from Original", async () => {
+    io.pageCount = 2;
+    records = [baseRecord()];
+    const listeners = runtimeListeners();
+    const port = sidebarPort();
+    await mount();
+    await editNote("Keep this conflicted draft");
+    await click("原文件");
+    await click("更多");
+    await click("导出给 AI");
+    putError = "changed elsewhere";
+    await click("保存并继续");
+    expect(puts()).toHaveLength(1);
+    await act(async () => {
+      records = [];
+      for (const listener of listeners) listener({ type: "annotations.changed", pageUrl: `urn:web-ink:pdf:${HASH}`, deletedId: "saved-highlight" });
+    });
+    await settle();
+    await click("继续编辑");
+    const note = host.querySelector('[data-pdf-note="saved-highlight"]')!;
+    expect(note?.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe("Keep this conflicted draft");
+    expect(note?.textContent).toContain("原标注已被删除");
+    expect(port.state().conflicts["saved-highlight"]).toBe(true);
+    expect(unloadBlocked()).toBe(true);
+    expect(records).toHaveLength(0);
+    expect(downloads).toHaveLength(0);
+  });
+
+  it.each([2, 1, 0])("accounts for exact JSON array bytes and advances past a native record of cap minus %i", async (remainingBytes) => {
+    const cap = 4 * 1024 * 1024;
+    const original = { key: `${HASH}:1:parent`, documentHash: HASH, pageNumber: 1, id: "parent", subtype: "Text", contents: "",
+      replies: Array.from({ length: 5 }, (_, i) => ({ id: `reply-${i}`, subtype: "Text", contents: "", inReplyTo: "parent", replyType: "R" })) };
+    let bodyBytes = cap - remainingBytes - new TextEncoder().encode(JSON.stringify(original)).byteLength;
+    for (const reply of original.replies) {
+      const length = Math.min(1_000_000, bodyBytes);
+      reply.contents = "n".repeat(length);
+      bodyBytes -= length;
+    }
+    expect(bodyBytes).toBe(0);
+    expect(new TextEncoder().encode(JSON.stringify(original)).byteLength).toBe(cap - remainingBytes);
+    io.pageCount = 2;
+    io.nativeByPage[1] = [
+      { id: "parent", subtype: "Text", contentsObj: { str: "" } },
+      ...original.replies.map((reply) => ({ id: reply.id, subtype: reply.subtype, contentsObj: { str: reply.contents },
+        inReplyTo: reply.inReplyTo, replyType: reply.replyType })),
+      { id: "following", subtype: "Text", contentsObj: { str: "Following original note" } },
+    ];
+    const port = sidebarPort();
+    await mount();
+    expect(port.state().nativeTotalCount).toBe(2);
+    expect(port.state().nativePageEnd).toBe(1);
+    if (remainingBytes === 2) {
+      expect(port.state().nativeRecords.map((record: any) => record.id)).toEqual(["parent"]);
+      expect(new TextEncoder().encode(JSON.stringify(port.state().nativeRecords)).byteLength).toBe(cap);
+      expect(port.state().nativeError).toBe("");
+    } else {
+      expect(port.state().nativeRecords).toHaveLength(0);
+      expect(port.state().nativeError).toContain("超过侧栏显示上限");
+    }
+    await port.command({ type: "more-native" });
+    expect(port.state().nativeOffset).toBe(1);
+    expect(port.state().nativePageEnd).toBe(2);
+    expect(port.state().nativeRecords.map((record: any) => record.id)).toEqual(["following"]);
+    expect(port.state().nativeError).toBe("");
+  });
+
+  it("publishes at most 50 original cards per page and retains the complete count for navigation", async () => {
+    io.pageCount = 3;
+    io.nativeByPage[1] = Array.from({ length: 60 }, (_, i) => ({ id: `original-${i}`, subtype: "Text", contentsObj: { str: `Original ${i}` } }));
+    const port = sidebarPort();
+    await mount();
+    expect(port.state().nativeRecords).toHaveLength(50);
+    expect(port.state().nativeTotalCount).toBe(60);
+    expect(port.state().nativeLimit).toBe(50);
+    await port.command({ type: "more-native" });
+    expect(port.state().nativeRecords).toHaveLength(10);
+    expect(port.state().nativeRecords[0].id).toBe("original-50");
+    expect(port.state().nativeOffset).toBe(50);
+    await port.command({ type: "previous-native" });
+    expect(port.state().nativeRecords).toHaveLength(50);
+    expect(port.state().nativeRecords[0].id).toBe("original-0");
+  });
+
+  it("refuses an AI snapshot over the combined 50k annotation limit without emitting a file", async () => {
+    io.pageCount = 25;
+    records = Array.from({ length: 50_000 }, (_, i) => ({ ...baseRecord(), id: `saved-${i}`, target: { ...baseRecord().target, pageNumber: 25 } }));
+    io.nativeByPage[1] = [{ id: "original", subtype: "Text", contentsObj: { str: "Original note" } }];
+    await mount();
+    await click("更多");
+    await click("导出给 AI");
+    expect(downloads).toHaveLength(0);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("50,000");
+  });
+
+  it("refuses an AI snapshot over 20 MiB instead of downloading JSON the adapter cannot read", async () => {
+    io.pageCount = 25;
+    records = Array.from({ length: 2100 }, (_, i) => ({ ...baseRecord(), id: `saved-${i}`, note: "n".repeat(9999), target: { ...baseRecord().target, pageNumber: 25 } }));
+    await mount();
+    await click("更多");
+    await click("导出给 AI");
+    expect(downloads).toHaveLength(0);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("20 MiB");
+  });
+
+  it("freezes the complete saved PDF snapshot at click and starts a download only after independent verification", async () => {
+    records = Array.from({ length: 65 }, (_, i) => ({ ...baseRecord(), id: `saved-${i}`, note: `Saved ${i}` }));
+    records.push({ ...baseRecord(), id: "other-file", pageUrl: `urn:web-ink:pdf:${"b".repeat(64)}`,
+      target: { ...baseRecord().target, documentHash: "b".repeat(64) } });
+    const writing = deferred<any>();
+    const verification = deferred<any>();
+    exportIo.writer.mockReturnValue(writing.promise);
+    exportIo.verify.mockReturnValue(verification.promise);
+    await mount();
+    expect(io.dataReads).toBe(0);
+    expect(exportIo.writer).not.toHaveBeenCalled();
+    await click("更多");
+    await click("导出带标注的 PDF…");
+    expect(io.dataReads).toBe(1);
+    expect(host.textContent).toContain("正在写入");
+    const [sourceBytes, hash, snapshot, signal, fileName] = exportIo.writer.mock.calls[0]!;
+    expect(Array.from(sourceBytes)).toEqual([37, 80, 68, 70]);
+    expect(hash).toBe(HASH);
+    expect(fileName).toBe("fixture.pdf");
+    expect(snapshot).toHaveLength(65);
+    records[0]!.note = "Changed after click";
+    expect(snapshot[0]).toMatchObject({ id: "saved-0", revision: 3, note: "Saved 0" });
+    expect(signal.aborted).toBe(false);
+    await click("更多");
+    expect(button("导出带标注的 PDF…").disabled).toBe(true);
+    await act(async () => writing.resolve({ bytes: new Uint8Array([37, 80, 68, 70, 45]), fileName: "fixture-annotated.pdf", count: 65 }));
+    await settle();
+    expect(exportIo.verify).toHaveBeenCalledWith(sourceBytes, new Uint8Array([37, 80, 68, 70, 45]), HASH, snapshot, signal);
+    expect(downloads).toHaveLength(0);
+    expect(host.textContent).toContain("正在校验");
+    await act(async () => verification.resolve({ count: 65, sourceHash: HASH, outputHash: "c".repeat(64) }));
+    await settle();
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]!.fileName).toBe("fixture-annotated.pdf");
+    expect(downloads[0]!.blob.type).toBe("application/pdf");
+    expect(host.textContent).toContain("已生成并开始下载");
+    expect(puts()).toHaveLength(0);
+  });
+
+  it.each(["writer", "verification"])("keeps saved notes and refuses a PDF download after %s failure", async (stage) => {
+    records = [baseRecord()];
+    if (stage === "writer") exportIo.writer.mockRejectedValue(Error("PDF export was refused"));
+    else exportIo.verify.mockRejectedValue(Error("PDF preservation check failed"));
+    await mount();
+    await click("更多");
+    await click("导出带标注的 PDF…");
+    expect(downloads).toHaveLength(0);
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain(stage === "writer" ? "PDF export was refused" : "PDF preservation check failed");
+    expect(records).toEqual([baseRecord()]);
+    expect(puts()).toHaveLength(0);
+    expect(host.querySelector('[aria-busy="true"]')).toBeNull();
+  });
+
+  it.each(["cancel", "leave", "pagehide", "unmount"])("aborts the owned export on %s and ignores a late worker result", async (action) => {
+    const writing = deferred<any>();
+    exportIo.writer.mockReturnValue(writing.promise);
+    await mount();
+    await click("更多");
+    await click("导出带标注的 PDF…");
+    const signal = exportIo.writer.mock.calls[0]![3] as AbortSignal;
+    if (action === "cancel") await click("取消导出");
+    else if (action === "leave") await click("重新选择 PDF");
+    else if (action === "pagehide") await act(async () => window.dispatchEvent(new Event("pagehide")));
+    else { await act(async () => root!.unmount()); root = undefined; }
+    expect(signal.aborted).toBe(true);
+    await act(async () => writing.resolve({ bytes: new Uint8Array([37, 80, 68, 70, 45]), fileName: "late.pdf", count: 0 }));
+    await settle();
+    expect(exportIo.verify).not.toHaveBeenCalled();
+    expect(downloads).toHaveLength(0);
+  });
+
+  it("exports the saved revision after Save and continue rather than the stale draft base", async () => {
+    records = [baseRecord()];
+    await mount();
+    await editNote("Saved for PDF export");
+    await click("更多");
+    await click("导出带标注的 PDF…");
+    expect(exportIo.writer).not.toHaveBeenCalled();
+    await click("保存并继续");
+    expect(exportIo.writer.mock.calls[0]![2]).toEqual([{ ...baseRecord(), note: "Saved for PDF export", revision: 4,
+      updatedAt: records[0]!.updatedAt }]);
+    expect(host.querySelector('[aria-label="未保存的内容"]')).toBeNull();
+    expect(downloads).toHaveLength(1);
+  });
+
+  it("downloads a standalone AI snapshot of all saved current-file notes and original notes without database writes", async () => {
+    io.pageCount = 25;
+    records = Array.from({ length: 65 }, (_, i) => ({ ...baseRecord(), id: `saved-${i}`, note: `Saved ${i}` }));
+    records.push({ ...baseRecord(), id: "other-file", pageUrl: `urn:web-ink:pdf:${"b".repeat(64)}`,
+      target: { ...baseRecord().target, documentHash: "b".repeat(64) } });
+    io.nativeByPage[24] = [{ id: "24R", subtype: "Text", contentsObj: { str: "Original late-page note" } }];
+    await mount();
+    await click("更多");
+    await click("导出给 AI");
+    expect(downloads).toHaveLength(1);
+    const exported = JSON.parse(await blobText(downloads[0]!.blob));
+    expect(Object.keys(exported).sort()).toEqual(["annotations", "document", "exportedAt", "format", "nativeAnnotations", "schemaVersion"]);
+    expect(exported).toMatchObject({ format: "web-ink-pdf-notes", schemaVersion: 1,
+      document: { documentHash: HASH, fileName: "fixture.pdf" } });
+    expect(exported.annotations).toHaveLength(65);
+    expect(exported.annotations.at(-1)).toMatchObject({ id: "saved-64", revision: 3, note: "Saved 64" });
+    expect(exported.nativeAnnotations).toEqual([{ key: `${HASH}:24:24R`, documentHash: HASH, pageNumber: 24,
+      id: "24R", subtype: "Text", contents: "Original late-page note" }]);
+    expect(io.dataReads).toBe(0);
+    expect(puts()).toHaveLength(0);
+    expect(messages.some((message) => /backup|export|import/.test(message.type))).toBe(false);
+    expect(host.textContent).toContain("已生成并开始下载");
+  });
+
+  it("cancels AI export before its final original-note batch and never downloads a partial snapshot", async () => {
+    io.pageCount = 25;
+    const reading = deferred<unknown[]>();
+    io.annotationGates[12] = reading.promise;
+    await mount();
+    await click("更多");
+    await click("导出给 AI");
+    expect(host.textContent).toContain("正在准备");
+    await click("取消导出");
+    await act(async () => reading.resolve([{ id: "late", subtype: "Text", contentsObj: { str: "Late original note" } }]));
+    await settle();
+    expect(downloads).toHaveLength(0);
+    expect(puts()).toHaveLength(0);
+    expect(host.textContent).toContain("已取消导出");
+  });
+
+  it.each(["导出带标注的 PDF…", "导出给 AI"])("guards a dirty note before %s and retains failed saves", async (label) => {
+    records = [baseRecord()];
+    await mount();
+    await editNote("draft for export");
+    await click("更多");
+    await click(label);
+    expect(host.querySelector('[aria-label="未保存的内容"]')).toBeTruthy();
+    expect(io.dataReads).toBe(0);
+    putError = "cannot save export draft";
+    await click("保存并继续");
+    expect(host.querySelector("textarea")?.value).toBe("draft for export");
+    expect(host.querySelector('[aria-label="未保存的内容"]')).toBeTruthy();
+    expect(io.dataReads).toBe(0);
+  });
+
+  it("reads original notes lazily without rendering canvases for the remaining pages", async () => {
+    io.pageCount = 25;
+    io.nativeByPage[2] = [{ id: "10R", subtype: "Text", contentsObj: { str: "Visible original note" } }];
+    io.nativeByPage[24] = [{ id: "24R", subtype: "Text", contentsObj: { str: "Last original note" } }];
+    const port = sidebarPort();
+    await mount();
+    expect(port.state().nativeFilter).toBe("web-ink");
+    expect(io.annotationsRead.length).toBeLessThan(8);
+    expect(port.state().nativeRecords.some((record: any) => record.contents === "Visible original note")).toBe(true);
+    const renders = io.renderedPages.slice();
+    await port.command({ type: "filter", filter: "original" });
+    for (let round = 0; round < 10 && port.state().nativeProgress?.completed !== 25; round++) {
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+      await settle();
+    }
+    expect(port.state().nativeRecords.some((record: any) => record.contents === "Last original note")).toBe(true);
+    expect(port.state().nativeProgress).toEqual({ completed: 25, total: 25 });
+    expect(io.renderedPages).toEqual(renders);
+    expect(puts()).toHaveLength(0);
+  });
+
+  it("cancels an original-note scan and rejects its late state after a document change", async () => {
+    io.pageCount = 25;
+    const reading = deferred<unknown[]>();
+    io.annotationGates[12] = reading.promise;
+    const port = sidebarPort();
+    await mount();
+    await port.command({ type: "filter", filter: "all" });
+    expect(port.state().nativeLoading).toBe(true);
+    await port.command({ type: "cancel-native" });
+    expect(port.state().nativeLoading).toBe(false);
+    await click("更多");
+    await click("打开其他文件");
+    io.hash = "b".repeat(64);
+    io.annotationGates = {};
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF-"], "replacement.pdf")] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await settle();
+    await act(async () => reading.resolve([{ id: "late", subtype: "Text", contentsObj: { str: "Old file note" } }]));
+    await settle();
+    expect(port.state().pageUrl).toBe(`urn:web-ink:pdf:${"b".repeat(64)}`);
+    expect(port.state().nativeRecords.some((record: any) => record.contents === "Old file note")).toBe(false);
+  });
+});
 
 describe("PDF reader workspace", () => {
   it("saves the explicit metadata DOI as the source for new signed-in IEEE annotations", async () => {

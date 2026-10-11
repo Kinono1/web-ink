@@ -36,8 +36,11 @@ let pixels: WeakMap<HTMLCanvasElement, string>;
 let cleanupPage: ReturnType<typeof vi.fn>;
 let getPageGate: ReturnType<typeof deferred> | undefined;
 let intrinsicRotation = 0;
+let nativeData: Record<string, unknown>[];
+let annotationGate: ReturnType<typeof deferred> | undefined;
+let annotationFailure: Error | undefined;
 
-beforeEach(() => {
+beforeEach(async () => {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -47,8 +50,13 @@ beforeEach(() => {
   cleanupPage = vi.fn();
   getPageGate = undefined;
   intrinsicRotation = 0;
+  nativeData = [];
+  annotationGate = undefined;
+  annotationFailure = undefined;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("devicePixelRatio", 1);
+  vi.stubGlobal("DOMMatrix", class {});
+  const pdfApi = await import("pdfjs-dist/legacy/build/pdf.mjs");
   // JSDOM does not implement raster contexts. Track completed image copies at
   // the canvas boundary while exercising the real PdfPage lifecycle and DOM.
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
@@ -68,6 +76,8 @@ beforeEach(() => {
       height: (rotation % 180 ? 600 : 800) * scale,
       rotation,
       scale,
+      rawDims: { pageWidth: 600, pageHeight: 800, pageX: 0, pageY: 0 },
+      clone: () => page.getViewport({ scale, rotation }),
       convertToPdfPoint: (x: number, y: number) => [x / scale, 800 - y / scale],
       convertToViewportPoint: (x: number, y: number) => [x * scale, (800 - y) * scale],
     }),
@@ -94,6 +104,12 @@ beforeEach(() => {
       controller.enqueue({ items: [], styles: {} });
       controller.close();
     } }),
+    async getAnnotations() {
+      const data = nativeData, gate = annotationGate, failure = annotationFailure;
+      await gate?.promise;
+      if (failure) throw failure;
+      return data;
+    },
     cleanup: cleanupPage,
   };
   class TextLayer {
@@ -126,7 +142,7 @@ beforeEach(() => {
         return page;
       },
     },
-    api: { TextLayer },
+    api: { TextLayer, AnnotationLayer: pdfApi.AnnotationLayer, AnnotationType: pdfApi.AnnotationType },
     hash: "a".repeat(64),
     fileName: "fixture.pdf",
   } as unknown as OpenDocument;
@@ -150,6 +166,7 @@ beforeEach(() => {
     onArea: vi.fn(),
     onDimensions: vi.fn(),
     onError: vi.fn(),
+    onNativeRecords: vi.fn(),
   };
 });
 
@@ -158,6 +175,7 @@ afterEach(async () => {
     root?.unmount();
     root = undefined;
     getPageGate?.resolve();
+    annotationGate?.resolve();
     for (const plan of plans.values()) {
       plan.raster?.resolve();
       plan.text?.resolve();
@@ -177,8 +195,197 @@ async function paint(changes: Partial<ComponentProps<typeof PdfPage>> = {}) {
 function pageRoot() { return host.querySelector<HTMLDivElement>(".pdf-page")!; }
 function visibleCanvas() { return host.querySelector<HTMLCanvasElement>("canvas")!; }
 function visibleText() { return host.querySelector<HTMLDivElement>(".textLayer")!; }
+function selectFirstLine() {
+  const first = document.createElement("span"), second = document.createElement("span");
+  first.textContent = "First line.\n";
+  second.textContent = "Second line.";
+  visibleText().replaceChildren(first, second);
+  const range = document.createRange();
+  range.setStart(first.firstChild!, 0);
+  range.setEnd(first.firstChild!, first.textContent.length);
+  // JSDOM has no text layout. Supply the browser boundary's line rectangles;
+  // the real DOM Range still owns the selected text and prefix/suffix.
+  Object.defineProperty(range, "getClientRects", { value: () => [
+    { left: 60, top: 100, right: 240, bottom: 120, width: 180, height: 20 },
+    ...(range.endContainer === second.firstChild
+      ? [{ left: 60, top: 124, right: 300, bottom: 144, width: 240, height: 20 }] : []),
+  ] });
+  host.className = "pdf-pages";
+  host.tabIndex = 0;
+  host.focus();
+  window.getSelection()!.removeAllRanges();
+  window.getSelection()!.addRange(range);
+  return { first, second, range };
+}
 
 describe("PdfPage staged rendering", () => {
+  it("refreshes a mouse-captured preview after Shift+ArrowDown extends the live selection", async () => {
+    await paint();
+    const { first, second, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(props.onSelection).toHaveBeenLastCalledWith(expect.objectContaining({ target: expect.objectContaining({
+      exact: "First line.", rects: [expect.objectContaining({ x: 0.1, y: 0.85 })],
+    }) }));
+
+    await act(async () => {
+      host.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+      range.setEnd(second.firstChild!, second.textContent!.length);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    const preview = vi.mocked(props.onSelection).mock.calls.at(-1)?.[0]!;
+    expect(preview.target).toMatchObject({ pageNumber: 1, exact: "First line.\nSecond line.", prefix: "", suffix: "" });
+    expect(preview.target.rects).toHaveLength(2);
+    expect(preview.target.rects[0]?.x).toBeCloseTo(0.1);
+    expect(preview.target.rects[0]?.y).toBeCloseTo(0.85);
+    expect(preview.target.rects[0]?.width).toBeCloseTo(0.3);
+    expect(preview.target.rects[0]?.height).toBeCloseTo(0.025);
+    expect(preview.target.rects[1]?.x).toBeCloseTo(0.1);
+    expect(preview.target.rects[1]?.y).toBeCloseTo(0.82);
+    expect(preview.target.rects[1]?.width).toBeCloseTo(0.4);
+    expect(preview.target.rects[1]?.height).toBeCloseTo(0.025);
+    expect(preview.anchor).toEqual({ left: 60, top: 100, right: 300, bottom: 144 });
+    expect(props.onPick).not.toHaveBeenCalled();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a preview when keyboard extension crosses into another page", async () => {
+    await paint();
+    const { first, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    const anotherPage = document.createElement("div");
+    anotherPage.className = "textLayer";
+    anotherPage.textContent = "Other page.";
+    host.append(anotherPage);
+    await act(async () => {
+      range.setEnd(anotherPage.firstChild!, anotherPage.textContent!.length);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenLastCalledWith(undefined);
+    expect(props.onError).toHaveBeenCalledWith(expect.stringContaining("cross-page"));
+  });
+
+  it("clears a captured preview when a plain arrow key collapses the live selection", async () => {
+    await paint();
+    const { first, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => {
+      range.collapse(true);
+      host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowLeft", bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenLastCalledWith(undefined);
+    expect(props.onPick).not.toHaveBeenCalled();
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it.each(["textarea", "input", "button", "contenteditable"])(
+    "keeps %s keyboard activity out of a Web Ink selection preview", async tag => {
+      await paint();
+      const { first, second, range } = selectFirstLine();
+      await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+      const editor = document.createElement(tag === "contenteditable" ? "div" : tag);
+      if (tag === "contenteditable") editor.setAttribute("contenteditable", "true");
+      host.append(editor);
+      await act(async () => {
+        range.setEnd(second.firstChild!, second.textContent!.length);
+        editor.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+      });
+      expect(props.onSelection).toHaveBeenCalledTimes(1);
+      expect(props.onError).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps native Popup keyboard activity out of a Web Ink selection preview", async () => {
+    nativeData = [{ id: "native-note", subtype: "Text", rect: [10, 20, 30, 40],
+      contentsObj: { str: "Original native Popup body" } }];
+    await paint();
+    await act(async () => host.querySelector(".textAnnotation")!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    const popup = host.querySelector(".popupContent")!;
+    const { first, second, range } = selectFirstLine();
+    await act(async () => first.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => {
+      range.setEnd(second.firstChild!, second.textContent!.length);
+      popup.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true }));
+    });
+    expect(props.onSelection).toHaveBeenCalledTimes(1);
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it("reads a native Popup through the official layer without drawing a second original highlight", async () => {
+    nativeData = [
+      { id: "native-highlight", annotationType: 9, subtype: "Highlight", rect: [60, 560, 180, 600],
+        contentsObj: { str: "Original note", dir: "ltr" }, titleObj: { str: "Preview author", dir: "ltr" },
+        color: new Uint8ClampedArray([255, 255, 0]), borderStyle: { width: 0 }, rotation: 0,
+        popupRef: "native-popup", hasAppearance: true },
+      { id: "native-popup", annotationType: 16, subtype: "Popup", rect: [190, 540, 390, 700],
+        parentRect: [60, 560, 180, 600], contentsObj: { str: "Original note", dir: "ltr" },
+        titleObj: { str: "Preview author", dir: "ltr" }, borderStyle: { width: 0 }, rotation: 0 },
+    ];
+    await paint();
+
+    const highlight = host.querySelector('[data-annotation-id="native-highlight"]');
+    expect(highlight).not.toBeNull();
+    expect(host.querySelectorAll('[data-annotation-id="native-popup"]')).toHaveLength(1);
+    expect(host.querySelector('.pdf-marks [data-pdf-annotation="native-highlight"]')).toBeNull();
+    expect(host.querySelectorAll("canvas")).toHaveLength(1);
+    expect(props.onNativeRecords).toHaveBeenCalledWith([expect.objectContaining({
+      id: "native-highlight", contents: "Original note", author: "Preview author",
+    })]);
+    await act(async () => highlight!.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+    expect(host.querySelector(".popupContent")?.textContent).toContain("Original note");
+    const body = host.querySelector(".popupContent")!;
+    const range = document.createRange();
+    range.selectNodeContents(body);
+    window.getSelection()?.addRange(range);
+    await act(async () => body.dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  it("discards original note reads from a replaced page or document", async () => {
+    nativeData = [{ id: "old-note", subtype: "Text", rect: [10, 20, 30, 40], contentsObj: { str: "Old document" } }];
+    const oldRead = annotationGate = deferred();
+    await paint();
+    annotationGate = undefined;
+    nativeData = [{ id: "new-note", subtype: "Text", rect: [10, 20, 30, 40], contentsObj: { str: "New document" } }];
+    const opened = { ...props.opened, hash: "b".repeat(64) };
+    await paint({ opened, number: 2, measurementGeneration: 2 });
+    const currentLayer = host.querySelector(".annotationLayer");
+    await act(async () => oldRead.resolve());
+
+    expect(host.querySelector('[data-annotation-id="old-note"]')).toBeNull();
+    expect(host.querySelector('[data-annotation-id="new-note"]')).not.toBeNull();
+    expect(host.querySelector(".annotationLayer")).toBe(currentLayer);
+    expect(props.onNativeRecords).toHaveBeenCalledTimes(1);
+    expect(props.onNativeRecords).toHaveBeenCalledWith([expect.objectContaining({
+      documentHash: opened.hash, pageNumber: 2, id: "new-note",
+    })]);
+  });
+
+  it("does not replace the current zoom's native layer with a late earlier read", async () => {
+    nativeData = [{ id: "native-note", subtype: "Text", rect: [10, 20, 30, 40], contentsObj: { str: "Read-only note" } }];
+    const oldRead = annotationGate = deferred();
+    await paint();
+    annotationGate = undefined;
+    await paint({ zoom: 2, rotation: 90, measurementGeneration: 2 });
+    const currentLayer = host.querySelector(".annotationLayer");
+    expect(currentLayer).not.toBeNull();
+    await act(async () => oldRead.resolve());
+
+    expect(host.querySelector(".annotationLayer")).toBe(currentLayer);
+    expect(host.querySelectorAll('[data-annotation-id="native-note"]')).toHaveLength(1);
+    expect(visibleCanvas().width).toBe(1600);
+    expect(props.onNativeRecords).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the completed PDF image and selectable text when original-note parsing fails", async () => {
+    annotationFailure = new Error("Invalid original annotation");
+    await paint();
+    expect(pixels.get(visibleCanvas())).toBe("raster 1");
+    expect(visibleText().textContent).toBe("text 1");
+    expect(pageRoot().dataset.ready).toBe("true");
+    expect(props.onNativeRecords).not.toHaveBeenCalled();
+    expect(props.onError).toHaveBeenCalledWith(expect.stringContaining("Original-file notes"));
+  });
+
   it.each([90, 270])("merges upright text from a page with native rotation %s", async (rotation) => {
     intrinsicRotation = rotation;
     const rects = [
@@ -286,6 +493,7 @@ describe("PdfPage staged rendering", () => {
     range.selectNodeContents(oldText!);
     window.getSelection()!.addRange(range);
     await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", { bubbles: true })));
+    await act(async () => host.dispatchEvent(new KeyboardEvent("keyup", { key: "ArrowDown", shiftKey: true, bubbles: true })));
     expect(props.onSelection).not.toHaveBeenCalled();
     expect(props.onPick).not.toHaveBeenCalled();
     await paint({ area: true });

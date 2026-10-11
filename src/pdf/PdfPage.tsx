@@ -9,6 +9,8 @@ import type { Language, PdfRect } from "../core/model";
 import type { PdfSearchMatch } from "./search";
 import { fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
 import { alignPdfTextFonts } from "./text-fonts";
+import { createNativeLayer } from "./native-layer";
+import { parseNativePdfAnnotations } from "./native-annotations";
 import {
   errorText,
   type OpenDocument,
@@ -16,6 +18,7 @@ import {
   type PdfApi,
   type SelectionTarget,
   type SelectionPreview,
+  type NativePdfAnnotation,
 } from "./types";
 export function PdfPage({
   language = "zh-CN",
@@ -34,6 +37,7 @@ export function PdfPage({
   onArea,
   onDimensions,
   onError,
+  onNativeRecords,
 }: {
   language?: Language;
   opened: OpenDocument;
@@ -51,6 +55,7 @@ export function PdfPage({
   onArea: (v: SelectionTarget) => void;
   onDimensions: (generation: number, w: number, h: number) => void;
   onError: (e: string) => void;
+  onNativeRecords?: (records: NativePdfAnnotation[]) => void;
 }) {
   const t = (zh: string, en: string) => language === "zh-CN" ? zh : en;
   const [ready, setReady] = useState(false);
@@ -59,6 +64,7 @@ export function PdfPage({
   const root = useRef<HTMLDivElement>(null),
     canvas = useRef<HTMLCanvasElement>(null),
     text = useRef<HTMLDivElement>(null),
+    native = useRef<HTMLDivElement>(null),
     drag = useRef<{ x: number; y: number; pointer: number } | undefined>(
       undefined,
     );
@@ -74,8 +80,8 @@ export function PdfPage({
   const [searchRects, setSearchRects] = useState<PdfRect[]>([]);
   const pending = useRef(Promise.resolve());
   const cachedPage = useRef<PDFPageProxy | undefined>(undefined);
-  const callbacks = useRef({ onDimensions, onError, onSearchPosition });
-  callbacks.current = { onDimensions, onError, onSearchPosition };
+  const callbacks = useRef({ onDimensions, onError, onSearchPosition, onNativeRecords });
+  callbacks.current = { onDimensions, onError, onSearchPosition, onNativeRecords };
   useEffect(() => {
     const pageRoot = root.current, c = canvas.current, layerRoot = text.current;
     return () => {
@@ -231,6 +237,40 @@ export function PdfPage({
       layer = undefined;
     };
   }, [opened, number, zoom, rotation, measurementGeneration]);
+  useEffect(() => {
+    const layerRoot = native.current;
+    if (!ready || !geometry || geometry.opened !== opened || geometry.number !== number || !layerRoot) return;
+    let dead = false;
+    let committed: Awaited<ReturnType<typeof createNativeLayer>> | undefined;
+    void (async () => {
+      try {
+        const page = await opened.document.getPage(number);
+        if (dead || typeof page.getAnnotations !== "function") return;
+        const annotations = await page.getAnnotations({ intent: "display" });
+        if (dead) return;
+        const records = opened.nativeAnnotations
+          ? await opened.nativeAnnotations.readPage(number)
+          : parseNativePdfAnnotations(annotations, opened.hash, number);
+        if (dead) return;
+        callbacks.current.onNativeRecords?.(records);
+        if (!opened.api.AnnotationLayer) return;
+        const imageResourcesPath = typeof chrome !== "undefined" && chrome.runtime?.getURL
+          ? chrome.runtime.getURL("/pdfjs/images/") : "/pdfjs/images/";
+        const layer = await createNativeLayer(opened.api, page, geometry.viewport, annotations, imageResourcesPath);
+        if (dead || !layerRoot.isConnected) { layer.destroy(); return; }
+        committed = layer;
+        layerRoot.replaceChildren(layer.div);
+      } catch (error) {
+        if (!dead && !(error instanceof Error && error.name === "AbortError"))
+          callbacks.current.onError("原文件笔记暂时无法读取。 / Original-file notes could not be read.");
+      }
+    })();
+    return () => {
+      dead = true;
+      committed?.destroy();
+      layerRoot.replaceChildren();
+    };
+  }, [opened, number, geometry, ready]);
   useLayoutEffect(() => {
     setSearchRects([]);
     const layer = committedLayer.current;
@@ -256,10 +296,15 @@ export function PdfPage({
     setSearchRects(rects);
     if (firstTop !== undefined) callbacks.current.onSearchPosition?.(firstTop);
   }, [ready, geometry, searchRanges]);
-  function capture(event: React.MouseEvent<HTMLDivElement>) {
+  function capture(event: React.MouseEvent<HTMLDivElement> | KeyboardEvent) {
+    if (event.target instanceof Element && event.target.closest(".pdf-native-layer")) return;
     if (area || !ready || !geometry || !text.current || root.current?.dataset.ready !== "true") return;
     const s = getSelection();
     if (!s || s.isCollapsed || !s.rangeCount) {
+      if (event instanceof KeyboardEvent) {
+        onSelection(undefined);
+        return;
+      }
       const page = root.current.getBoundingClientRect();
       const x = event.clientX - page.left,
         y = event.clientY - page.top;
@@ -338,6 +383,21 @@ export function PdfPage({
       bottom: Math.max(...clientRects.map((rect) => rect.bottom)),
     } });
   }
+  useEffect(() => {
+    // Keyboard selection can originate from the focusable page scroller,
+    // outside this page node. Only the page owning its anchor may capture it.
+    const recapture = (event: KeyboardEvent) => {
+      if (!["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(event.key)) return;
+      if (event.target instanceof Element && event.target.closest(
+        ".pdf-native-layer, input, textarea, select, button, [contenteditable]:not([contenteditable='false']), [role='textbox']",
+      )) return;
+      const selection = getSelection();
+      if (!text.current || !selection || !text.current.contains(selection.anchorNode)) return;
+      capture(event);
+    };
+    document.addEventListener("keyup", recapture);
+    return () => document.removeEventListener("keyup", recapture);
+  }, [area, ready, geometry, records, number, onSelection, onPick, onError]);
   function position(e: React.PointerEvent) {
     const r = root.current!.getBoundingClientRect();
     return {
@@ -363,6 +423,7 @@ export function PdfPage({
         pointerEvents: ready ? undefined : "none",
         userSelect: ready ? undefined : "none",
       }} />
+      <div className="pdf-native-layer" ref={native} aria-label={t("原文件标注只读", "Original-file annotations are read-only")} />
       {failure && <div className="pdf-page-error" role="alert">
         <h2>{t(`第 ${number} 页无法完整显示`, `Page ${number} could not be displayed completely`)}</h2>
         <p>{failure === "image-too-large"

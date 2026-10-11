@@ -43,6 +43,7 @@ const record: Annotation = {
 let root: Root | undefined;
 const chromeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
 type TabUpdatedListener = (tabId: number, changeInfo: { url?: string }) => void;
+type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void;
 
 afterEach(async () => {
   await act(async () => root?.unmount());
@@ -65,8 +66,13 @@ function installChrome(
     contains: async () => true,
     request: async () => true,
   },
+  onTabActivated?: (listener: TabActivatedListener) => void,
 ) {
-  const events = { addListener: vi.fn(), removeListener: vi.fn() };
+  const messages = { addListener: vi.fn(), removeListener: vi.fn() };
+  const activated = {
+    addListener: vi.fn((listener: TabActivatedListener) => onTabActivated?.(listener)),
+    removeListener: vi.fn(),
+  };
   const updated = {
     addListener: vi.fn((listener: TabUpdatedListener) => onTabUpdated?.(listener)),
     removeListener: vi.fn(),
@@ -76,7 +82,7 @@ function installChrome(
     value: {
       runtime: {
         sendMessage: vi.fn(sendMessage),
-        onMessage: events,
+        onMessage: messages,
         getURL: (path: string) =>
           `chrome-extension://test/${path.replace(/^\//, "")}`,
       },
@@ -84,7 +90,7 @@ function installChrome(
         contains: ieeePermission.contains,
         request: ieeePermission.request,
       },
-      tabs: { query: async () => [tab], create: vi.fn(async () => ({ id: 9 })), onActivated: events, onUpdated: updated },
+      tabs: { query: async () => [tab], create: vi.fn(async () => ({ id: 9 })), onActivated: activated, onUpdated: updated },
     },
   });
   return globalThis.chrome.runtime.sendMessage as ReturnType<typeof vi.fn>;
@@ -600,6 +606,79 @@ describe("management UI", () => {
       windowId: 2,
       expectedUrl: updatedUrl,
       candidateUrl: updatedUrl,
+    });
+  });
+
+  it("keeps tab listeners subscribed while context changes and refreshes both updates and activations", async () => {
+    const firstUrl = "https://example.test/reading";
+    const ieeeUrl = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const finalUrl = "https://example.test/final-reading";
+    let activeTab = { id: 7, windowId: 1, url: firstUrl, title: "First" };
+    let fireTabUpdated: TabUpdatedListener | undefined;
+    let fireTabActivated: TabActivatedListener | undefined;
+    const contextFor = (): PdfTabContext => activeTab.url === ieeeUrl
+      ? {
+          tabId: activeTab.id,
+          url: activeTab.url,
+          publisher: "ieee",
+          kind: "wrapper",
+          currentReader: false,
+          candidates: [],
+        }
+      : {
+          tabId: activeTab.id,
+          url: activeTab.url,
+          kind: "direct",
+          currentReader: false,
+          candidates: [{ url: activeTab.url, via: "url" }],
+        };
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: contextFor() };
+      return { ok: true, data: true };
+    }, activeTab, (listener) => {
+      fireTabUpdated = listener;
+    }, undefined, (listener) => {
+      fireTabActivated = listener;
+    });
+    Object.defineProperty(chrome.tabs, "query", {
+      configurable: true,
+      value: async () => [activeTab],
+    });
+
+    const host = await mount("sidepanel");
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("在当前页开始标注");
+    const updatedSubscriptions = vi.mocked(chrome.tabs.onUpdated.addListener).mock.calls.length;
+    const activatedSubscriptions = vi.mocked(chrome.tabs.onActivated.addListener).mock.calls.length;
+    const updatedRemovals = vi.mocked(chrome.tabs.onUpdated.removeListener).mock.calls.length;
+    const activatedRemovals = vi.mocked(chrome.tabs.onActivated.removeListener).mock.calls.length;
+
+    activeTab = { id: 8, windowId: 1, url: ieeeUrl, title: "IEEE" };
+    await act(async () => {
+      fireTabUpdated!(8, { url: ieeeUrl });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("使用 IEEE 登录状态打开");
+
+    // Tab subscriptions must stay live across the context-driven render; otherwise an
+    // activation that lands during listener replacement can leave stale UI indefinitely.
+    expect(chrome.tabs.onUpdated.addListener).toHaveBeenCalledTimes(updatedSubscriptions);
+    expect(chrome.tabs.onUpdated.removeListener).toHaveBeenCalledTimes(updatedRemovals);
+    expect(chrome.tabs.onActivated.addListener).toHaveBeenCalledTimes(activatedSubscriptions);
+    expect(chrome.tabs.onActivated.removeListener).toHaveBeenCalledTimes(activatedRemovals);
+
+    activeTab = { id: 9, windowId: 1, url: finalUrl, title: "Final" };
+    await act(async () => {
+      fireTabActivated!({ tabId: 9, windowId: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("在当前页开始标注");
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.context.get",
+      tabId: 9,
+      windowId: 1,
+      expectedUrl: finalUrl,
     });
   });
 

@@ -19,6 +19,9 @@ from urllib.parse import urlparse
 
 MAX_BYTES = 20 * 1024 * 1024
 MAX_ANNOTATIONS = 50_000
+MAX_NATIVE_REPLIES = 500
+MAX_NATIVE_CONTENTS = 1_000_000
+MAX_NATIVE_AUTHOR = 4_096
 MAX_REVISION = 1_000_000_000
 MAX_SAFE_INTEGER = 9_007_199_254_740_991
 KINDS = {"text", "image", "pdf-text", "pdf-area"}
@@ -294,6 +297,93 @@ def validate_annotation(raw: Any, version: int) -> dict[str, Any]:
     return annotation
 
 
+def require_document_hash(value: Any, name: str) -> str:
+    document_hash = require_text(value, name, 64, allow_empty=False)
+    if not HASH.fullmatch(document_hash) or document_hash != document_hash.lower():
+        raise QueryError(f"{name} must be a lowercase SHA-256 hex digest")
+    return document_hash
+
+
+def validate_native_time_fields(record: dict[str, Any], name: str) -> None:
+    if "createdAt" in record:
+        parse_timestamp(record["createdAt"], f"{name}.createdAt")
+    if "updatedAt" in record:
+        parse_timestamp(record["updatedAt"], f"{name}.updatedAt")
+
+
+def validate_native_rect(value: Any, name: str) -> None:
+    if not isinstance(value, list) or len(value) != 4:
+        raise QueryError(f"{name} must contain [left, bottom, right, top]")
+    left, bottom, right, top = (
+        require_number(component, f"{name}[{index}]", -10_000_000, 10_000_000)
+        for index, component in enumerate(value)
+    )
+    if right < left or top < bottom:
+        raise QueryError(f"{name} coordinates are out of order")
+
+
+def validate_native_color(value: Any, name: str) -> None:
+    if not isinstance(value, list) or len(value) != 3:
+        raise QueryError(f"{name} must contain three PDF.js RGB bytes")
+    for index, component in enumerate(value):
+        require_int(component, f"{name}[{index}]", 0, 255)
+
+
+def validate_native_reply(raw: Any, name: str) -> dict[str, Any]:
+    reply = require_object(raw, name)
+    exact_keys(reply, name, {"id", "subtype", "contents"}, {"author", "createdAt", "updatedAt", "inReplyTo", "replyType"})
+    require_text(reply["id"], f"{name}.id", 512, allow_empty=False)
+    require_text(reply["subtype"], f"{name}.subtype", 64, allow_empty=False)
+    require_text(reply["contents"], f"{name}.contents", MAX_NATIVE_CONTENTS)
+    if "author" in reply:
+        require_text(reply["author"], f"{name}.author", MAX_NATIVE_AUTHOR)
+    if "inReplyTo" in reply:
+        require_text(reply["inReplyTo"], f"{name}.inReplyTo", 512, allow_empty=False)
+    if "replyType" in reply:
+        require_text(reply["replyType"], f"{name}.replyType", 64, allow_empty=False)
+    validate_native_time_fields(reply, name)
+    return reply
+
+
+def validate_native_annotation(raw: Any, document_hash: str, index: int) -> dict[str, Any]:
+    name = f"nativeAnnotations[{index}]"
+    annotation = require_object(raw, name)
+    exact_keys(
+        annotation,
+        name,
+        {"key", "documentHash", "pageNumber", "id", "subtype", "contents"},
+        {"author", "createdAt", "updatedAt", "inReplyTo", "replyType", "rect", "color", "replies"},
+    )
+    key = require_text(annotation["key"], f"{name}.key", 600, allow_empty=False)
+    if require_document_hash(annotation["documentHash"], f"{name}.documentHash") != document_hash:
+        raise QueryError(f"{name}.documentHash must match document.documentHash")
+    require_int(annotation["pageNumber"], f"{name}.pageNumber", 1, 100_000)
+    annotation_id = require_text(annotation["id"], f"{name}.id", 512, allow_empty=False)
+    require_text(annotation["subtype"], f"{name}.subtype", 64, allow_empty=False)
+    require_text(annotation["contents"], f"{name}.contents", MAX_NATIVE_CONTENTS)
+    expected_key = f"{document_hash}:{annotation['pageNumber']}:{annotation_id}"
+    if key != expected_key:
+        raise QueryError(f"{name}.key must match documentHash, pageNumber, and id")
+    if "author" in annotation:
+        require_text(annotation["author"], f"{name}.author", MAX_NATIVE_AUTHOR)
+    if "inReplyTo" in annotation:
+        require_text(annotation["inReplyTo"], f"{name}.inReplyTo", 512, allow_empty=False)
+    if "replyType" in annotation:
+        require_text(annotation["replyType"], f"{name}.replyType", 64, allow_empty=False)
+    validate_native_time_fields(annotation, name)
+    if "rect" in annotation:
+        validate_native_rect(annotation["rect"], f"{name}.rect")
+    if "color" in annotation:
+        validate_native_color(annotation["color"], f"{name}.color")
+    if "replies" in annotation:
+        replies = annotation["replies"]
+        if not isinstance(replies, list) or len(replies) > MAX_NATIVE_REPLIES:
+            raise QueryError(f"{name}.replies must contain at most {MAX_NATIVE_REPLIES} records")
+        for reply_index, reply in enumerate(replies):
+            validate_native_reply(reply, f"{name}.replies[{reply_index}]")
+    return annotation
+
+
 def reject_json_constant(value: str) -> None:
     raise QueryError(f"export contains unsupported JSON number: {value}")
 
@@ -321,7 +411,7 @@ def read_export(path: Path) -> bytes:
     return payload
 
 
-def load_backup(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def parse_export_file(file_name: str) -> dict[str, Any]:
     path = Path(file_name)
     if not path.is_absolute():
         raise QueryError("--file must be an absolute path")
@@ -331,7 +421,10 @@ def load_backup(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         raise
     except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as error:
         raise QueryError(f"export is not valid UTF-8 JSON: {error}") from error
-    envelope = require_object(backup, "backup")
+    return require_object(backup, "backup")
+
+
+def validate_backup(envelope: dict[str, Any]) -> list[dict[str, Any]]:
     exact_keys(envelope, "backup", {"format", "schemaVersion", "exportedAt", "annotations"}, {"settings"})
     if envelope["format"] != "web-ink":
         raise QueryError("backup.format must be web-ink")
@@ -346,7 +439,72 @@ def load_backup(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     ids = [annotation["id"] for annotation in records]
     if len(ids) != len(set(ids)):
         raise QueryError("backup.annotations contains duplicate IDs")
-    return envelope, records
+    return records
+
+
+def load_backup(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    envelope = parse_export_file(file_name)
+    return envelope, validate_backup(envelope)
+
+
+def validate_pdf_notes(envelope: dict[str, Any]) -> list[dict[str, Any]]:
+    exact_keys(
+        envelope,
+        "pdf notes",
+        {"format", "schemaVersion", "exportedAt", "document", "annotations", "nativeAnnotations"},
+    )
+    if envelope["format"] != "web-ink-pdf-notes":
+        raise QueryError("pdf notes.format must be web-ink-pdf-notes")
+    if type(envelope["schemaVersion"]) is not int or envelope["schemaVersion"] != 1:
+        raise QueryError("pdf notes.schemaVersion must be 1")
+    parse_timestamp(envelope["exportedAt"], "pdf notes.exportedAt")
+    document = require_object(envelope["document"], "pdf notes.document")
+    exact_keys(document, "pdf notes.document", {"documentHash", "fileName"}, {"sourceUrl"})
+    document_hash = require_document_hash(document["documentHash"], "pdf notes.document.documentHash")
+    require_text(document["fileName"], "pdf notes.document.fileName", 512, allow_empty=False)
+    if "sourceUrl" in document:
+        source_url = require_http_url(document["sourceUrl"], "pdf notes.document.sourceUrl")
+        if not source_url.startswith("https:"):
+            raise QueryError("pdf notes.document.sourceUrl must use HTTPS")
+
+    annotations = envelope["annotations"]
+    native_annotations = envelope["nativeAnnotations"]
+    if not isinstance(annotations, list) or not isinstance(native_annotations, list):
+        raise QueryError("pdf notes annotations and nativeAnnotations must be arrays")
+    if len(annotations) + len(native_annotations) > MAX_ANNOTATIONS:
+        raise QueryError("pdf notes contains more than 50,000 records")
+
+    web_records = [validate_annotation(annotation, 2) for annotation in annotations]
+    for index, annotation in enumerate(web_records):
+        if annotation["kind"] not in {"pdf-text", "pdf-area"}:
+            raise QueryError(f"annotations[{index}] must be a PDF Web Ink record")
+        if annotation["target"]["documentHash"] != document_hash:
+            raise QueryError(f"annotations[{index}].target.documentHash must match document.documentHash")
+    native_records = [
+        validate_native_annotation(annotation, document_hash, index)
+        for index, annotation in enumerate(native_annotations)
+    ]
+
+    query_ids = [f"web:{annotation['id']}" for annotation in web_records]
+    query_ids.extend(f"native:{annotation['key']}" for annotation in native_records)
+    if len(query_ids) != len(set(query_ids)):
+        raise QueryError("pdf notes contains duplicate query IDs")
+    return web_records + native_records
+
+
+def load_pdf_notes(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    envelope = parse_export_file(file_name)
+    return envelope, validate_pdf_notes(envelope)
+
+
+def load_export(file_name: str) -> tuple[dict[str, Any], list[dict[str, Any]], bool]:
+    envelope = parse_export_file(file_name)
+    export_format = envelope.get("format")
+    if export_format == "web-ink":
+        return envelope, validate_backup(envelope), False
+    if export_format == "web-ink-pdf-notes":
+        return envelope, validate_pdf_notes(envelope), True
+    raise QueryError("export.format is unsupported")
 
 
 def source_url(annotation: dict[str, Any]) -> str | None:
@@ -360,9 +518,52 @@ def citation(annotation: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def annotation_view(annotation: dict[str, Any]) -> dict[str, Any]:
+def native_annotation_view(annotation: dict[str, Any], document: dict[str, Any]) -> dict[str, Any]:
+    created_at = annotation.get("createdAt")
+    result: dict[str, Any] = {
+        "id": f"native:{annotation['key']}",
+        "recordType": "native-pdf",
+        "key": annotation["key"],
+        "nativeAnnotationId": annotation["id"],
+        "subtype": annotation["subtype"],
+        "contents": annotation["contents"],
+        "createdAt": created_at,
+        "createdAtKnown": created_at is not None,
+        "updatedAt": annotation.get("updatedAt"),
+        "updatedAtKnown": "updatedAt" in annotation,
+        "citation": {
+            "annotationId": annotation["id"],
+            "title": document["fileName"],
+            "sourceUrl": document.get("sourceUrl"),
+            "documentHash": document["documentHash"],
+            "pageNumber": annotation["pageNumber"],
+            "createdAt": created_at,
+            "createdAtKnown": created_at is not None,
+            "updatedAt": annotation.get("updatedAt"),
+            "updatedAtKnown": "updatedAt" in annotation,
+        },
+        "originalFile": {
+            "documentHash": document["documentHash"],
+            "fileName": document["fileName"],
+            "sourceUrl": document.get("sourceUrl"),
+            "pageNumber": annotation["pageNumber"],
+        },
+        "readOnly": True,
+        "contentBoundary": "Contents are original PDF annotation text, not a reconstructed source excerpt.",
+    }
+    for field in ("author", "inReplyTo", "replyType", "rect", "color", "replies"):
+        if field in annotation:
+            result[field] = annotation[field]
+    return result
+
+
+def annotation_view(annotation: dict[str, Any], *, standalone: bool = False, document: dict[str, Any] | None = None) -> dict[str, Any]:
+    if standalone and "key" in annotation:
+        if document is None:
+            raise QueryError("native annotation is missing document provenance")
+        return native_annotation_view(annotation, document)
     target = annotation["target"]
-    result: dict[str, Any] = {"id": annotation["id"], "kind": annotation["kind"], "title": annotation["pageTitle"], "pageUrl": annotation["pageUrl"], "userNote": annotation["note"], "tags": annotation["tags"], "createdAt": annotation["createdAt"], "citation": citation(annotation)}
+    result: dict[str, Any] = {"id": f"web:{annotation['id']}" if standalone else annotation["id"], "kind": annotation["kind"], "title": annotation["pageTitle"], "pageUrl": annotation["pageUrl"], "userNote": annotation["note"], "tags": annotation["tags"], "createdAt": annotation["createdAt"], "citation": citation(annotation)}
     if annotation["kind"] == "text":
         result.update({"savedExcerpt": target["exact"], "context": {"prefix": target["prefix"], "suffix": target["suffix"]}})
     elif annotation["kind"] == "image":
@@ -377,6 +578,14 @@ def annotation_view(annotation: dict[str, Any]) -> dict[str, Any]:
 
 
 def searchable_text(annotation: dict[str, Any]) -> str:
+    if "key" in annotation:
+        fields = [
+            annotation["key"], annotation["id"], annotation["subtype"], annotation["contents"],
+            annotation.get("author", ""), annotation.get("inReplyTo", ""), annotation.get("replyType", ""),
+        ]
+        for reply in annotation.get("replies", []):
+            fields.extend([reply["id"], reply["subtype"], reply["contents"], reply.get("author", ""), reply.get("inReplyTo", ""), reply.get("replyType", "")])
+        return "\n".join(fields).casefold()
     target = annotation["target"]
     fields = [annotation["pageTitle"], annotation["pageUrl"], annotation["note"], *annotation["tags"]]
     if annotation["kind"] == "text":
@@ -424,46 +633,92 @@ def document_summaries(annotations: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(groups.values(), key=lambda document: (document["pageUrl"], document.get("documentHash", "")))
 
 
-def inspect(envelope: dict[str, Any], annotations: list[dict[str, Any]]) -> dict[str, Any]:
+def inspect(envelope: dict[str, Any], annotations: list[dict[str, Any]], *, standalone: bool = False) -> dict[str, Any]:
+    if standalone:
+        counts = Counter("native-pdf" if "key" in annotation else annotation["kind"] for annotation in annotations)
+        known_times = [annotation["createdAt"] for annotation in annotations if annotation.get("createdAt")]
+        first = min(known_times, key=lambda value: parse_timestamp(value, "annotation.createdAt"), default=None)
+        last = max(known_times, key=lambda value: parse_timestamp(value, "annotation.createdAt"), default=None)
+        return {
+            "format": "web-ink-pdf-notes",
+            "schemaVersion": envelope["schemaVersion"],
+            "exportedAt": envelope["exportedAt"],
+            "document": envelope["document"],
+            "total": len(annotations),
+            "countsByKind": {kind: counts[kind] for kind in sorted(counts)},
+            "createdAtRange": {"from": first, "to": last},
+            "unknownCreatedAtCount": len(annotations) - len(known_times),
+            "coverage": "This is a read-only current-PDF notes snapshot, not an importable Web Ink backup. Native contents are original annotation text, not reconstructed excerpts.",
+        }
     counts = Counter(annotation["kind"] for annotation in annotations)
     first = min(annotations, key=lambda annotation: parse_timestamp(annotation["createdAt"], "annotation.createdAt"), default=None)
     last = max(annotations, key=lambda annotation: parse_timestamp(annotation["createdAt"], "annotation.createdAt"), default=None)
     return {"format": "web-ink", "schemaVersion": envelope["schemaVersion"], "exportedAt": envelope["exportedAt"], "total": len(annotations), "countsByKind": {kind: counts[kind] for kind in sorted(KINDS)}, "documents": document_summaries(annotations), "createdAtRange": {"from": first["createdAt"] if first else None, "to": last["createdAt"] if last else None}, "coverage": "Counts and time range describe only this selected export. Annotations are excerpts and notes, not full document text."}
 
 
-def search(args: argparse.Namespace, annotations: list[dict[str, Any]]) -> dict[str, Any]:
+def search(
+    args: argparse.Namespace,
+    annotations: list[dict[str, Any]],
+    *,
+    standalone: bool = False,
+    document: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     limit = parse_nonnegative(args.limit, "--limit")
     offset = parse_nonnegative(args.offset, "--offset")
     if not 1 <= limit <= 100:
         raise QueryError("--limit must be between 1 and 100")
-    if args.kind and args.kind not in KINDS:
+    kinds = KINDS | ({"native-pdf"} if standalone else set())
+    if args.kind and args.kind not in kinds:
         raise QueryError("--kind is unsupported")
     start = parse_timestamp(args.from_time, "--from") if args.from_time else None
     end = parse_timestamp(args.to_time, "--to") if args.to_time else None
     if start and end and start > end:
         raise QueryError("--from must not be after --to")
     query = args.text.casefold()
-    matching: list[tuple[datetime, dict[str, Any]]] = []
+    matching: list[tuple[datetime | None, dict[str, Any]]] = []
     for annotation in annotations:
-        created = parse_timestamp(annotation["createdAt"], "annotation.createdAt")
-        if args.kind and annotation["kind"] != args.kind:
+        native = "key" in annotation
+        kind = "native-pdf" if native else annotation["kind"]
+        created = parse_timestamp(annotation["createdAt"], "annotation.createdAt") if annotation.get("createdAt") else None
+        if args.kind and kind != args.kind:
             continue
-        if args.tag and args.tag not in annotation["tags"]:
+        if args.tag and (native or args.tag not in annotation["tags"]):
             continue
-        if (start and created < start) or (end and created > end):
+        if (start or end) and created is None:
             continue
-        if query not in searchable_text(annotation):
+        if (start and created and created < start) or (end and created and created > end):
+            continue
+        haystack = searchable_text(annotation)
+        if native and document:
+            haystack = "\n".join([haystack, document["fileName"], document.get("sourceUrl", "")]).casefold()
+        if query not in haystack:
             continue
         matching.append((created, annotation))
-    matching.sort(key=lambda item: (item[0], item[1]["id"]), reverse=True)
+    matching.sort(
+        key=lambda item: (
+            item[0] is not None,
+            item[0].timestamp() if item[0] else float("-inf"),
+            f"native:{item[1]['key']}" if "key" in item[1] else f"web:{item[1]['id']}",
+        ),
+        reverse=True,
+    )
     page = matching[offset:offset + limit]
-    return {"total": len(matching), "offset": offset, "limit": limit, "hasMore": offset + len(page) < len(matching), "items": [annotation_view(annotation) for _, annotation in page]}
+    return {"total": len(matching), "offset": offset, "limit": limit, "hasMore": offset + len(page) < len(matching), "items": [annotation_view(annotation, standalone=standalone, document=document) for _, annotation in page]}
 
 
-def show(annotation_id: str, annotations: list[dict[str, Any]]) -> dict[str, Any]:
+def show(
+    annotation_id: str,
+    annotations: list[dict[str, Any]],
+    *,
+    standalone: bool = False,
+    document: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     for annotation in annotations:
-        if annotation["id"] == annotation_id:
-            return annotation_view(annotation)
+        candidate = (
+            f"native:{annotation['key']}" if "key" in annotation else f"web:{annotation['id']}"
+        ) if standalone else annotation["id"]
+        if candidate == annotation_id:
+            return annotation_view(annotation, standalone=standalone, document=document)
     raise QueryError("annotation ID was not found in this export")
 
 
@@ -488,13 +743,14 @@ def parser() -> JsonArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     try:
         args = parser().parse_args(argv)
-        envelope, annotations = load_backup(args.file)
+        envelope, annotations, standalone = load_export(args.file)
+        document = envelope.get("document") if standalone else None
         if args.command == "inspect":
-            output(inspect(envelope, annotations))
+            output(inspect(envelope, annotations, standalone=standalone))
         elif args.command == "search":
-            output(search(args, annotations))
+            output(search(args, annotations, standalone=standalone, document=document))
         else:
-            output(show(args.id, annotations))
+            output(show(args.id, annotations, standalone=standalone, document=document))
         return 0
     except QueryError as error:
         output({"error": str(error)})

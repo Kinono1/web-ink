@@ -3,10 +3,14 @@ import type { PdfSearchMatch } from "./search";
 import { PdfPage } from "./PdfPage";
 import { PdfNote, type PdfNoteDraft } from "./PdfNote";
 import { connectPdfSidebar } from "./sidebar-connection";
-import type { PdfReaderRequest, PdfSidebarState } from "./sidebar-types";
+import type { PdfAnnotationFilter, PdfReaderRequest, PdfSidebarState } from "./sidebar-types";
+import { NativePdfAnnotations, nativePdfRect } from "./native-annotations";
+import { fromPdfRect } from "./geometry";
+import { NativePdfNote, PdfAnnotationFilters } from "../ui/PdfSidebar";
 import {
   errorText,
   type PdfAnnotation,
+  type NativePdfAnnotation,
   type OpenDocument,
   type SelectionTarget,
   type SelectionPreview,
@@ -33,7 +37,7 @@ import {
 } from "../core/model";
 import { THEME_TOKENS } from "../ui/theme";
 import { Icon } from "../ui/management/helpers";
-import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
+import { MAX_PDF_BYTES, pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { readIeeePdf, ieeeSourceUrl, IeeePdfError } from "./ieee";
 import { ieeePaperUrl, isIeeeSessionPage, isIeeePdfWrapper } from "./context";
 import { pdfDisplayName, pdfDoi } from "./metadata";
@@ -66,7 +70,7 @@ const dirtyDraft = (draft: PdfNoteDraft) =>
   draft.color !== draft.base.color ||
   noteTags(draft.tags).join("\0") !== draft.base.tags.join("\0");
 type LeaveAction =
-  | { kind: "return" | "source" | "paper" | "library" | "previous" | "choose" }
+  | { kind: "return" | "source" | "paper" | "library" | "previous" | "choose" | "export" | "ai" }
   | { kind: "open"; file?: File; source: string };
 type PositionSession = {
   session: number;
@@ -107,6 +111,20 @@ export function PdfReader() {
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
   const recordsRef = useRef(records);
   recordsRef.current = records;
+  const originalNotes = useRef<NativePdfAnnotations | undefined>(undefined);
+  const nativeScan = useRef<AbortController | undefined>(undefined);
+  const [nativeRecords, setNativeRecords] = useState<NativePdfAnnotation[]>([]);
+  const [nativeFilter, setNativeFilter] = useState<PdfAnnotationFilter>("web-ink");
+  const [nativeLoading, setNativeLoading] = useState(false);
+  const [nativeProgress, setNativeProgress] = useState<{ completed: number; total: number }>();
+  const [nativeError, setNativeError] = useState("");
+  const [nativeOffset, setNativeOffset] = useState(0);
+  const nativeLimit = 50;
+  const nativeHistory = useRef<number[]>([]);
+  const nativeFocus = useRef<{ session: number; pageNumber: number; top: number; intent: number } | undefined>(undefined);
+  const exportController = useRef<AbortController | undefined>(undefined);
+  const [exportStage, setExportStage] = useState<"preparing" | "writing" | "verifying">();
+  const downloadUrls = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [showMarks, setShowMarks] = useState(true),
     [area, setArea] = useState(false);
   const [color, setColor] = useState<string>(COLORS[0]);
@@ -190,6 +208,29 @@ export function PdfReader() {
   const t = (cn: string, en: string) => (zh ? cn : en);
   const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
   const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
+  const nativeWindow = useMemo(() => {
+    const records: NativePdfAnnotation[] = [];
+    const encoder = new TextEncoder();
+    let bytes = 2, end = nativeOffset, oversized = false;
+    while (end < nativeRecords.length && records.length < nativeLimit) {
+      const record = nativeRecords[end]!;
+      const recordBytes = encoder.encode(JSON.stringify(record)).byteLength;
+      const nextBytes = bytes + recordBytes + (records.length ? 1 : 0);
+      if (nextBytes > 4 * 1024 * 1024) {
+        if (!records.length) { end++; oversized = true; }
+        break;
+      }
+      records.push(record);
+      bytes = nextBytes;
+      end++;
+    }
+    return { records, end, oversized };
+  }, [nativeRecords, nativeOffset]);
+  const originalError = nativeWindow.oversized
+    ? t("这条原文件笔记超过侧栏显示上限；完整内容仍保留在当前文档，可导出给 AI。", "This original note exceeds the sidebar display limit. Its full contents remain in this document and can be exported for AI.")
+    : nativeError;
+  const nativeComplete = nativeProgress?.completed === opened?.document.numPages;
+  const noteCount = nativeFilter === "web-ink" ? records.length : nativeFilter === "original" ? nativeRecords.length : records.length + nativeRecords.length;
   useEffect(() => {
     void chrome.tabs?.getCurrent?.()
       .then((tab) => { readerTab.current = tab?.id; })
@@ -280,6 +321,7 @@ export function PdfReader() {
   }
   function userIntent() {
     intentEpoch.current++;
+    nativeFocus.current = undefined;
     if (positionSession.current) positionSession.current.pending = undefined;
     setPositionEpoch((epoch) => epoch + 1);
   }
@@ -338,6 +380,8 @@ export function PdfReader() {
       event.returnValue = "";
     };
     const hide = () => {
+      exportController.current?.abort();
+      nativeScan.current?.abort();
       void positionSession.current?.writer.flush().catch(() => undefined);
       // Page teardown may prevent this best-effort message; a replacement
       // reader is independently denied by the background's document binding.
@@ -398,6 +442,11 @@ export function PdfReader() {
   useEffect(
     () => () => {
       documentSessionRef.current++;
+      nativeScan.current?.abort();
+      originalNotes.current?.dispose();
+      exportController.current?.abort();
+      for (const [url, timer] of downloadUrls.current) { clearTimeout(timer); URL.revokeObjectURL(url); }
+      downloadUrls.current.clear();
       void session.current.dispose();
       const position = positionSession.current;
       positionSession.current = undefined;
@@ -541,6 +590,14 @@ export function PdfReader() {
     pendingScrollAdjustment.current = 0;
   }, [layoutEpoch]);
   useLayoutEffect(() => {
+    const pending = nativeFocus.current;
+    const scroller = container.current;
+    if (!pending || !scroller || pending.session !== documentSessionRef.current || pending.intent !== intentEpoch.current || !dimensions.current.has(pending.pageNumber)) return;
+    nativeFocus.current = undefined;
+    const start = layoutIndex.current.offsetBefore(pending.pageNumber) + pagesPadding();
+    scroller.scrollTo({ top: Math.max(start, start + pending.top - scroller.clientHeight / 4), behavior: "instant" });
+  }, [layoutEpoch, positionEpoch]);
+  useLayoutEffect(() => {
     const active = positionSession.current;
     const pending = active?.pending;
     const scroller = container.current;
@@ -681,6 +738,21 @@ export function PdfReader() {
     // Invalidate every async callback from the currently displayed document
     // before a new source read can complete.
     documentSessionRef.current++;
+    exportController.current?.abort();
+    exportController.current = undefined;
+    setExportStage(undefined);
+    nativeScan.current?.abort();
+    nativeScan.current = undefined;
+    originalNotes.current?.dispose();
+    originalNotes.current = undefined;
+    nativeFocus.current = undefined;
+    setNativeRecords([]);
+    setNativeFilter("web-ink");
+    setNativeLoading(false);
+    setNativeProgress(undefined);
+    setNativeError("");
+    setNativeOffset(0);
+    nativeHistory.current = [];
     positionSession.current?.writer.dispose();
     positionSession.current = undefined;
     setOpened(undefined);
@@ -814,11 +886,14 @@ export function PdfReader() {
       else readerLocation.searchParams.delete("source");
       history.replaceState(null, "", readerLocation.href);
       setSource(remote ?? "");
+      const nativeAnnotations = new NativePdfAnnotations(doc, hash);
+      originalNotes.current = nativeAnnotations;
       setOpened({
         document: doc,
         api,
         hash,
         fileName,
+        nativeAnnotations,
         ...(remote ? { sourceUrl: remote } : {}),
       });
       documentSessionRef.current++;
@@ -959,11 +1034,95 @@ export function PdfReader() {
   const currentParams = new URLSearchParams(location.search);
   const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
   const paperUrl = doiUrl(paperDoi) || ieeePaperUrl(handoff?.returnUrl || publicUrl);
+  function download(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.append(link);
+    try { link.click(); }
+    catch (cause) { URL.revokeObjectURL(url); throw cause; }
+    finally { link.remove(); }
+    downloadUrls.current.set(url, setTimeout(() => {
+      URL.revokeObjectURL(url);
+      downloadUrls.current.delete(url);
+    }, 30_000));
+  }
+  function cancelExport() {
+    exportController.current?.abort();
+    exportController.current = undefined;
+    setExportStage(undefined);
+    setNotice(t("已取消导出。", "Export cancelled."));
+  }
+  async function exportAnnotations(kind: "export" | "ai") {
+    if (!opened || exportController.current) return;
+    const active = documentSessionRef.current;
+    const current = opened;
+    const snapshot = structuredClone(recordsRef.current.filter((record) => record.pageUrl === key && record.target.documentHash === current.hash && record.revision > 0));
+    const controller = new AbortController();
+    exportController.current = controller;
+    cancelNativeScan();
+    setExportStage("preparing");
+    setError("");
+    setNotice("");
+    try {
+      if (kind === "export") {
+        const bytes = await current.document.getData();
+        if (controller.signal.aborted || active !== documentSessionRef.current) return;
+        if (bytes.byteLength > MAX_PDF_BYTES) throw Error(t("PDF 超过 50 MiB 导出上限。", "PDF exceeds the 50 MiB export limit."));
+        const [{ exportPdfInWorker }, { verifyPdfExport }] = await Promise.all([import("./export-client"), import("./export-verify")]);
+        if (controller.signal.aborted || active !== documentSessionRef.current) return;
+        setExportStage("writing");
+        const result = await exportPdfInWorker(bytes, current.hash, snapshot, controller.signal, current.fileName);
+        if (controller.signal.aborted || active !== documentSessionRef.current) return;
+        if (result.bytes.byteLength > MAX_PDF_BYTES || result.count !== snapshot.length)
+          throw Error(t("PDF 导出数量或大小校验未通过。", "PDF export count or size verification failed."));
+        setExportStage("verifying");
+        const verified = await verifyPdfExport(bytes, result.bytes, current.hash, snapshot, controller.signal);
+        if (controller.signal.aborted || active !== documentSessionRef.current) return;
+        if (verified.count !== snapshot.length || verified.sourceHash !== current.hash || verified.outputHash === current.hash)
+          throw Error(t("PDF 导出校验未通过。", "PDF export verification failed."));
+        download(new Blob([result.bytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" }), result.fileName);
+        setNotice(t("PDF 已生成并开始下载。", "PDF generated and download started."));
+        return;
+      }
+      const nativeAnnotations = await current.nativeAnnotations!.loadAll(controller.signal, (completed, total) => {
+        if (controller.signal.aborted || active !== documentSessionRef.current) return;
+        setNativeProgress({ completed, total });
+        setNativeRecords(current.nativeAnnotations!.records);
+      });
+      if (controller.signal.aborted || active !== documentSessionRef.current) return;
+      setNativeRecords(nativeAnnotations);
+      if (snapshot.length + nativeAnnotations.length > 50_000)
+        throw Error(t("导出给 AI 最多支持 50,000 条标注。", "AI export supports at most 50,000 annotations."));
+      const sourceUrl = safeSource(current.sourceUrl);
+      const notes = { format: "web-ink-pdf-notes", schemaVersion: 1, exportedAt: new Date().toISOString(),
+        document: { documentHash: current.hash, fileName: current.fileName, ...(sourceUrl ? { sourceUrl } : {}) },
+        annotations: snapshot, nativeAnnotations };
+      const name = current.fileName.replace(/[\\/:*?"<>|\u0000-\u001f]/g, "-").replace(/\.pdf$/i, "") || "Document";
+      const file = new Blob([JSON.stringify(notes, null, 2)], { type: "application/json" });
+      if (file.size > 20 * 1024 * 1024)
+        throw Error(t("导出给 AI 的笔记超过 20 MiB 上限。", "AI notes exceed the 20 MiB export limit."));
+      download(file, `${name}-notes.json`);
+      setNotice(t("笔记已生成并开始下载。", "Notes generated and download started."));
+    } catch (cause) {
+      if (!controller.signal.aborted && active === documentSessionRef.current) setError(errorText(cause));
+    } finally {
+      if (exportController.current === controller) { exportController.current = undefined; setExportStage(undefined); }
+    }
+  }
   async function executeLeave(action: LeaveAction) {
     if (leaving) return;
+    if (action.kind === "ai" || action.kind === "export") {
+      setPendingLeave(undefined);
+      void exportAnnotations(action.kind);
+      return;
+    }
+    if (exportController.current) cancelExport();
     setLeaving(true);
     try {
       await flushPosition();
+      cancelNativeScan();
       if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "previous" || action.kind === "source" || action.kind === "paper"))
         await request({ type: "pdf.handoff.revoke", token: handoff.token });
       switch (action.kind) {
@@ -996,6 +1155,7 @@ export function PdfReader() {
     } finally { setLeaving(false); }
   }
   function requestLeave(action: LeaveAction) {
+    if ((action.kind === "export" || action.kind === "ai") && exportController.current) return;
     if (action.kind === "open") {
       autoOpenAttempted.current = true;
       // Cancel old initialization without queuing another old-document write.
@@ -1036,7 +1196,12 @@ export function PdfReader() {
   }
   function keepEditing() {
     setPendingLeave(undefined);
-    if (deletedDrafts.length) setNotesOpen(true);
+    if (Object.values(draftsRef.current).some(dirtyDraft)) {
+      setNativeFilter("web-ink");
+      cancelNativeScan();
+      setNotesOpen(true);
+      if (supportsSidebar && !sidebarAttachedRef.current) openNotes();
+    }
   }
   async function remove(record: PdfAnnotation) {
     if (removing || saving || unsaved || record.pageUrl !== key) return;
@@ -1138,7 +1303,69 @@ export function PdfReader() {
       behavior: "instant",
     });
   }
-  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0;
+  const receiveOriginalNotes = useCallback((next: NativePdfAnnotation[]) => {
+    if (documentSession !== documentSessionRef.current) return;
+    const hash = originalNotes.current?.records[0]?.documentHash ?? opened?.hash;
+    if (next.some((record) => record.documentHash !== hash)) return;
+    setNativeRecords(originalNotes.current?.records.slice() ?? next);
+  }, [documentSession, opened?.hash]);
+  function cancelNativeScan() {
+    nativeScan.current?.abort();
+    nativeScan.current = undefined;
+    setNativeLoading(false);
+  }
+  async function scanOriginalNotes() {
+    const collector = originalNotes.current;
+    if (!collector || nativeScan.current) return;
+    const active = documentSessionRef.current;
+    const controller = new AbortController();
+    nativeScan.current = controller;
+    setNativeLoading(true);
+    setNativeError("");
+    try {
+      const all = await collector.loadAll(controller.signal, (completed, total) => {
+        if (active !== documentSessionRef.current || controller.signal.aborted) return;
+        setNativeProgress({ completed, total });
+        setNativeRecords(collector.records);
+      });
+      if (active === documentSessionRef.current && !controller.signal.aborted) setNativeRecords(all);
+    } catch (cause) {
+      if (active === documentSessionRef.current && !controller.signal.aborted) setNativeError(errorText(cause));
+    } finally {
+      if (nativeScan.current === controller) { nativeScan.current = undefined; setNativeLoading(false); }
+    }
+  }
+  function filterAnnotations(filter: PdfAnnotationFilter) {
+    if (exportController.current) return;
+    setNativeFilter(filter);
+    if (filter === "web-ink") cancelNativeScan();
+    else void scanOriginalNotes();
+  }
+  function nextOriginalPage() {
+    if (nativeWindow.end >= nativeRecords.length) return;
+    nativeHistory.current.push(nativeOffset);
+    setNativeOffset(nativeWindow.end);
+  }
+  function previousOriginalPage() {
+    setNativeOffset(nativeHistory.current.pop() ?? 0);
+  }
+  async function focusOriginalNote(record: NativePdfAnnotation) {
+    if (!opened || record.documentHash !== opened.hash) return;
+    const active = documentSessionRef.current;
+    jump(record.pageNumber);
+    const intent = intentEpoch.current;
+    setPicked(undefined);
+    if (!record.rect) return;
+    const page = await opened.document.getPage(record.pageNumber);
+    if (active !== documentSessionRef.current || intent !== intentEpoch.current) return;
+    const rect = nativePdfRect(record.rect, page.view);
+    if (!rect) return;
+    const viewport = page.getViewport({ scale: zoom, rotation: (page.rotate + rotation) % 360 });
+    const position = fromPdfRect(rect, viewport, page.view);
+    nativeFocus.current = { session: active, pageNumber: record.pageNumber, top: position.y, intent };
+    setPositionEpoch((epoch) => epoch + 1);
+  }
+  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0 || !!exportStage;
   const sidebarState: PdfSidebarState | null = opened && key && !busy ? {
     sessionId: sidebarSession, pageUrl: key, fileName: opened.fileName,
     totalCount: records.length,
@@ -1146,18 +1373,30 @@ export function PdfReader() {
     drafts: noteDrafts, conflicts: noteConflicts,
     locked: locked || !!pendingLeave || sourceOpen,
     noteSaving, removing, undoRecord, error, notice,
+    nativeFilter, nativeRecords: nativeWindow.records, nativeLoading, nativeProgress, nativeError: originalError,
+    nativeTotalCount: nativeRecords.length, nativeOffset, nativeLimit, nativePageEnd: nativeWindow.end,
   } : null;
   sidebarView.current = sidebarState;
   useEffect(() => {
     sidebarClient.current?.send({ type: "state", state: sidebarState, ack: sidebarAck });
-  }, [opened, key, busy, records, notesLimit, noteDrafts, noteConflicts, locked, pendingLeave, sourceOpen, noteSaving, removing, undoRecord, error, notice, sidebarAck, sidebarSession]);
+  }, [opened, key, busy, records, notesLimit, noteDrafts, noteConflicts, locked, pendingLeave, sourceOpen, noteSaving, removing, undoRecord, error, notice, sidebarAck, sidebarSession,
+    nativeFilter, nativeRecords, nativeLoading, nativeProgress, originalError, nativeOffset, nativeWindow]);
   sidebarHandler.current = (message) => {
     if (message.type !== "command" || message.pageUrl !== key || message.sessionId !== sidebarSession) return;
     const { command, commandId } = message;
     const handle = async () => {
+      if (command.type === "cancel-native") { cancelNativeScan(); return; }
+      if (command.type === "filter") { filterAnnotations(command.filter); return; }
+      if (command.type === "more-native") { nextOriginalPage(); return; }
+      if (command.type === "previous-native") { previousOriginalPage(); return; }
       if (locked || pendingLeave || sourceOpen || annotationWrites.current.size || unsavedRef.current) return;
       const record = "id" in command ? recordsRef.current.find((record) => record.id === command.id) : undefined;
       switch (command.type) {
+        case "focus-native": {
+          const original = nativeWindow.records.find((record) => record.key === command.key);
+          if (original) await focusOriginalNote(original);
+          break;
+        }
         case "focus": if (record) { jump(record.target.pageNumber); setPicked(record); } break;
         case "draft":
           if (record || draftsRef.current[command.id]) {
@@ -1302,7 +1541,7 @@ export function PdfReader() {
           disabled={locked} onClick={() => { userIntent(); setFitWidth(true); }}><Icon name="fitWidth" /></button>
         <button className="quiet icon-button pdf-view-action" aria-label={t("旋转页面", "Rotate page")} title={t("旋转页面", "Rotate page")}
           disabled={locked} onClick={() => applyView(zoom, ((rotation + 90) % 360) as PdfRotation)}><Icon name="rotate" /></button>
-        <PdfFind opened={opened} language={settings.language} blocked={leaving || guardSaving || !!pendingLeave || sourceOpen}
+        <PdfFind opened={opened} language={settings.language} blocked={leaving || guardSaving || !!pendingLeave || sourceOpen || !!exportStage}
           onMatch={(match) => { pendingSearchPosition.current = undefined; setSearchMatch(match); }}
           onNavigate={(page) => { jump(page); pendingSearchPosition.current = { pageNumber: page, intent: intentEpoch.current }; }} />
         <div className="pdf-more" ref={moreMenu}>
@@ -1327,6 +1566,8 @@ export function PdfReader() {
               value={color} disabled={locked} onChange={(event) => setColor(event.target.value)} /></label>
             <button aria-pressed={showMarks} onClick={() => { setShowMarks((value) => !value); setPicked(undefined); setMoreOpen(false); }}>
               {showMarks ? t("隐藏标注", "Hide annotations") : t("显示标注", "Show annotations")}</button>
+            <button disabled={!!exportStage} onClick={() => requestLeave({ kind: "export" })}>{t("导出带标注的 PDF…", "Export annotated PDF…")}</button>
+            <button disabled={!!exportStage} onClick={() => requestLeave({ kind: "ai" })}>{t("导出给 AI", "Export notes for AI")}</button>
             <button onClick={() => requestLeave({ kind: "choose" })}><Icon name="pdf" />{t("打开其他文件", "Open another file")}</button>
             <button onClick={() => requestLeave({ kind: "library" })}><Icon name="library" />{t("资料库", "Library")}</button>
           </div>}
@@ -1337,6 +1578,10 @@ export function PdfReader() {
         <button className="quiet icon-button" aria-label={t("资料库", "Library")} title={t("资料库", "Library")}
           onClick={() => requestLeave({ kind: "library" })}><Icon name="library" /></button>
       </header>}
+      {exportStage && <div className="pdf-message" role="status" aria-busy="true">
+        <span>{exportStage === "preparing" ? t("正在准备导出…", "Preparing export…") : exportStage === "writing" ? t("正在写入标注…", "Writing annotations…") : t("正在校验导出的 PDF…", "Verifying exported PDF…")}</span>
+        <button onClick={cancelExport}>{t("取消导出", "Cancel export")}</button>
+      </div>}
       {error && <div className="pdf-message error" role="alert">
         <span>{error}</span>
         {!opened && <p>{t("无法直接读取？下载 PDF 后，点击「选择本地 PDF」继续。", "Can't open the link? Download the PDF, then choose the local file.")}</p>}
@@ -1390,6 +1635,7 @@ export function PdfReader() {
                 height: dimensions.current.get(number)?.height || (rotation % 180 ? 612 : 792) * zoom,
               }}>
                 <PdfPage language={settings.language} opened={opened} number={number} zoom={zoom} rotation={rotation} records={showMarks ? recordsByPage.get(number) ?? [] : []}
+                  onNativeRecords={receiveOriginalNotes}
                   searchRanges={searchMatch?.pageNumber === number ? searchMatch.itemRanges : undefined}
                   onSearchPosition={(top) => {
                     const pending = pendingSearchPosition.current;
@@ -1404,22 +1650,40 @@ export function PdfReader() {
                   onPick={(record) => { setPicked(record); if (!unsavedRef.current) setSelection(undefined); }}
                   onArea={(target) => mark(target, "pdf-area")}
                   onDimensions={(generation, width, height) => onPageDimensions(number, generation, width, height)}
-                  onError={(message) => { if (documentSession === documentSessionRef.current) setError(message); }} />
+                  onError={(message) => { if (documentSession === documentSessionRef.current) {
+                    setError(message);
+                    if (/原文件|Original-file/.test(message)) setNativeError(message);
+                  } }} />
               </div>
             ))}
             <div aria-hidden="true" style={{ height: Math.max(0, layoutIndex.current.totalHeight() - layoutIndex.current.offsetBefore(Math.min(pageWindow.end, opened.document.numPages) + 1)) }} />
           </div>
           <aside className="pdf-notes" id="pdf-notes" ref={notesRail} aria-label={t("本篇笔记", "Document notes")} hidden={!inlineNotes}>
-            <div className="pdf-notes-header"><h2>{t("本篇标注", "Annotations")} <span>{records.length}</span></h2>
+            <div className="pdf-notes-header"><h2>{nativeFilter === "original" ? t("原文件标注", "Original annotations") : t("本篇标注", "Annotations")} <span>{noteCount}</span>
+              {nativeFilter !== "web-ink" && !nativeComplete && <small>{t("（已读取）", "(read so far)")}</small>}</h2>
               <button className="quiet icon-button" aria-label={t("关闭笔记", "Close notes")} onClick={() => setNotesOpen(false)}><Icon name="close" /></button></div>
-            {!records.length && <p className="pdf-muted">{t("选中文字后选择颜色保存高亮，或用「区域标注」框选图表。", "Select text and choose a color to save it, or use Mark area for a figure.")}</p>}
-            {[...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <PdfNote key={record.id} record={record} language={settings.language}
+            {nativeFilter !== "original" && !records.length && <p className="pdf-muted">{t("选中文字后选择颜色保存高亮，或用「区域标注」框选图表。", "Select text and choose a color to save it, or use Mark area for a figure.")}</p>}
+            <PdfAnnotationFilters filter={nativeFilter} language={settings.language} onFilter={filterAnnotations} />
+            {nativeFilter !== "web-ink" && <>
+              {originalError && <p role="alert">{originalError}</p>}
+              {nativeProgress && <p role="status">{t("原文件已读取", "Original pages read")} {nativeProgress.completed} / {nativeProgress.total}</p>}
+              {nativeLoading && <button onClick={cancelNativeScan}>{t("取消读取", "Cancel reading")}</button>}
+              {!nativeLoading && nativeProgress && nativeProgress.completed < nativeProgress.total &&
+                <button onClick={() => void scanOriginalNotes()}>{t("继续读取原文件标注", "Continue reading original annotations")}</button>}
+            </>}
+            {nativeFilter !== "original" && [...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <PdfNote key={record.id} record={record} language={settings.language}
               onJump={() => jump(record.target.pageNumber)} onSave={(draft) => saveNote(record.id, draft)} onRemove={remove}
               removing={removing} saving={noteSaving === record.id} conflict={noteConflicts[record.id] === true}
               locked={leaving || guardSaving || writeCount > 0 || !!unsaved} draft={noteDrafts[record.id]}
               deleted={!savedIds.has(record.id)}
               onDraft={(draft, resolveConflict) => updateDraft(record.id, draft, resolveConflict)} onClearDraft={() => updateDraft(record.id)} />)}
-            {notesLimit < sortedNotes.length && <button onClick={() => setNotesLimit((limit) => limit + 50)}>{t("加载更多", "Load more")}</button>}
+            {nativeFilter !== "web-ink" && nativeWindow.records.map((record) => <NativePdfNote key={record.key} record={record} language={settings.language}
+              onJump={() => void focusOriginalNote(record).catch((cause) => setNativeError(errorText(cause)))} />)}
+            {nativeFilter !== "web-ink" && <div className="pdf-annotation-filters">
+              {nativeOffset > 0 && <button onClick={previousOriginalPage}>{t("上一页原文件标注", "Previous original annotations")}</button>}
+              {nativeWindow.end < nativeRecords.length && <button onClick={nextOriginalPage}>{t("下一页原文件标注", "Next original annotations")}</button>}
+            </div>}
+            {nativeFilter !== "original" && notesLimit < sortedNotes.length && <button onClick={() => setNotesLimit((limit) => limit + 50)}>{t("加载更多", "Load more")}</button>}
           </aside>
         </div>
       </> : <section className="pdf-welcome" aria-busy={busy}>

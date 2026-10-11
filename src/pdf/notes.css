@@ -86,3 +86,12 @@
 
 
 .pdf-note-actions button { min-height: 36px; }
+/* Original PDF notes remain selectable, including text from unsupported annotation types. */
+.pdf-annotation-filters { display: flex; gap: 6px; margin: 10px 0; }
+.pdf-annotation-filters button { flex: 1; }
+.pdf-annotation-filters button[aria-pressed="true"] { background: var(--ink-accent-fill); color: var(--ink-accent); }
+.pdf-native-note header, .pdf-native-note footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.pdf-native-label { font-size: 11px; color: var(--ink-secondary); }
+.pdf-native-contents { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.pdf-native-note footer { font-size: 11px; color: var(--ink-secondary); }
+.pdf-native-note footer span { min-width: 0; overflow-wrap: anywhere; }

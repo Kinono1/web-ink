@@ -1,10 +1,30 @@
 import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
+import type { NativePdfAnnotations } from "./native-annotations";
 import type {
   PdfTextAnnotation,
   PdfAreaAnnotation,
   PdfRect,
 } from "../core/model";
 export type PdfAnnotation = PdfTextAnnotation | PdfAreaAnnotation;
+export type NativePdfAnnotationReply = {
+  id: string;
+  subtype: string;
+  contents: string;
+  author?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  inReplyTo?: string;
+  replyType?: string;
+};
+/** Read-only PDF metadata, scoped to the current document session. */
+export type NativePdfAnnotation = NativePdfAnnotationReply & {
+  key: string;
+  documentHash: string;
+  pageNumber: number;
+  rect?: number[];
+  color?: number[];
+  replies?: NativePdfAnnotationReply[];
+};
 export type PdfApi = typeof import("pdfjs-dist");
 export type SelectionTarget = {
   pageNumber: number;
@@ -24,6 +44,7 @@ export type OpenDocument = {
   hash: string;
   fileName: string;
   sourceUrl?: string;
+  nativeAnnotations?: NativePdfAnnotations;
 };
 
 export const errorText = (cause: unknown) =>

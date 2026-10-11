@@ -317,6 +317,68 @@ describe("PDF sidebar connection lifecycle", () => {
 });
 
 describe("PDF sidebar command boundary", () => {
+  it("routes bounded original-card pages and only permits paging within their reader-owned count", () => {
+    const pdf = reader(), panel = sidebar(7);
+    const native = { key: `${HASH}:1:10R`, documentHash: HASH, pageNumber: 1, id: "10R", subtype: "Text", contents: "Original note" };
+    const next = state({ nativeRecords: [native], nativeTotalCount: 60, nativeOffset: 0, nativeLimit: 50, nativePageEnd: 1 });
+    pdf.receive({ type: "state", state: next });
+    expect(panel.messages.at(-1)).toEqual({ type: "state", state: next });
+    panel.receive(command({ type: "more-native" }));
+    expect(pdf.messages.at(-1)).toEqual(command({ type: "more-native" }));
+    const count = pdf.messages.length;
+    panel.receive(command({ type: "previous-native" }));
+    expect(pdf.messages).toHaveLength(count);
+    pdf.receive({ type: "state", state: { ...next, nativeOffset: 59, nativePageEnd: 60 } });
+    panel.receive(command({ type: "previous-native" }));
+    expect(pdf.messages.at(-1)).toEqual(command({ type: "previous-native" }));
+  });
+
+  it.each([{ nativeTotalCount: -1 }, { nativeTotalCount: 0 }, { nativeOffset: -1 }, { nativeOffset: 2 },
+    { nativeLimit: 51 }, { nativePageEnd: 0 }, { nativePageEnd: 61 }])("rejects inconsistent original-card pagination %j", (invalid) => {
+    const pdf = reader(), panel = sidebar(7);
+    pdf.receive({ type: "state", state: state() });
+    const count = panel.messages.length;
+    const native = { key: `${HASH}:1:10R`, documentHash: HASH, pageNumber: 1, id: "10R", subtype: "Text", contents: "Original note" };
+    pdf.receive({ type: "state", state: { ...state(), nativeRecords: [native], nativeTotalCount: 1, nativeOffset: 0,
+      nativeLimit: 50, nativePageEnd: 1, ...invalid } });
+    expect(panel.messages).toHaveLength(count);
+  });
+
+  it("validates current-document original notes and forwards their read-only focus and filter commands", () => {
+    const pdf = reader(), panel = sidebar(7);
+    const key = `${HASH}:1:10R:sub`;
+    const native = { key, documentHash: HASH, pageNumber: 1, id: "10R:sub", subtype: "Text",
+      rect: [10, 20, 30, 40], color: [255, 0, 10], inReplyTo: "unavailable-parent", replyType: "R",
+      author: "a".repeat(4096), contents: "n".repeat(100_001),
+      replies: [{ id: "11R", subtype: "Text", contents: "Reply", inReplyTo: "10R:sub", replyType: "R" }] };
+    const next = state({ nativeRecords: [native], nativeFilter: "all", nativeLoading: true, nativeProgress: { completed: 1, total: 20 } });
+    pdf.receive({ type: "state", state: next });
+    expect(panel.messages.at(-1)).toEqual({ type: "state", state: next });
+    for (const value of [{ type: "focus-native", key }, { type: "filter", filter: "original" }, { type: "cancel-native" }]) {
+      panel.receive(command(value));
+      expect(pdf.messages.at(-1)).toEqual(command(value));
+    }
+    const count = pdf.messages.length;
+    for (const value of [{ type: "focus-native", key: `${HASH}:1:missing` }, { type: "remove", id: native.id },
+      { type: "save-native", key }, { type: "filter", filter: "unknown" }]) panel.receive(command(value));
+    expect(pdf.messages).toHaveLength(count);
+  });
+
+  it.each([
+    { documentHash: "b".repeat(64) }, { key: `${HASH}:2:10R` }, { pageNumber: 0 }, { id: "" },
+    { color: [256, 0, 0] }, { rect: [0, 1, 2] }, { createdAt: "not-a-date" }, { createdAt: "2026-02-30T00:00:00.000Z" },
+    { contents: "n".repeat(1_000_001) }, { replies: [{ id: "11R", subtype: "Text", contents: 1 }] },
+  ])("rejects malformed original records without replacing the current reader snapshot: %j", (invalid) => {
+    const pdf = reader(), panel = sidebar(7);
+    const native = { key: `${HASH}:1:10R`, documentHash: HASH, pageNumber: 1, id: "10R", subtype: "Text", contents: "Original note" };
+    pdf.receive({ type: "state", state: state() });
+    const count = panel.messages.length;
+    pdf.receive({ type: "state", state: { ...state(), nativeRecords: [{ ...native, ...invalid }] } });
+    expect(panel.messages).toHaveLength(count);
+    panel.receive(command({ type: "focus", id: "note-1" }));
+    expect(pdf.messages.at(-1)).toEqual(command({ type: "focus", id: "note-1" }));
+  });
+
   it.each([
     ["stale PDF key", command({ type: "remove", id: "note-1" }, { pageUrl: `urn:web-ink:pdf:${"b".repeat(64)}` })],
     ["stale document session", command({ type: "remove", id: "note-1" }, { sessionId: NEXT_SESSION })],

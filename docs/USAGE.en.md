@@ -4,7 +4,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 
 [中文](../README.md) · [Privacy](../PRIVACY.md) · [Third-party notices](../THIRD_PARTY_NOTICES.md) · [Release process](RELEASING.md)
 
-> The source candidate is v0.3.2; public archives may be older. See [observed validation boundaries](VALIDATION.md) and [existing performance measurements](PERFORMANCE.md).
+> The source candidate is v0.3.5; public archives may be older. See [observed validation boundaries](VALIDATION.md) and [existing performance measurements](PERFORMANCE.md).
 
 ## v0.3 improvements
 
@@ -12,7 +12,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 - Library pages contain at most 50 records. Search retains complete substring matching and cancels superseded work immediately, before debouncing a new query.
 - Known-length PDFs fill one destination buffer. Long documents mount only visible and adjacent pages, retaining the reading position as sizes change.
 - PDF notes use 50-row batches with Load more. Drafts survive list reordering; file changes require saving or explicitly discarding edits.
-- No new runtime dependencies or data migration. IndexedDB remains v3 and portable backups remain schema v2.
+- PDF export loads pinned pdf-lib only on demand. IndexedDB remains v3 and portable backups remain schema v2, with no data migration.
 
 ## Removing annotations
 
@@ -66,6 +66,16 @@ PDF support covers baseline text and area annotations. Coordinates are normalize
 - No OCR, general authenticated-page retrieval outside the explicit IEEE flow, credential forwarding to other sites, password-encrypted PDF support, or PDF write-back/editing is provided.
 
 The renderer uses PDF.js `6.3.289` legacy build with its matching worker and packaged resources. See [third-party notices](../THIRD_PARTY_NOTICES.md).
+
+## Original PDF annotations and sharing
+
+Open a PDF saved in Preview to see its existing markup. Use **Original** or **All** in the existing Web Ink sidebar to read notes. Original annotations are read-only, stay outside the library database, and cannot be edited or removed here. Popups and replies are grouped with their parent annotation; unsupported interactions are identified explicitly.
+
+After adding highlights, area rectangles or notes, choose **More → Export annotated PDF…**. The separate `<name>-annotated.pdf` preserves original annotations and includes all saved Web Ink records for the current file. Recipients need only that PDF. The source is not overwritten, and JSON backups and record IDs stay unchanged. Repeated exports start from the original file. Reopening an exported file treats its embedded marks as read-only originals instead of reapplying the old file's local overlays.
+
+Save or explicitly discard drafts first. Failed exports keep local records. “Generated and download started” means the browser received a download request; check its destination. Encrypted, digitally signed, annotation-restricted, XFA, damaged or oversized PDFs cannot use this export. Input and output are limited to 50 MiB. Colors, notes and replies can appear differently across readers; consult the validation record for tested coverage.
+
+**More → Export notes for AI** downloads a standalone `web-ink-pdf-notes` v1 JSON snapshot of the current PDF's Web Ink and original-file notes, page numbers, sources and available dates. Missing excerpts or dates are not invented. This snapshot is readable by the optional skill and cannot be imported as a library backup. Its limits are 20 MiB and 50,000 records. Nothing is sent to a model or external service automatically.
 
 ## Storage, backup, and updates
 
