@@ -22,6 +22,16 @@ it('a generic entry returns to an existing reader without navigating its documen
   await openPdfTab(base);
   expect(c.update).toHaveBeenCalledWith(2, { active: true }); expect(c.create).not.toHaveBeenCalled();
 });
+it('does not turn a generic PDF entry into an empty local-only picker', async () => {
+  const c = browser([{ id: 2, url: `${base}?open=local` }]);
+  await openPdfTab(base);
+  expect(c.create).toHaveBeenCalledWith({ url: base }); expect(c.update).not.toHaveBeenCalled();
+});
+it('still returns to a loaded local reader without disturbing its document', async () => {
+  const c = browser([{ id: 2, url: `${base}?open=local&document=loaded` }]);
+  await openPdfTab(base);
+  expect(c.update).toHaveBeenCalledWith(2, { active: true }); expect(c.create).not.toHaveBeenCalled();
+});
 it('matches a source-only request to its loaded identity and normalizes page fragments', async () => {
   const c = browser([{ id: 2, url: `${base}?source=https%3A%2F%2Fexample.test%2Fa.pdf&document=loaded` }]);
   await openPdfTab(`${base}?source=${encodeURIComponent('https://example.test/a.pdf#page=3')}&open=1`);

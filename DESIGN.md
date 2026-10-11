@@ -198,3 +198,7 @@ document is grounded in `src/ui/theme.ts`, `src/ui/page-theme.ts`, management an
 side-panel CSS, and `src/pdf/pdf.css`. Candidate synthetic-browser and package
 evidence is recorded in `docs/VALIDATION-v0.3.2.md`; native activation and final
 PR/main/installation acceptance remain pending.
+
+### Floating launcher
+
+The draggable pen opens a compact, document-aware menu and closes on its second click, outside input, Escape, drag, or document replacement. PDF sources lead directly to the same-tab reader; multiple embedded sources are explicit choices. Normal webpages expose their annotation mode in the first action. Local PDF, current notes, and library remain fixed destinations. The menu does not show annotation records, download a PDF on expansion, or load the annotation engine. It uses the shared surface, type, focus, and theme tokens and stays inside the viewport.

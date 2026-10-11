@@ -13,7 +13,7 @@ device, not a shared workspace or a cloud service.
 - The PDF reader accepts a local PDF or an allowed public HTTPS PDF. It keeps
   annotations locally; it does not upload a PDF or claim to preserve the PDF
   file in the library.
-- A native/current-tab PDF is opened through the side-panel action, then the
+- A native/current-tab PDF is opened from the floating pen menu or side-panel action, then the
   dedicated reader can return to the observed original tab context. The return
   target must not be invented from user input.
 - The extension has no account, synchronization, cloud storage, OCR, AI, or

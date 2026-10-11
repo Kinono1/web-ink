@@ -244,6 +244,7 @@ export type Result<T> =
   | { ok: false; error: string; code?: string };
 export type Request =
   | { type: "runtime.health" }
+  | { type: "ui.open"; target: "sidebar" | "library" | "local-pdf" }
   | { type: "pdf.context.get"; tabId?: number; windowId?: number; expectedUrl?: string }
   | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string }
   | { type: "pdf.handoff.get"; token: string }

@@ -9,6 +9,7 @@ import type { PdfReadingPosition } from "../../src/pdf/reading-position";
 
 const source = "https://papers.example.test/current.pdf";
 const wrapper = "https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=987654321";
+const scholarWrapper = "https://scholar.example.test/scholar?paper=focus-reclaim";
 let context: BrowserContext;
 let control: Page;
 let folder: string;
@@ -193,6 +194,198 @@ test.afterEach(async ({}, info) => {
   await info.attach("pdf-workspace-observations", { path: receipt, contentType: "application/json" });
   await context?.close();
   if (folder) await rm(folder, { recursive: true, force: true });
+});
+
+test("floating pen directly opens the current PDF without enabling webpage annotations", async () => {
+  const { original, tabId } = await publicPdfOriginal();
+  const count = context.pages().length;
+  const pen = original.locator('.web-ink-palette-toggle');
+  await expect(pen).toBeEnabled();
+  await pen.click();
+  await expect(original.getByRole('menuitem', { name: '打开当前 PDF', exact: true })).toBeVisible();
+  await expect(pen).toHaveAttribute('aria-pressed', 'false');
+  await pen.click(); await expect(original.locator('.web-ink-palette-menu')).toBeHidden();
+  await pen.click();
+  await original.getByRole('menuitem', { name: '打开当前 PDF', exact: true }).click();
+  await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
+  await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
+  expect(context.pages()).toHaveLength(count);
+  expect(await activeTab(original)).toBe(tabId);
+  expect((await rpc<any>(control, { type: 'page.mode.get', pageUrl: source })).enabled).toBe(false);
+  const mark = await highlight(original);
+  await original.reload(); await expect(original.locator(`[data-pdf-annotation="${mark.id}"]`)).toBeVisible();
+  await original.getByRole('button', { name: '返回原阅读器', exact: true }).click();
+  await expect(original).toHaveURL(source);
+  expect(await activeTab(original)).toBe(tabId);
+});
+
+test("local PDF menu action opens a separate file-only reader and leaves the source tab unchanged", async () => {
+  const { original, tabId } = await publicPdfOriginal();
+  const originalUrl = original.url();
+  const pageCount = context.pages().length;
+  const pen = original.locator(".web-ink-palette-toggle");
+  await expect(pen).toBeEnabled();
+  await pen.click();
+  const localAction = original.getByRole("menuitem", { name: "选择电脑上的 PDF…", exact: true });
+  await expect(localAction).toBeVisible();
+
+  const readerOpened = context.waitForEvent("page");
+  await localAction.click();
+  const localReader = await readerOpened;
+  await expect(localReader).toHaveURL(`chrome-extension://${id}/pdf.html?open=local`);
+  await expect(localReader.getByLabel("选择本地 PDF", { exact: true })).toBeVisible();
+  await expect(localReader.getByLabel("公开 PDF 网址", { exact: true })).toHaveCount(0);
+
+  const name = "scholar-local-copy.pdf";
+  await openLocal(localReader, fixturePdf(2, "Local PDF selected from Scholar"), name);
+  await expect(localReader.locator(".pdf-name")).toHaveText(name);
+  await expect(localReader.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  await expect(original).toHaveURL(originalUrl);
+  expect(context.pages()).toHaveLength(pageCount + 1);
+  expect(await activeTab(original)).toBe(tabId);
+  observations.push({ originalUrl, readerUrl: localReader.url(), tabId, pageCount, localFile: name });
+});
+
+test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keeps the pen draggable", async () => {
+  await context.route(source, route => route.fulfill(
+    route.request().resourceType() === "document"
+      ? {
+          contentType: "text/html",
+          body: `<!doctype html><title>Synthetic Scholar PDF viewer</title>
+            <main id="pdf-frame-surface" style="height:720px;background:#f3f4f6">
+              <p>Visible PDF viewer frame</p>
+            </main>
+            <script>
+              window.addEventListener("focus", () =>
+                parent.postMessage({ type: "synthetic-pdf-frame-focused" }, "*")
+              );
+            </script>`,
+        }
+      : { contentType: "application/pdf", body: fixturePdf() },
+  ));
+  const original = await htmlPage(
+    scholarWrapper,
+    `<iframe id="scholar-pdf-frame" title="Scholar PDF" src="${source}" width="1200" height="760"></iframe>`,
+  );
+  const tabId = await activeTab(original);
+  const pageCount = context.pages().length;
+  const frame = original.locator("#scholar-pdf-frame");
+  await expect(frame).toBeVisible();
+  const frameSurface = original.frameLocator("#scholar-pdf-frame").locator("#pdf-frame-surface");
+  await expect(frameSurface).toBeVisible();
+
+  await original.evaluate(() => {
+    const frame = document.querySelector<HTMLIFrameElement>("#scholar-pdf-frame")!;
+    const trace = {
+      frameFocusMessages: 0,
+      parentControlFocuses: 0,
+      frameReclaims: 0,
+      parentBlurEvents: 0,
+    };
+    (window as any).__pdfFocusTrace = trace;
+    window.addEventListener("message", event => {
+      if (event.source === frame.contentWindow && event.data?.type === "synthetic-pdf-frame-focused")
+        trace.frameFocusMessages++;
+    });
+    window.addEventListener("blur", () => trace.parentBlurEvents++);
+    document.addEventListener("focusin", event => {
+      const cameFromFloatingControl = event.composedPath().some(node =>
+        node instanceof Element && node.matches(".web-ink-palette-toggle, .web-ink-palette-menu [role=menuitem]"),
+      );
+      if (!cameFromFloatingControl) return;
+      trace.parentControlFocuses++;
+      frame.contentWindow?.focus();
+      if (document.activeElement === frame) {
+        trace.frameReclaims++;
+        // Chrome's real PDF plugin cannot be scripted in this fixture. Model
+        // its refocus by notifying the parent that the visible frame reclaimed
+        // focus, then dispatch the parent blur event observed by the menu.
+        window.dispatchEvent(new FocusEvent("blur"));
+      }
+    }, true);
+  });
+
+  const focusTrace = () => original.evaluate(() => (window as any).__pdfFocusTrace);
+  const pen = original.locator(".web-ink-palette-toggle");
+  await expect(pen).toBeEnabled();
+  // Prove the iframe simulator can reclaim focus and produce the parent blur
+  // that previously canceled the pen's pointer gesture.
+  await pen.focus();
+  await expect.poll(async () => (await focusTrace()).frameReclaims).toBeGreaterThan(0);
+  await expect.poll(async () => (await focusTrace()).frameFocusMessages).toBeGreaterThan(0);
+  const focusEvidence = await focusTrace();
+  expect(focusEvidence.frameFocusMessages).toBeGreaterThan(0);
+  expect(focusEvidence.parentBlurEvents).toBeGreaterThan(0);
+
+  const before = await pen.evaluate(button => ({
+    left: Number.parseFloat((button as HTMLElement).style.left),
+    top: Number.parseFloat((button as HTMLElement).style.top),
+  }));
+  const box = (await pen.boundingBox())!;
+  await original.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await original.mouse.down();
+  await original.mouse.move(box.x - 80, box.y - 50, { steps: 5 });
+  await expect(pen).toHaveAttribute("data-dragging", "true");
+  await original.mouse.up();
+  const after = await pen.evaluate(button => ({
+    left: Number.parseFloat((button as HTMLElement).style.left),
+    top: Number.parseFloat((button as HTMLElement).style.top),
+  }));
+  expect(after.left).toBeLessThan(before.left - 40);
+  expect(after.top).toBeLessThan(before.top - 30);
+
+  const menu = original.locator(".web-ink-palette-menu");
+  await pen.click();
+  await expect(menu).toBeVisible();
+  await expect(original.getByRole("menuitem", { name: "打开当前 PDF", exact: true })).toBeVisible();
+  await expect(pen).toHaveAttribute("aria-pressed", "false");
+  expect(await focusTrace()).toEqual(focusEvidence);
+
+  await pen.click();
+  await expect(menu).toBeHidden();
+  await pen.click();
+  await expect(menu).toBeVisible();
+  const openPdf = original.getByRole("menuitem", { name: "打开当前 PDF", exact: true });
+  await openPdf.click();
+  await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
+  await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  expect(new URL(original.url()).searchParams.get("source")).toBe(source);
+  expect(context.pages()).toHaveLength(pageCount);
+  expect(await activeTab(original)).toBe(tabId);
+  observations.push({
+    focusEvidence,
+    readerUrl: original.url(),
+    navigation: { tabId, source, pageCount },
+    drag: { before, after },
+  });
+});
+
+test("floating menu fits a narrow dark page and selects embedded PDF sources explicitly", async () => {
+  const second = 'https://papers.example.test/second.pdf';
+  // Keep both embedding boxes readable and inside the narrow viewport. Bytes
+  // are validated by the reader only after the explicit source choice.
+  for (const url of [source, second]) await context.route(url, route => route.fulfill(
+    route.request().resourceType() === 'document'
+      ? { contentType: 'text/html', body: '<p>Controlled embedded viewer.</p>' }
+      : { contentType: 'application/pdf', body: fixturePdf() },
+  ));
+  const original = await htmlPage(wrapper, `<iframe style="display:block" width="280" height="100" src="${source}"></iframe><iframe style="display:block" width="280" height="100" src="${second}"></iframe>`);
+  const tabId = await activeTab(original);
+  const settings = await rpc<Settings>(control, { type: 'settings.get' });
+  await rpc(control, { type: 'settings.put', settings: { ...settings, theme: 'dark' } });
+  await original.setViewportSize({ width: 320, height: 360 });
+  const detected = await rpc<PdfTabContext>(control, { type: 'pdf.context.get', tabId, expectedUrl: wrapper });
+  expect(detected.candidates.map(candidate => candidate.url).sort()).toEqual([source, second].sort());
+  const pen = original.locator('.web-ink-palette-toggle'); await expect(pen).toBeEnabled(); await pen.click();
+  await expect(original.getByRole('menuitem', { name: '打开 second.pdf', exact: true })).toBeVisible();
+  const menu = original.locator('.web-ink-palette-menu');
+  const box = (await menu.boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(12); expect(box.y).toBeGreaterThanOrEqual(12);
+  expect(box.x + box.width).toBeLessThanOrEqual(308); expect(box.y + box.height).toBeLessThanOrEqual(348);
+  await original.keyboard.press('Escape'); await expect(menu).toBeHidden();
+  await pen.click(); await original.getByRole('menuitem', { name: '打开 second.pdf', exact: true }).click();
+  await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
+  expect(new URL(original.url()).searchParams.get('source')).toBe(second);
 });
 
 test("current PDF API preserves the tab through single-flight same-tab opening and return", async () => {

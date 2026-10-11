@@ -120,6 +120,9 @@ export function createPaletteToggle(
     const origin = { left: Number.parseFloat(button.style.left), top: Number.parseFloat(button.style.top) };
     try { button.setPointerCapture(event.pointerId); } catch { return; }
     drag = { pointer: event.pointerId, startX: event.clientX, startY: event.clientY, origin, point: origin, moved: false };
+    // Embedded PDF readers can reclaim mouse focus and cancel this gesture on blur.
+    // Keyboard focus remains available through Tab; pointer capture still owns drags.
+    if (event.pointerType === "mouse") event.preventDefault();
     event.stopPropagation();
   };
   const move = (event: PointerEvent) => {
@@ -152,6 +155,7 @@ export function createPaletteToggle(
     if (event.pointerId === drag?.pointer) cancel();
   };
   const key = (event: KeyboardEvent) => {
+    if (!button.disabled && event.composedPath().includes(button)) interacted = true;
     if (event.key === "Escape" && drag) {
       event.preventDefault();
       event.stopPropagation();
@@ -165,7 +169,7 @@ export function createPaletteToggle(
       event.stopImmediatePropagation();
       return;
     }
-    if (!button.disabled && !disposed) onToggle();
+    if (!button.disabled && !disposed) { interacted = true; onToggle(); }
   };
   button.addEventListener("click", click, { signal: events.signal });
   button.addEventListener("pointerdown", down, { signal: events.signal });
@@ -173,7 +177,7 @@ export function createPaletteToggle(
   button.addEventListener("pointerup", up, { signal: events.signal });
   button.addEventListener("pointercancel", interrupted, { signal: events.signal });
   button.addEventListener("lostpointercapture", interrupted, { signal: events.signal });
-  window.addEventListener("keydown", key, { signal: events.signal });
+  window.addEventListener("keydown", key, { signal: events.signal, capture: true });
   window.addEventListener("blur", cancel, { signal: events.signal });
   window.addEventListener("resize", () => { cancel(); restore(); }, { signal: events.signal });
   root.append(style, button);
@@ -183,7 +187,7 @@ export function createPaletteToggle(
     const blocked = state.blocked === true;
     const busy = state.busy === true;
     const enabled = state.enabled;
-    if (busy || blocked) cancel();
+    if (busy) cancel();
     const normal =
       state.language === "zh-CN"
         ? enabled
@@ -196,7 +200,8 @@ export function createPaletteToggle(
     button.dataset.blocked = String(blocked);
     button.setAttribute("aria-pressed", String(enabled));
     button.setAttribute("aria-busy", String(busy));
-    button.disabled = busy || blocked;
+    // Pausing annotations must leave the launcher available to open its side panel.
+    button.disabled = busy;
     const label = blocked
       ? state.language === "zh-CN"
         ? "此网站已暂停，请从侧栏恢复"

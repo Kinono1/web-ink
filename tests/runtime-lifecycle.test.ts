@@ -33,6 +33,17 @@ beforeEach(() => {
       sendMessage: async (message: { type: string; enabled?: boolean }) => {
         messages.push(message);
         if (message.type === 'runtime.health') return { ok: true, data: HEALTH };
+        if (message.type === 'pdf.context.get') return {
+          ok: true,
+          data: {
+            tabId: 1,
+            url: location.href,
+            kind: 'unavailable',
+            candidates: [],
+            currentReader: false,
+            reason: 'not-pdf',
+          },
+        };
         if (message.type === 'settings.get') return { ok: true, data: DEFAULT_SETTINGS };
         if (message.type === 'page.mode.put') modeEnabled = message.enabled!;
         if (message.type.startsWith('page.mode.')) return { ok: true, data: { enabled: modeEnabled } };
@@ -129,7 +140,13 @@ describe('content runtime generations', () => {
     expect(view.host.isConnected).toBe(false); expect(marker.isConnected).toBe(false);
     expect(document.querySelectorAll('web-ink-ui')).toHaveLength(1);
     legacyButton.click();
-    window.__webInkBootstrap!.view.root.querySelector<HTMLButtonElement>('.web-ink-palette-toggle')!.click();
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+    const root = window.__webInkBootstrap!.view.root;
+    root.querySelector<HTMLButtonElement>('.web-ink-palette-toggle')!.click();
+    await vi.waitFor(() => expect(root.querySelector('[data-action="toggle"]')).not.toBeNull());
+    const toggleAction = root.querySelector<HTMLButtonElement>('[data-action="toggle"]')!;
+    await vi.waitFor(() => expect(toggleAction.disabled).toBe(false));
+    toggleAction.click();
     await vi.waitFor(() => expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(1));
   });
 
