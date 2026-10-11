@@ -1,4 +1,14 @@
 export const MAX_PDF_BYTES = 50 * 1024 * 1024;
+export class PdfResponseError extends Error {
+  constructor(readonly stage: "size-limit" | "length-mismatch", maxBytes = MAX_PDF_BYTES) {
+    super(stage === "length-mismatch"
+      ? "PDF length does not match Content-Length."
+      : maxBytes === MAX_PDF_BYTES
+        ? "PDF 超过 50 MiB / PDF exceeds 50 MiB."
+        : "Response exceeds byte limit.");
+    this.name = "PdfResponseError";
+  }
+}
 export function pdfSourceUrl(raw: string): URL {
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password)
@@ -41,6 +51,14 @@ export async function readRemotePdf(
     !(await chrome.permissions.contains({ origins: [`${finalUrl.origin}/*`] }))
   )
     throw Error("重定向网站尚未授权 / Redirected PDF site is not authorized.");
+  return verifyPdf(await readResponseBytes(response));
+}
+
+/** Shared byte limits and Content-Length validation, without a fetch policy. */
+export async function readResponseBytes(
+  response: Response,
+  maxBytes = MAX_PDF_BYTES,
+): Promise<Uint8Array> {
   if (!response.ok || !response.body)
     throw Error(`PDF 读取失败 / PDF request failed (${response.status}).`);
   const encoding = response.headers
@@ -56,14 +74,14 @@ export async function readRemotePdf(
   if (
     identity &&
     contentLength !== undefined &&
-    contentLength > MAX_PDF_BYTES
+    contentLength > maxBytes
   ) {
     await response.body.cancel();
-    throw Error("PDF 超过 50 MiB / PDF exceeds 50 MiB.");
+    throw new PdfResponseError("size-limit", maxBytes);
   }
   if (identity && contentLength !== undefined)
-    return verifyPdf(await readExact(response.body, contentLength));
-  return verifyPdf(await readBounded(response.body));
+    return readExact(response.body, contentLength);
+  return readBounded(response.body, maxBytes);
 }
 
 async function readExact(
@@ -78,12 +96,12 @@ async function readExact(
       const { done, value } = await reader.read();
       if (done) break;
       if (offset + value.length > length)
-        throw Error("PDF length does not match Content-Length.");
+        throw new PdfResponseError("length-mismatch");
       bytes.set(value, offset);
       offset += value.length;
     }
     if (offset !== length)
-      throw Error("PDF length does not match Content-Length.");
+      throw new PdfResponseError("length-mismatch");
     return bytes;
   } catch (error) {
     await reader.cancel().catch(() => undefined);
@@ -95,6 +113,7 @@ async function readExact(
 
 async function readBounded(
   body: ReadableStream<Uint8Array>,
+  maxBytes: number,
 ): Promise<Uint8Array> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -104,8 +123,8 @@ async function readBounded(
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > MAX_PDF_BYTES)
-        throw Error("PDF 超过 50 MiB / PDF exceeds 50 MiB.");
+      if (size > maxBytes)
+        throw new PdfResponseError("size-limit", maxBytes);
       chunks.push(value);
     }
   } catch (error) {

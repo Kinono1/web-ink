@@ -11,6 +11,7 @@ import {
   getPdfContext,
   isKnownPdfViewer,
   isIeeePdfWrapper,
+  isIeeeSessionPage,
   probePdfDocument,
   publicPdfSource,
 } from "../pdf/context";
@@ -28,6 +29,7 @@ type Input = {
   expectedUrl?: string;
   candidateUrl?: string;
   token?: string;
+  accessMode?: "public" | "site-session";
 };
 type Actor = {
   kind: "sidebar" | "content" | "reader";
@@ -69,10 +71,12 @@ function returnUrl(raw: unknown): string | undefined {
 function parseInput(raw: unknown): Input {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF request.");
   const input = { ...raw } as Input;
-  const reader = input.type === "pdf.handoff.get" || input.type === "pdf.returnOriginal";
+  const reader = input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" || input.type === "pdf.returnOriginal";
   const fields = reader ? ["type", "token"] : ["type", "tabId", "windowId", "expectedUrl"];
-  if (input.type === "pdf.openCurrent") fields.push("candidateUrl");
+  if (input.type === "pdf.openCurrent") fields.push("candidateUrl", "accessMode");
   if (Object.keys(raw).some(key => !fields.includes(key))) throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF request fields.");
+  if (input.accessMode !== undefined && input.accessMode !== "public" && input.accessMode !== "site-session")
+    throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF access mode.");
   if (reader) {
     if (typeof input.token !== "string" || !UUID.test(input.token)) throw new PdfNavigationError("INVALID_INPUT", "Invalid return session.");
   } else {
@@ -96,6 +100,7 @@ export function createPdfHandoffHandler() {
   const epochs = new Map<number, number>();
   const activations = new Map<number, number>();
   const flights = new Map<number, { key: string; task: Promise<unknown> }>();
+  const grantUpdates = new Map<number, Promise<PdfHandoff | null>>();
   const epoch = (tabId: number) => epochs.get(tabId) ?? 0;
   const activation = (windowId: number) => activations.get(windowId) ?? 0;
   const removeTabHandoffs = async (tabId: number) => {
@@ -180,7 +185,7 @@ export function createPdfHandoffHandler() {
     }
   };
   const actorFor = async (input: Input, sender: chrome.runtime.MessageSender): Promise<Actor> => {
-    if ((input.type === "pdf.handoff.get" || input.type === "pdf.returnOriginal") && !ownPage(sender.url, "pdf.html"))
+    if ((input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" || input.type === "pdf.returnOriginal") && !ownPage(sender.url, "pdf.html"))
       throw new PdfNavigationError("FORBIDDEN", "Return to the original page from its PDF reader.");
     if (ownPage(sender.url, "sidepanel.html")) {
       const context = await ownContext(sender, "sidepanel.html");
@@ -250,7 +255,13 @@ export function createPdfHandoffHandler() {
     if (handoff.token !== token || handoff.tabId !== tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
     const original = returnUrl(handoff.returnUrl);
     if (!original || (handoff.sourceUrl !== undefined && !publicPdfSource(handoff.sourceUrl))) return null;
-    return { token, tabId, returnUrl: original, ...(handoff.sourceUrl ? { sourceUrl: handoff.sourceUrl } : {}) };
+    const siteSession = handoff.accessMode === "site-session";
+    if (siteSession && (!isIeeeSessionPage(original) || handoff.allowedOrigin !== "https://ieeexplore.ieee.org" ||
+      !Number.isFinite(handoff.expiresAt) || (handoff.readerDocumentId !== undefined && typeof handoff.readerDocumentId !== "string") ||
+      (handoff.sourceUrl && new URL(handoff.sourceUrl).origin !== handoff.allowedOrigin))) return null;
+    return { token, tabId, returnUrl: original, ...(handoff.sourceUrl ? { sourceUrl: handoff.sourceUrl } : {}),
+      ...(siteSession ? { accessMode: "site-session", allowedOrigin: handoff.allowedOrigin, expiresAt: handoff.expiresAt,
+        ...(handoff.readerDocumentId ? { readerDocumentId: handoff.readerDocumentId } : {}) } : {}) };
   };
   const inspect = async (actor: Actor, input: Input) => {
     const snapshot: Snapshot = { epoch: epoch(actor.tabId), documentId: actor.documentId };
@@ -297,7 +308,7 @@ export function createPdfHandoffHandler() {
     return { context, snapshot };
   };
   const singleFlight = (actor: Actor, input: Input, run: () => Promise<unknown>) => {
-    const key = JSON.stringify([input.type, actor.kind, actor.windowId, actor.contextDocumentId ?? actor.sender.documentId, input.expectedUrl, input.candidateUrl, input.token]);
+    const key = JSON.stringify([input.type, actor.kind, actor.windowId, actor.contextDocumentId ?? actor.sender.documentId, input.expectedUrl, input.candidateUrl, input.token, input.accessMode]);
     const existing = flights.get(actor.tabId);
     if (existing) {
       if (existing.key !== key) throw changed();
@@ -325,6 +336,11 @@ export function createPdfHandoffHandler() {
       if (!source) throw new PdfNavigationError("PDF_SOURCE_UNAVAILABLE", "This PDF source is no longer available. Choose a source again.");
     } else if (context.candidates.length > 1) throw new PdfNavigationError("PDF_CHOICE_REQUIRED", "Choose which PDF to open.");
     const original = returnUrl(snapshot.url);
+    const siteSession = input.accessMode === "site-session";
+    if (siteSession && (!original || !isIeeeSessionPage(original) || (source && new URL(source).origin !== "https://ieeexplore.ieee.org")))
+      throw new PdfNavigationError("FORBIDDEN", "IEEE login reading is available only from the current IEEE PDF page.");
+    if (siteSession && !(await chrome.permissions.contains({ origins: ["https://ieeexplore.ieee.org/*"] }).catch(() => false)))
+      throw new PdfNavigationError("FORBIDDEN", "Allow access to IEEE before opening with its sign-in session.");
     const base = chrome.runtime.getURL("pdf.html");
     if (!original || context.kind === "unavailable") {
       await guard(actor, snapshot);
@@ -335,8 +351,10 @@ export function createPdfHandoffHandler() {
       } catch { throw new PdfNavigationError("NAVIGATION_FAILED", "The manual PDF reader could not be opened."); }
     }
     const token = crypto.randomUUID();
-    const handoff: PdfHandoff = { token, tabId: actor.tabId, returnUrl: original, ...(source ? { sourceUrl: source } : {}) };
-    const reader = new URL(buildPdfOpenUrl(base, source ? { kind: "remote", sourceUrl: source } : undefined));
+    const handoff: PdfHandoff = { token, tabId: actor.tabId, returnUrl: original, ...(source ? { sourceUrl: source } : {}),
+      ...(siteSession ? { accessMode: "site-session", allowedOrigin: "https://ieeexplore.ieee.org", expiresAt: Date.now() + 600_000 } : {}) };
+    // Credential-bound sources stay in the browser session, never in reader URL parameters.
+    const reader = new URL(buildPdfOpenUrl(base, !siteSession && source ? { kind: "remote", sourceUrl: source } : undefined));
     reader.searchParams.set("handoff", token);
     await guard(actor, snapshot);
     try {
@@ -367,13 +385,40 @@ export function createPdfHandoffHandler() {
     await guard(actor, snapshot);
     return { handoff, snapshot };
   };
+  const updateGrant = (actor: Actor, token: string, revoke: boolean) => {
+    // Serialize storage read/write, including calls from a replacement document.
+    const previous = grantUpdates.get(actor.tabId) ?? Promise.resolve(null);
+    const task = previous.catch(() => null).then(async () => {
+      const { handoff, snapshot } = await readerHandoff(actor, token);
+      if (handoff?.accessMode !== "site-session") return handoff;
+      const expired = revoke || handoff.expiresAt! <= Date.now() ||
+        (handoff.readerDocumentId !== undefined && handoff.readerDocumentId !== actor.documentId);
+      if (!expired && handoff.readerDocumentId) return handoff;
+      if (expired && handoff.expiresAt === 0 && !handoff.sourceUrl) return handoff;
+      const updated = { ...handoff };
+      if (expired) {
+        updated.expiresAt = 0;
+        delete updated.sourceUrl;
+      } else updated.readerDocumentId = actor.documentId!;
+      try { await chrome.storage.session.set({ [`pdf.handoff.${token}`]: updated }); }
+      catch { throw new PdfNavigationError("STORAGE_UNAVAILABLE", "Session access could not be saved. Return to IEEE and open again."); }
+      await guard(actor, snapshot);
+      return updated;
+    });
+    grantUpdates.set(actor.tabId, task);
+    void task.finally(() => {
+      if (grantUpdates.get(actor.tabId) === task) grantUpdates.delete(actor.tabId);
+    }).catch(() => undefined);
+    return task;
+  };
   return async (raw: unknown, sender: chrome.runtime.MessageSender): Promise<Result<unknown>> => {
     try {
       const input = parseInput(raw);
       const actor = await actorFor(input, sender);
       if (input.type === "pdf.context.get") return { ok: true, data: (await inspect(actor, input)).context };
       if (input.type === "pdf.openCurrent") return { ok: true, data: await singleFlight(actor, input, () => open(actor, input)) };
-      if (input.type === "pdf.handoff.get") return { ok: true, data: (await readerHandoff(actor, input.token!)).handoff };
+      if (input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke")
+        return { ok: true, data: await updateGrant(actor, input.token!, input.type === "pdf.handoff.revoke") };
       if (input.type === "pdf.returnOriginal") {
         const data = await singleFlight(actor, input, async () => {
           const { handoff, snapshot } = await readerHandoff(actor, input.token!);

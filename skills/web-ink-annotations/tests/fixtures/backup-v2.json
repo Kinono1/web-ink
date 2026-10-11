@@ -1,0 +1,102 @@
+{
+  "format": "web-ink",
+  "schemaVersion": 2,
+  "exportedAt": "2026-10-11T02:30:00.000Z",
+  "settings": {
+    "language": "zh-CN",
+    "defaultColor": "#facd5a",
+    "disabledOrigins": ["https://private.example"]
+  },
+  "annotations": [
+    {
+      "id": "web-note",
+      "pageUrl": "https://example.test/article",
+      "pageTitle": "Web model paper",
+      "color": "#facd5a",
+      "note": "Check the baseline\nbefore comparing results.",
+      "tags": ["methods", "模型"],
+      "createdAt": "2026-10-01T09:00:00.000Z",
+      "updatedAt": "2026-10-05T09:00:00.000Z",
+      "revision": 2,
+      "kind": "text",
+      "target": {
+        "exact": "模型结果",
+        "prefix": "The reported ",
+        "suffix": " require validation.",
+        "start": 0,
+        "end": 4,
+        "rootSelector": "article"
+      }
+    },
+    {
+      "id": "image-figure",
+      "pageUrl": "https://example.test/figures",
+      "pageTitle": "Figure collection",
+      "color": "#69b0f1",
+      "note": "Compare the blue curve.",
+      "tags": ["figure"],
+      "createdAt": "2026-10-02T10:00:00.000Z",
+      "updatedAt": "2026-10-02T10:00:00.000Z",
+      "revision": 1,
+      "kind": "image",
+      "target": {
+        "src": "https://example.test/figure.png",
+        "sourceCandidates": ["https://cdn.example.test/figure.png"],
+        "alt": "Blue model comparison",
+        "naturalWidth": 1000,
+        "naturalHeight": 500,
+        "selector": "figure img",
+        "occurrence": 0,
+        "context": "Figure 2 compares model accuracy."
+      },
+      "shape": {
+        "kind": "rectangle",
+        "points": [{"x": 0.1, "y": 0.2}, {"x": 0.5, "y": 0.6}],
+        "width": 0.01
+      }
+    },
+    {
+      "id": "pdf-finding",
+      "pageUrl": "urn:web-ink:pdf:0000000000000000000000000000000000000000000000000000000000000000",
+      "pageTitle": "PDF findings",
+      "color": "#7cc868",
+      "note": "Useful quantitative finding.",
+      "tags": ["results", "模型"],
+      "createdAt": "2026-10-03T11:00:00.000Z",
+      "updatedAt": "2026-10-04T11:00:00.000Z",
+      "revision": 3,
+      "kind": "pdf-text",
+      "target": {
+        "documentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "fileName": "study.pdf",
+        "sourceUrl": "https://example.test/study.pdf",
+        "pageNumber": 7,
+        "rects": [{"x": 0.1, "y": 0.1, "width": 0.2, "height": 0.1}],
+        "exact": "The model improves accuracy.",
+        "prefix": "Results show ",
+        "suffix": " across datasets."
+      }
+    },
+    {
+      "id": "pdf-region",
+      "pageUrl": "urn:web-ink:pdf:0000000000000000000000000000000000000000000000000000000000000000",
+      "pageTitle": "PDF findings",
+      "color": "#fb5c89",
+      "note": "Inspect this chart manually.",
+      "tags": ["figure"],
+      "createdAt": "2026-10-04T12:00:00.000Z",
+      "updatedAt": "2026-10-04T12:00:00.000Z",
+      "revision": 1,
+      "kind": "pdf-area",
+      "target": {
+        "documentHash": "0000000000000000000000000000000000000000000000000000000000000000",
+        "fileName": "study.pdf",
+        "pageNumber": 8,
+        "rects": [{"x": 0.2, "y": 0.3, "width": 0.2, "height": 0.2}],
+        "exact": "",
+        "prefix": "",
+        "suffix": ""
+      }
+    }
+  ]
+}

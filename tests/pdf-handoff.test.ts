@@ -69,6 +69,144 @@ function value<T>(response: Result<T>): T {
 const inspect = () => rpc<PdfTabContext>({ type: 'pdf.context.get', tabId: 7, expectedUrl: tabs.get(7)!.url });
 const open = (extra: object = {}) => rpc<PdfOpenResult>({ type: 'pdf.openCurrent', tabId: 7, expectedUrl: tabs.get(7)!.url, ...extra });
 
+describe('IEEE site-session authority', () => {
+  beforeEach(() => { chrome.permissions.contains = (async () => true) as typeof chrome.permissions.contains; });
+  const ieee = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626';
+  const download = 'https://ieeexplore.ieee.org/observed-file?ticket=fixture';
+  const openWithSource = async () => {
+    setUrl(ieee); visibleEmbeds(`<iframe src="${download}"></iframe>`);
+    return value(await open({ accessMode: 'site-session' }));
+  };
+  it('grants an observed IEEE wrapper without putting the session source in the reader URL', async () => {
+    setUrl(ieee);
+    const opened = value(await open({ accessMode: 'site-session' }));
+    expect(opened.navigation).toBe('same-tab');
+    expect(new URL(opened.readerUrl).searchParams.has('source')).toBe(false);
+    const handoff = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    expect(handoff).toMatchObject({ accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', returnUrl: ieee });
+    expect(handoff.expiresAt).toBeGreaterThan(Date.now());
+    expect(handoff.expiresAt).toBeLessThanOrEqual(Date.now() + 600_000);
+  });
+  it('never grants session credentials to an ordinary page', async () => {
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+  });
+  it('does not save or navigate an IEEE session without the exact host permission', async () => {
+    setUrl(ieee);
+    const contains = vi.fn(async () => false);
+    chrome.permissions.contains = contains as typeof chrome.permissions.contains;
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(contains).toHaveBeenCalledWith({ origins: ['https://ieeexplore.ieee.org/*'] });
+    expect(updates).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
+  });
+  it('rejects a cross-origin candidate before IEEE session navigation', async () => {
+    setUrl(ieee); visibleEmbeds('<embed type="application/pdf" src="https://other.test/paper.pdf">');
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+  });
+  it('retains the return path after the session grant expires', async () => {
+    setUrl(ieee);
+    const opened = value(await open({ accessMode: 'site-session' }));
+    (session[`pdf.handoff.${opened.token}`] as PdfHandoff).expiresAt = Date.now() - 1;
+    expect(value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, readerSender()))).toEqual({ tabId: 7, url: ieee });
+  });
+  it('pins the first actual reader document and permits retries without renewing the grant', async () => {
+    const opened = await openWithSource();
+    const first = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    expect(first).toMatchObject({ readerDocumentId: 'reader-7', sourceUrl: download });
+    expect(session[`pdf.handoff.${opened.token}`]).toMatchObject({ readerDocumentId: 'reader-7' });
+    const retry = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    expect(retry.expiresAt).toBe(first.expiresAt);
+    expect(retry.sourceUrl).toBe(download);
+  });
+  it('expires a claimed session after reader replacement while retaining the return context', async () => {
+    const opened = await openWithSource();
+    value(await rpc({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    loadedReader(7, opened.readerUrl, 'refreshed-reader-document');
+    const recovery = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    expect(recovery).toMatchObject({ accessMode: 'site-session', expiresAt: 0, returnUrl: ieee });
+    expect(recovery.sourceUrl).toBeUndefined();
+    expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('sourceUrl');
+    expect(value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, readerSender()))).toEqual({ tabId: 7, url: ieee });
+  });
+  it('expires an elapsed grant and removes its temporary source on retrieval', async () => {
+    const opened = await openWithSource();
+    (session[`pdf.handoff.${opened.token}`] as PdfHandoff).expiresAt = Date.now() - 1;
+    const recovery = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    expect(recovery).toMatchObject({ accessMode: 'site-session', expiresAt: 0, returnUrl: ieee });
+    expect(recovery.sourceUrl).toBeUndefined();
+    expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('sourceUrl');
+  });
+  it('does not claim the reader document when only returning to the original page', async () => {
+    const opened = await openWithSource();
+    afterRead = () => { expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('readerDocumentId'); };
+    value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, readerSender()));
+    expect(tabs.get(7)!.url).toBe(ieee);
+  });
+  it('revokes credentials for manual source switching without removing the return session', async () => {
+    const opened = await openWithSource();
+    value(await rpc({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    const recovery = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.revoke', token: opened.token }, readerSender()));
+    expect(recovery).toMatchObject({ accessMode: 'site-session', expiresAt: 0, returnUrl: ieee });
+    expect(recovery.sourceUrl).toBeUndefined();
+    expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('sourceUrl');
+    expect(value(await rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender())).expiresAt).toBe(0);
+    expect(value(await rpc({ type: 'pdf.returnOriginal', token: opened.token }, readerSender()))).toEqual({ tabId: 7, url: ieee });
+  });
+  it('refuses revocation from another tab or a non-reader sender', async () => {
+    const opened = await openWithSource();
+    loadedReader(8, opened.readerUrl);
+    expect(await rpc({ type: 'pdf.handoff.revoke', token: opened.token }, readerSender(8))).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(await rpc({ type: 'pdf.handoff.revoke', token: opened.token }, UI)).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(session[`pdf.handoff.${opened.token}`]).toMatchObject({ sourceUrl: download });
+  });
+  it('leaves public source and return sessions intact on revocation', async () => {
+    const opened = value(await open());
+    const retained = value(await rpc<PdfHandoff>({ type: 'pdf.handoff.revoke', token: opened.token }, readerSender()));
+    expect(retained).toMatchObject({ sourceUrl: ORIGINAL, returnUrl: ORIGINAL });
+    expect(retained).not.toHaveProperty('accessMode');
+  });
+  it('does not return a grant when its document binding cannot be stored', async () => {
+    const opened = await openWithSource();
+    failStorage = true;
+    expect(await rpc({ type: 'pdf.handoff.get', token: opened.token }, readerSender())).toMatchObject({ ok: false, code: 'STORAGE_UNAVAILABLE' });
+  });
+  it('serializes competing document claims and never grants the replacement document', async () => {
+    const opened = await openWithSource();
+    let release: (() => void) | undefined;
+    afterWrite = () => new Promise<void>(resolve => { release = resolve; });
+    const first = rpc({ type: 'pdf.handoff.get', token: opened.token }, readerSender());
+    try {
+      await vi.waitFor(() => expect(session[`pdf.handoff.${opened.token}`]).toMatchObject({ readerDocumentId: 'reader-7' }));
+      loadedReader(7, opened.readerUrl, 'replacement-reader-document');
+      let replacementObserved = false;
+      let replacementReads = 0;
+      const getContexts = chrome.runtime.getContexts;
+      chrome.runtime.getContexts = (async (filter: chrome.runtime.ContextFilter) => {
+        const found = await getContexts(filter);
+        if (filter.documentIds?.includes('replacement-reader-document')) replacementObserved = true;
+        return found;
+      }) as typeof chrome.runtime.getContexts;
+      afterRead = () => { replacementReads++; };
+      const replacement = rpc<PdfHandoff>({ type: 'pdf.handoff.get', token: opened.token }, readerSender());
+      await vi.waitFor(() => expect(replacementObserved).toBe(true));
+      expect(replacementReads).toBe(0);
+      afterWrite = undefined;
+      release!();
+      expect(await first).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+      const recovery = value(await replacement);
+      expect(recovery).toMatchObject({ accessMode: 'site-session', expiresAt: 0 });
+      expect(recovery.sourceUrl).toBeUndefined();
+    } finally {
+      afterWrite = undefined;
+      release?.();
+      await first;
+    }
+  });
+});
+
 beforeEach(async () => {
   tabs = new Map(); contexts = [context(-1, UI.url!, UI.documentId!, 'SIDE_PANEL')];
   session = {}; updates = []; created = []; onUpdated = []; onActivated = []; onRemoved = []; failStorage = false; failUpdate = false; afterWrite = undefined; afterRead = undefined;

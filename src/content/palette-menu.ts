@@ -1,6 +1,6 @@
 import { ICON_PATHS, type IconName } from '../ui/icons';
 
-export type PaletteAction = 'toggle' | 'open-pdf' | 'local-pdf' | 'sidebar' | 'library' | 'retry';
+export type PaletteAction = 'toggle' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry';
 export interface PaletteMenuItem {
   action: PaletteAction;
   label: string;
@@ -145,7 +145,11 @@ export function createPaletteMenu(
       button.addEventListener('pointerdown', event => {
         if (event.pointerType === 'mouse' && event.button === 0) event.preventDefault();
       });
-      button.addEventListener('click', () => { if (!disposed && !state.pending && !button.disabled) onAction(item.action, item.candidateUrl); });
+      button.addEventListener('click', event => {
+        if (!disposed && !state.pending && !button.disabled &&
+          (item.action !== 'open-ieee' || event.isTrusted))
+          onAction(item.action, item.candidateUrl);
+      });
       panel.append(button);
     }
     if (state.loading || state.pending || state.error) {

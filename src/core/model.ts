@@ -141,6 +141,7 @@ export type PdfContextReason =
   | "context-unavailable"
   | "session-unavailable";
 export interface PdfTabContext {
+  publisher?: "ieee";
   tabId: number;
   url?: string;
   kind: "direct" | "embedded" | "wrapper" | "local" | "unavailable";
@@ -154,6 +155,10 @@ export interface PdfHandoff {
   tabId: number;
   returnUrl: string;
   sourceUrl?: string;
+  accessMode?: "public" | "site-session";
+  allowedOrigin?: string;
+  expiresAt?: number;
+  readerDocumentId?: string;
 }
 export interface PdfOpenResult {
   tabId: number;
@@ -246,8 +251,9 @@ export type Request =
   | { type: "runtime.health" }
   | { type: "ui.open"; target: "sidebar" | "library" | "local-pdf" }
   | { type: "pdf.context.get"; tabId?: number; windowId?: number; expectedUrl?: string }
-  | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string }
+  | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string; accessMode?: "public" | "site-session" }
   | { type: "pdf.handoff.get"; token: string }
+  | { type: "pdf.handoff.revoke"; token: string }
   | { type: "pdf.returnOriginal"; token: string }
   | { type: "annotations.list"; pageUrl?: string }
   | {
