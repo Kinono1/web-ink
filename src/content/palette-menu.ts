@@ -132,6 +132,10 @@ export function createPaletteMenu(
       icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true');
       const path = document.createElementNS(icon.namespaceURI, 'path'); path.setAttribute('d', ICON_PATHS[item.icon]); icon.append(path);
       const text = document.createElement('span'); text.textContent = item.label; button.append(icon, text);
+      // Keep an embedded reader from stealing focus and closing the menu before click.
+      button.addEventListener('pointerdown', event => {
+        if (event.pointerType === 'mouse' && event.button === 0) event.preventDefault();
+      });
       button.addEventListener('click', () => { if (!disposed && !state.pending && !button.disabled) onAction(item.action, item.candidateUrl); });
       panel.append(button);
     }

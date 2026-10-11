@@ -41,6 +41,7 @@ function gestureFixture() {
     const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 });
     Object.defineProperties(event, Object.fromEntries(Object.entries({ pointerId: 1, isPrimary: true, pointerType: 'mouse', ...extra }).map(([key, value]) => [key, { value }])));
     button.dispatchEvent(event);
+    return event;
   }
   const click = (detail = 1) => button.dispatchEvent(new MouseEvent('click', { bubbles: true, detail }));
   const frame = () => { const pending = [...frames.values()]; frames.clear(); pending.forEach(callback => callback(0)); };
@@ -49,6 +50,15 @@ function gestureFixture() {
 }
 
 describe('palette dragging', () => {
+  it('keeps a mouse click usable when an embedded reader would reclaim focus', () => {
+    const f = gestureFixture();
+    const down = f.pointer('pointerdown', 1162, 862);
+    // A PDF iframe can reclaim focus after the browser focuses the pen by default.
+    if (!down.defaultPrevented) window.dispatchEvent(new Event('blur'));
+    f.pointer('pointerup', 1162, 862); f.click();
+    expect(f.toggle).toHaveBeenCalledOnce();
+    expect(f.saved).not.toHaveBeenCalled(); expect(f.captured.size).toBe(0);
+  });
   it('does not let saved position replace a keyboard interaction already started', () => {
     const f = gestureFixture(); f.click(0); f.control.setPosition({ x: 0, y: 0 });
     expect(f.button.style.left).toBe('1142px'); expect(f.button.style.top).toBe('842px');

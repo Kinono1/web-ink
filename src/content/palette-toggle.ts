@@ -120,6 +120,9 @@ export function createPaletteToggle(
     const origin = { left: Number.parseFloat(button.style.left), top: Number.parseFloat(button.style.top) };
     try { button.setPointerCapture(event.pointerId); } catch { return; }
     drag = { pointer: event.pointerId, startX: event.clientX, startY: event.clientY, origin, point: origin, moved: false };
+    // Embedded PDF readers can reclaim mouse focus and cancel this gesture on blur.
+    // Keyboard focus remains available through Tab; pointer capture still owns drags.
+    if (event.pointerType === "mouse") event.preventDefault();
     event.stopPropagation();
   };
   const move = (event: PointerEvent) => {

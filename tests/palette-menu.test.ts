@@ -31,6 +31,18 @@ it('opens and closes without running an action, and retains errors for retry', (
   f.menu.toggle(); expect(f.panel.hidden).toBe(true); expect(f.visible.mock.calls).toEqual([[true], [false]]);
 });
 
+it('runs a mouse action without letting an embedded reader steal focus before click', () => {
+  const f = fixture(); f.menu.toggle();
+  const item = f.panel.querySelector<HTMLButtonElement>('[data-action=open-pdf]')!;
+  const down = new MouseEvent('pointerdown', { bubbles: true, composed: true, cancelable: true, button: 0 });
+  Object.defineProperty(down, 'pointerType', { value: 'mouse' });
+  item.dispatchEvent(down);
+  if (!down.defaultPrevented) document.body.dispatchEvent(new FocusEvent('focusin', { bubbles: true }));
+  // The same pointer releases after focus has moved; a hidden menu receives no click.
+  if (!f.panel.hidden) item.click();
+  expect(f.action).toHaveBeenCalledWith('open-pdf', undefined);
+});
+
 it('dismisses on outside input or Escape, keeps inside clicks open and supports arrow focus', () => {
   const f = fixture(); f.menu.toggle();
   f.panel.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, composed: true }));
