@@ -28,6 +28,7 @@ jobs:
       - run: npm ci
       - run: npm run check
       - run: npm run test
+      - run: npm run test:skill
       - name: Run bulk correctness tests
         shell: bash
         run: |
@@ -78,7 +79,7 @@ jobs:
           PDF_BROWSER_URL=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(x["url"] for x in d["downloads"]["chrome"] if x["platform"] == "linux64"))' "$RUNNER_TEMP/chrome125.json")
           curl -fL --retry 2 "$PDF_BROWSER_URL" -o "$RUNNER_TEMP/chrome125.zip"
           unzip -q "$RUNNER_TEMP/chrome125.zip" -d "$RUNNER_TEMP/chrome125"
-          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts tests/e2e/pdf-workspace.spec.ts tests/e2e/pdf-cache.spec.ts tests/e2e/pdf-highlight-colors.spec.ts
+          WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/pdf.spec.ts tests/e2e/pdf-workspace.spec.ts tests/e2e/pdf-cache.spec.ts tests/e2e/pdf-highlight-colors.spec.ts tests/e2e/pdf-ieee.spec.ts
           WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome125/chrome-linux64/chrome" npx playwright test tests/e2e/extension.spec.ts -g "query"
       - name: Verify minimum webpage browser (Chrome 120)
         shell: bash

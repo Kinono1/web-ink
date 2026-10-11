@@ -8,12 +8,22 @@ const io = vi.hoisted(() => ({
   hash: "a".repeat(64),
   pageCount: 1000,
   remoteReads: [] as string[],
+  ieeeReads: [] as Array<{ pageUrl: string; sourceUrl?: string }>,
+  ieeeFailure: undefined as "network" | "login-required" | undefined,
   pagesRead: [] as number[],
   documentOptions: [] as Record<string, unknown>[],
   rejectOversizedImage: false,
   renderGates: {} as Record<number, Promise<unknown> | undefined>,
   parseGate: undefined as Promise<unknown> | undefined,
 }));
+vi.mock('../src/pdf/ieee', async (original) => {
+  const actual = await original<typeof import('../src/pdf/ieee')>();
+  return { ...actual, readIeeePdf: async (input: { pageUrl: string; sourceUrl?: string }) => {
+    io.ieeeReads.push(input);
+    if (io.ieeeFailure) throw new actual.IeeePdfError(io.ieeeFailure);
+    return new Uint8Array([37, 80, 68, 70]);
+  } };
+});
 vi.mock("../src/pdf/source", async (original) => {
   const actual = await original<typeof import("../src/pdf/source")>();
   return {
@@ -123,6 +133,8 @@ beforeEach(() => {
   io.hash = HASH;
   io.pageCount = 1000;
   io.remoteReads = [];
+  io.ieeeReads = [];
+  io.ieeeFailure = undefined;
   io.pagesRead = [];
   io.documentOptions = [];
   io.rejectOversizedImage = false;
@@ -228,6 +240,105 @@ async function mount(query = "", local = true) {
     await settle();
   }
 }
+
+it('reads an IEEE session only from the claimed handoff and persists no download ticket', async () => {
+  const pageUrl = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=11643626';
+  const download = 'https://ieeexplore.ieee.org/download?ticket=private';
+  handoff = { token: TOKEN, tabId: 8, returnUrl: pageUrl, sourceUrl: download, accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 600_000 };
+  await mount(`?handoff=${TOKEN}`, false);
+  expect(io.ieeeReads).toEqual([{ pageUrl, sourceUrl: download }]);
+  expect(io.remoteReads).toEqual([]);
+  expect(host.querySelector('.pdf-page')).not.toBeNull();
+  expect(location.href).not.toContain('private');
+  expect(new URL(location.href).searchParams.get('source')).toBe('https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626');
+  expect(messages.filter(m => m.type === 'pdf.handoff.get')).toHaveLength(3);
+});
+
+it('does not reuse IEEE credentials for a different manually opened source on refresh', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  await mount(`?handoff=${TOKEN}&source=${encodeURIComponent('https://papers.example.test/other.pdf')}&document=${HASH}`, false);
+  expect(io.ieeeReads).toEqual([]);
+  expect(io.remoteReads).toEqual(['https://papers.example.test/other.pdf']);
+  expect(host.querySelector('.pdf-name')?.textContent).toBe('other.pdf');
+});
+
+it('keeps IEEE access explicit when permission is missing or rejected', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  vi.mocked(chrome.permissions.contains as (details: chrome.permissions.Permissions) => Promise<boolean>).mockResolvedValue(false);
+  vi.mocked(chrome.permissions.request as (details: chrome.permissions.Permissions) => Promise<boolean>).mockResolvedValue(false);
+  await mount(`?handoff=${TOKEN}`, false);
+  expect(chrome.permissions.request).not.toHaveBeenCalled();
+  expect(io.ieeeReads).toEqual([]);
+  await click('允许访问 IEEE 并重试');
+  expect(chrome.permissions.request).toHaveBeenCalledWith({ origins: ['https://ieeexplore.ieee.org/*'] });
+  expect(io.ieeeReads).toEqual([]);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('未授予');
+  expect([...host.querySelectorAll('button')].some(b => b.textContent === '返回原阅读器')).toBe(true);
+});
+
+it('rechecks IEEE expiry after a permission prompt before fetching', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  vi.mocked(chrome.permissions.contains as (details: chrome.permissions.Permissions) => Promise<boolean>).mockResolvedValue(false);
+  vi.mocked(chrome.permissions.request as (details: chrome.permissions.Permissions) => Promise<boolean>).mockImplementation(async () => { handoff!.expiresAt = 0; return true; });
+  await mount(`?handoff=${TOKEN}`, false);
+  await click('允许访问 IEEE 并重试');
+  expect(io.ieeeReads).toEqual([]);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('登录读取授权已过期');
+});
+
+it('revokes IEEE session access before opening a manually selected local file', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  await mount(`?handoff=${TOKEN}`, false);
+  await click('更多');
+  await click('打开其他文件');
+  const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', { value: [new File(['%PDF-'], 'manual.pdf')] });
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+  await settle();
+  expect(messages).toContainEqual({ type: 'pdf.handoff.revoke', token: TOKEN });
+  expect(host.querySelector('.pdf-name')?.textContent).toBe('manual.pdf');
+});
+
+it('does not try public fetch when an IEEE reader loses its session handoff', async () => {
+  handoff = null;
+  await mount(`?handoff=${TOKEN}&source=${encodeURIComponent('https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1')}&document=${HASH}`, false);
+  expect(io.ieeeReads).toEqual([]);
+  expect(io.remoteReads).toEqual([]);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('返回 IEEE');
+});
+
+it.each([['network', '重试读取'], ['login-required', '返回 IEEE']] as const)('offers the relevant recovery for IEEE %s without a misleading permission action', async (failure, label) => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  io.ieeeFailure = failure;
+  await mount(`?handoff=${TOKEN}`, false);
+  expect([...host.querySelectorAll('button')].some(b => b.textContent === label)).toBe(true);
+  expect([...host.querySelectorAll('button')].some(b => b.textContent === '允许访问 IEEE 并重试')).toBe(false);
+});
+
+it('revokes an IEEE grant on pagehide while retaining saved annotations', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
+  await mount(`?handoff=${TOKEN}`, false);
+  await act(async () => window.dispatchEvent(new Event('pagehide')));
+  await settle();
+  expect(messages).toContainEqual({ type: 'pdf.handoff.revoke', token: TOKEN });
+  expect(messages.some(m => m.type === 'annotations.delete')).toBe(false);
+});
+
+it('opens the IEEE paper source instead of pretending a library wrapper is a public PDF', async () => {
+  handoff = null;
+  await mount(`?source=${encodeURIComponent('https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1')}&document=${HASH}`, false);
+  expect(io.remoteReads).toEqual([]);
+  expect(io.ieeeReads).toEqual([]);
+  expect([...host.querySelectorAll('button')].some(b => b.textContent === '返回 IEEE')).toBe(true);
+});
+
+it('does not read an expired IEEE session but keeps the return action', async () => {
+  handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() - 1 };
+  await mount(`?handoff=${TOKEN}`, false);
+  expect(io.ieeeReads).toEqual([]);
+  expect(host.textContent).toContain('登录读取授权已过期');
+  expect(host.textContent).toContain('返回原阅读器');
+});
 
 it('keeps the local-file entry focused on choosing a file without asking for a URL', async () => {
   await mount('?open=local', false);

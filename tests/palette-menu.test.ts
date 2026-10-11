@@ -31,6 +31,20 @@ it('opens and closes without running an action, and retains errors for retry', (
   f.menu.toggle(); expect(f.panel.hidden).toBe(true); expect(f.visible.mock.calls).toEqual([[true], [false]]);
 });
 
+it('does not run an IEEE session action from an untrusted page click', () => {
+  const f = fixture();
+  f.menu.update({ language: 'en', items: [
+    { action: 'open-ieee', label: 'Open using IEEE sign-in', icon: 'pdf', primary: true },
+    { action: 'sidebar', label: 'Page annotations', icon: 'note' },
+  ] });
+  f.menu.toggle();
+
+  f.panel.querySelector<HTMLButtonElement>('[data-action=open-ieee]')!.click();
+  expect(f.action).not.toHaveBeenCalled();
+  f.panel.querySelector<HTMLButtonElement>('[data-action=sidebar]')!.click();
+  expect(f.action).toHaveBeenCalledWith('sidebar', undefined);
+});
+
 it('runs a mouse action without letting an embedded reader steal focus before click', () => {
   const f = fixture(); f.menu.toggle();
   const item = f.panel.querySelector<HTMLButtonElement>('[data-action=open-pdf]')!;

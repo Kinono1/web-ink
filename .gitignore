@@ -52,3 +52,7 @@ web-ink-annotations*.md
 
 # Generated reproducible build identity
 /public/build-info.json
+
+# Python skill test caches
+__pycache__/
+*.pyc

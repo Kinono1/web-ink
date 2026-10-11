@@ -1,7 +1,178 @@
-import { describe, expect, it } from "vitest";
-import { buildPdfOpenUrl, classifyPdfTab, getPdfContext } from "../src/pdf/context";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildPdfOpenUrl, classifyPdfTab, getPdfContext, isIeeeSessionPage, probePdfDocument } from "../src/pdf/context";
+
+function makeVisible(element: Element) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({ width: 600, height: 400, top: 0, left: 0, right: 600, bottom: 400 }),
+  });
+}
+
+function attachSameOriginFrame(frame: HTMLIFrameElement, content: string) {
+  const child = document.implementation.createHTMLDocument("same-origin frame");
+  child.head.innerHTML = `<base href="${location.href}">`;
+  child.body.innerHTML = content;
+  Object.defineProperty(frame, "contentDocument", { configurable: true, value: child });
+  Object.defineProperty(frame, "contentWindow", {
+    configurable: true,
+    value: {
+      location: { origin: location.origin },
+      innerHeight: innerHeight,
+      innerWidth: innerWidth,
+      getComputedStyle: getComputedStyle.bind(window),
+    },
+  });
+  return child;
+}
+
+afterEach(() => document.body.replaceChildren());
 
 describe("PDF page context", () => {
+  it("observes a visible PDF embed inside an accessible same-origin iframe", () => {
+    document.body.innerHTML = '<iframe src="/frame"></iframe>';
+    const frame = document.querySelector("iframe")!;
+    makeVisible(frame);
+    const child = attachSameOriginFrame(
+      frame,
+      '<embed src="https://papers.example.test/download?document=123" type="application/pdf">',
+    );
+    makeVisible(child.querySelector("embed")!);
+
+    expect(probePdfDocument().candidates).toContainEqual({
+      url: "https://papers.example.test/download?document=123",
+      via: "embed",
+      mimeType: "application/pdf",
+    });
+  });
+
+  it("does not inspect the DOM of a third-party extension iframe", () => {
+    document.body.innerHTML = '<iframe src="chrome-extension://third-party/reader.html"></iframe>';
+    const frame = document.querySelector("iframe")!;
+    makeVisible(frame);
+    const child = document.implementation.createHTMLDocument("foreign frame");
+    child.body.innerHTML = '<embed src="https://papers.example.test/should-not-be-seen.pdf" type="application/pdf">';
+    makeVisible(child.querySelector("embed")!);
+    Object.defineProperty(frame, "contentDocument", { configurable: true, value: child });
+    Object.defineProperty(frame, "contentWindow", {
+      configurable: true,
+      value: { location: { origin: "chrome-extension://third-party" } },
+    });
+
+    expect(probePdfDocument().candidates).not.toContainEqual({
+      url: "https://papers.example.test/should-not-be-seen.pdf",
+      via: "embed",
+      mimeType: "application/pdf",
+    });
+  });
+
+  it("does not collect hidden embeds or ordinary PDF links", () => {
+    document.body.innerHTML = [
+      '<a href="https://papers.example.test/download?document=123">download</a>',
+      '<embed hidden src="https://papers.example.test/hidden.pdf" type="application/pdf">',
+    ].join("");
+    makeVisible(document.querySelector("embed")!);
+
+    expect(probePdfDocument().candidates).toEqual([]);
+  });
+
+  it("recurses through two same-origin iframe documents but stops before a third", () => {
+    document.body.innerHTML = '<iframe src="/one"></iframe>';
+    const first = document.querySelector("iframe")!;
+    makeVisible(first);
+    const firstDocument = attachSameOriginFrame(first, '<iframe src="/two"></iframe>');
+    const second = firstDocument.querySelector("iframe")!;
+    makeVisible(second);
+    const secondDocument = attachSameOriginFrame(second, '<iframe src="/three"></iframe>');
+    const third = secondDocument.querySelector("iframe")!;
+    makeVisible(third);
+    const thirdDocument = attachSameOriginFrame(
+      third,
+      '<embed src="https://papers.example.test/too-deep.pdf" type="application/pdf">',
+    );
+    makeVisible(thirdDocument.querySelector("embed")!);
+
+    const candidates = probePdfDocument().candidates;
+    expect(candidates).toContainEqual({ url: "http://localhost:3000/three", via: "iframe", mimeType: "" });
+    expect(candidates).not.toContainEqual({
+      url: "https://papers.example.test/too-deep.pdf",
+      via: "embed",
+      mimeType: "application/pdf",
+    });
+  });
+
+  it("caps candidates across a recursively inspected iframe tree", () => {
+    document.body.innerHTML = '<iframe src="/frame"></iframe>';
+    const frame = document.querySelector("iframe")!;
+    makeVisible(frame);
+    const child = attachSameOriginFrame(
+      frame,
+      Array.from({ length: 100 }, (_, index) =>
+        `<embed src="https://papers.example.test/${index}.pdf" type="application/pdf">`,
+      ).join(""),
+    );
+    for (const embed of child.querySelectorAll("embed")) makeVisible(embed);
+
+    const candidates = probePdfDocument().candidates;
+    expect(candidates).toHaveLength(100);
+    expect(candidates).toContainEqual({ url: "https://papers.example.test/98.pdf", via: "embed", mimeType: "application/pdf" });
+    expect(candidates).not.toContainEqual({ url: "https://papers.example.test/99.pdf", via: "embed", mimeType: "application/pdf" });
+  });
+
+  it('marks actual HTTPS IEEE wrapper context for an explicit session action', () => {
+    expect(classifyPdfTab(7, 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1')).toMatchObject({ publisher: 'ieee', kind: 'wrapper' });
+    expect(classifyPdfTab(7, 'https://other.test/stamp/stamp.jsp')).not.toHaveProperty('publisher');
+  });
+  it.each([
+    'https://ieeexplore.ieee.org/document/11643626',
+    'https://ieeexplore.ieee.org/document/11643626/?view=pdf',
+  ])('recognizes an exact IEEE document route as a potential session page: %s', page => {
+    expect(isIeeeSessionPage(page)).toBe(true);
+    expect(classifyPdfTab(7, page)).toMatchObject({ kind: 'unavailable', candidates: [], reason: 'not-pdf' });
+    expect(classifyPdfTab(7, page)).not.toHaveProperty('publisher');
+  });
+  it.each([
+    'http://ieeexplore.ieee.org/document/11643626',
+    'https://other.test/document/11643626',
+    'https://user:secret@ieeexplore.ieee.org/document/11643626',
+    'https://ieeexplore.ieee.org/document/11643626/authors',
+    'https://ieeexplore.ieee.org/document/11643626/metrics',
+    'https://ieeexplore.ieee.org/document/not-an-id',
+  ])('does not expand session authority to a different origin or document subroute: %s', page => {
+    expect(isIeeeSessionPage(page)).toBe(false);
+    expect(classifyPdfTab(7, page, [{ url: 'https://ieeexplore.ieee.org/paper.pdf', via: 'embed', mimeType: 'application/pdf' }])).not.toHaveProperty('publisher');
+  });
+  it.each([
+    { via: 'iframe' as const, url: 'https://ieeexplore.ieee.org/paper.PDF', mimeType: '', source: 'https://ieeexplore.ieee.org/paper.PDF' },
+    { via: 'embed' as const, url: 'https://ieeexplore.ieee.org/observed-file', mimeType: 'application/pdf; charset=binary', source: 'https://ieeexplore.ieee.org/observed-file' },
+    { via: 'object' as const, url: 'https://ieeexplore.ieee.org/paper.pdf', mimeType: '', source: 'https://ieeexplore.ieee.org/paper.pdf' },
+    { via: 'iframe' as const, url: `chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/index.html?file=${encodeURIComponent('https://ieeexplore.ieee.org/observed-file')}`, mimeType: '', source: 'https://ieeexplore.ieee.org/observed-file' },
+  ])('marks an IEEE document only after an actual same-origin PDF candidate is observed: $via $url', ({ via, url, mimeType, source }) => {
+    expect(classifyPdfTab(7, 'https://ieeexplore.ieee.org/document/11643626', [{ url, via, mimeType }])).toMatchObject({
+      publisher: 'ieee', kind: 'embedded', candidates: [{ url: source, via }],
+    });
+  });
+  it('keeps a plain IEEE article with ordinary PDF links available for webpage annotation', () => {
+    document.body.innerHTML = '<article>Abstract</article><a href="https://ieeexplore.ieee.org/paper.pdf">Download PDF</a>';
+    const observed = probePdfDocument().candidates;
+    expect(observed).toEqual([]);
+    const classified = classifyPdfTab(7, 'https://ieeexplore.ieee.org/document/11643626', observed);
+    expect(classified).toMatchObject({ kind: 'unavailable', reason: 'not-pdf', candidates: [] });
+    expect(classified).not.toHaveProperty('publisher');
+  });
+  it('does not infer a PDF from an arbitrary same-origin document iframe', () => {
+    const classified = classifyPdfTab(7, 'https://ieeexplore.ieee.org/document/11643626', [
+      { url: 'https://ieeexplore.ieee.org/tools/pane', via: 'iframe', mimeType: '' },
+    ]);
+    expect(classified).toMatchObject({ kind: 'unavailable', reason: 'not-pdf', candidates: [] });
+    expect(classified).not.toHaveProperty('publisher');
+  });
+  it('keeps a cross-origin document PDF candidate public without IEEE credential authority', () => {
+    const classified = classifyPdfTab(7, 'https://ieeexplore.ieee.org/document/11643626', [
+      { url: 'https://other.test/paper.pdf', via: 'embed', mimeType: 'application/pdf' },
+    ]);
+    expect(classified).toMatchObject({ kind: 'embedded', candidates: [{ url: 'https://other.test/paper.pdf', via: 'embed' }] });
+    expect(classified).not.toHaveProperty('publisher');
+  });
   it("recognizes HTTPS PDF paths case-insensitively and preserves query/hash", () => {
     const source = "https://papers.example.test/Study.PdF?token=a%2Bb#page=4";
     expect(getPdfContext(source)).toEqual({ kind: "remote", sourceUrl: source });
@@ -98,11 +269,24 @@ describe("PDF page context", () => {
         .toMatchObject({ kind: "wrapper", candidates: [], reason: "local-source" });
   });
 
-  it("does not treat arbitrary untyped IEEE wrapper iframes as PDF sources", () => {
+  it("keeps observed same-origin IEEE iframe endpoints for later byte validation", () => {
     expect(classifyPdfTab(7, "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", [
       { url: "https://ads.example.test/frame", via: "iframe", mimeType: "" },
       { url: "https://ieeexplore.ieee.org/visible-download?document=123", via: "iframe", mimeType: "" },
       { url: "/navigation/footer", via: "iframe", mimeType: "" },
+    ])).toMatchObject({ kind: "wrapper", candidates: [
+      { url: "https://ieeexplore.ieee.org/visible-download?document=123", via: "iframe" },
+      { url: "https://ieeexplore.ieee.org/navigation/footer", via: "iframe" },
+    ] });
+  });
+
+  it("does not infer extensionless PDF sources from ordinary pages or non-iframe elements", () => {
+    const endpoint = "https://papers.example.test/download?document=123";
+    expect(classifyPdfTab(7, "https://papers.example.test/article", [
+      { url: endpoint, via: "iframe", mimeType: "" },
+    ])).toMatchObject({ kind: "unavailable", candidates: [], reason: "not-pdf" });
+    expect(classifyPdfTab(7, "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", [
+      { url: "https://ieeexplore.ieee.org/download?document=123", via: "object", mimeType: "" },
     ])).toMatchObject({ kind: "wrapper", candidates: [], reason: "source-unknown" });
   });
 

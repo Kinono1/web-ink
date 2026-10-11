@@ -130,26 +130,48 @@ export interface PdfDocumentSnapshot {
 /** Chrome serializes this function. It must depend only on the observed DOM. */
 export function probePdfDocument(): PdfDocumentSnapshot {
   const candidates: ObservedPdfCandidate[] = [];
-  for (const element of document.querySelectorAll("iframe,embed,object")) {
-    const rectangle = element.getBoundingClientRect();
-    const style = getComputedStyle(element);
-    if (
-      element.closest("[hidden]") ||
-      style.display === "none" || style.visibility === "hidden" ||
-      rectangle.width <= 0 || rectangle.height <= 0 ||
-      rectangle.bottom <= 0 || rectangle.right <= 0 ||
-      rectangle.top >= innerHeight || rectangle.left >= innerWidth
-    )
-      continue;
-    const via = element.localName as "iframe" | "embed" | "object";
-    const attribute = element.getAttribute(via === "object" ? "data" : "src");
-    if (!attribute || attribute.length > 8192) continue;
-    let url: string;
-    try { url = new URL(attribute, document.baseURI).href; } catch { continue; }
-    if (url.length > 8192) continue;
-    candidates.push({ url, via, mimeType: (element.getAttribute("type") ?? "").slice(0, 200) });
-    if (candidates.length === 100) break;
-  }
+  const maxCandidates = 100;
+
+  const visit = (currentDocument: Document, currentWindow: Window, depth: number) => {
+    for (const element of currentDocument.querySelectorAll("iframe,embed,object")) {
+      if (candidates.length === maxCandidates) return;
+
+      const rectangle = element.getBoundingClientRect();
+      const style = currentWindow.getComputedStyle(element);
+      if (
+        element.closest("[hidden]") ||
+        style.display === "none" || style.visibility === "hidden" ||
+        rectangle.width <= 0 || rectangle.height <= 0 ||
+        rectangle.bottom <= 0 || rectangle.right <= 0 ||
+        rectangle.top >= currentWindow.innerHeight || rectangle.left >= currentWindow.innerWidth
+      )
+        continue;
+
+      const via = element.localName as "iframe" | "embed" | "object";
+      const attribute = element.getAttribute(via === "object" ? "data" : "src");
+      if (attribute && attribute.length <= 8192) {
+        try {
+          const url = new URL(attribute, currentDocument.baseURI).href;
+          if (url.length <= 8192)
+            candidates.push({ url, via, mimeType: (element.getAttribute("type") ?? "").slice(0, 200) });
+        } catch { /* Ignore malformed observed element sources. */ }
+      }
+
+      if (via !== "iframe" || depth === 2 || candidates.length === maxCandidates) continue;
+      const frame = element as HTMLIFrameElement;
+      try {
+        const childWindow = frame.contentWindow;
+        if (!childWindow || childWindow.location.origin !== currentWindow.location.origin) continue;
+        const childDocument = frame.contentDocument;
+        if (!childDocument) continue;
+        visit(childDocument, childWindow, depth + 1);
+      } catch {
+        // Accessing a cross-origin iframe throws; never inspect its DOM.
+      }
+    }
+  };
+
+  visit(document, window, 0);
   return { href: location.href, top: window === window.top, candidates };
 }
 
@@ -164,6 +186,16 @@ export function isIeeePdfWrapper(raw: string): boolean {
       url.pathname.toLowerCase() === "/stamp/stamp.jsp";
   } catch { return false; }
 }
+export function isIeeeDocumentPath(pathname: string): boolean {
+  return /^\/document\/[0-9]+\/?$/.test(pathname);
+}
+export function isIeeeSessionPage(raw: string): boolean {
+  try {
+    const url = new URL(raw);
+    return url.protocol === "https:" && !url.username && !url.password && url.origin === "https://ieeexplore.ieee.org" &&
+      (isIeeePdfWrapper(raw) || isPdfPath(url) || isIeeeDocumentPath(url.pathname));
+  } catch { return false; }
+}
 export function publicPdfSource(raw: string): string | undefined {
   return safeHttpsUrl(raw)?.href;
 }
@@ -174,6 +206,9 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
   if (!raw) return { ...base, reason: "context-unavailable" };
   let page: URL;
   try { page = new URL(raw); } catch { return { ...base, reason: "context-unavailable" }; }
+  const ieeePage = isIeeeSessionPage(raw);
+  const ieeeDocument = ieeePage && isIeeeDocumentPath(page.pathname);
+  if (ieeePage && !ieeeDocument) base.publisher = "ieee";
   const direct = getPdfContext(raw);
   const wrapper = isKnownPdfViewer(raw) || isIeeePdfWrapper(raw);
   if (direct?.kind === "remote") return {
@@ -203,7 +238,12 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
     let url: URL;
     try { url = new URL(item.url, raw); } catch { continue; }
     const known = getPdfContext(url.href);
-    if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf") continue;
+    // IEEE's recognized stamp wrapper can expose a same-origin download in a
+    // visible iframe without a PDF path or MIME hint. Its bytes are verified
+    // later; arbitrary HTML pages and other embedded element types stay out.
+    const ieeeIframeEndpoint =
+      isIeeePdfWrapper(raw) && item.via === "iframe" && url.origin === page.origin;
+    if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf" && !ieeeIframeEndpoint) continue;
     embedded = true;
     const source = known?.kind === "remote" ? known.sourceUrl : publicPdfSource(url.href);
     if (source) {
@@ -211,7 +251,12 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
     } else if ((url.protocol === "http:" || url.protocol === "file:") && !url.username && !url.password) local = true;
     else unsafe = true;
   }
-  if (candidates.size) return { ...base, kind: wrapper ? "wrapper" : "embedded", candidates: [...candidates.values()] };
+  if (candidates.size) {
+    // Article routes become PDF contexts only from observed usable sources.
+    if (ieeeDocument && [...candidates.keys()].some((source) => new URL(source).origin === page.origin))
+      base.publisher = "ieee";
+    return { ...base, kind: wrapper ? "wrapper" : "embedded", candidates: [...candidates.values()] };
+  }
   let reason: PdfContextReason = wrapper ? "source-unknown" : "not-pdf";
   if (local) reason = "local-source";
   if (unsafe || (isPdfPath(page) && !direct)) reason = "unsafe-source";

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Web Ink annotations"
+  short_description: "Search a selected Web Ink annotation export"
+  default_prompt: "Use $web-ink-annotations to inspect my selected Web Ink JSON export and cite the saved annotations."

@@ -168,7 +168,7 @@ export default defineBackground(() => {
           return { ok: true, data: await runtimeHealth };
         }
         if (type === "ui.open") return handleFloatingAction(raw, sender);
-        if (["pdf.context.get", "pdf.openCurrent", "pdf.handoff.get", "pdf.returnOriginal"].includes(type))
+        if (["pdf.context.get", "pdf.openCurrent", "pdf.handoff.get", "pdf.handoff.revoke", "pdf.returnOriginal"].includes(type))
           return handlePdfRequest(raw, sender);
         if (
           !trusted &&

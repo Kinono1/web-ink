@@ -34,6 +34,8 @@ import {
 import { THEME_TOKENS } from "../ui/theme";
 import { Icon } from "../ui/management/helpers";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
+import { readIeeePdf, ieeeSourceUrl, IeeePdfError } from "./ieee";
+import { isIeeeSessionPage, isIeeePdfWrapper } from "./context";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
 import {
@@ -78,6 +80,14 @@ function safeSource(raw: string | undefined): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function ieeeRecordSource(raw: string): string {
+  const page = ieeeSourceUrl(raw);
+  const article = page.searchParams.get("arnumber");
+  page.search = "";
+  if (page.pathname.toLowerCase() === "/stamp/stamp.jsp" && article && /^\d+$/.test(article)) page.searchParams.set("arnumber", article);
+  return page.href;
 }
 
 export function PdfReader() {
@@ -125,6 +135,7 @@ export function PdfReader() {
   const [sidebarAck, setSidebarAck] = useState<string>();
   const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
   const [handoffReady, setHandoffReady] = useState(!handoffToken);
+  const [ieeeRecovery, setIeeeRecovery] = useState<"permission" | "retry" | "return">();
   const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
   const [leaving, setLeaving] = useState(false),
     [guardSaving, setGuardSaving] = useState(false);
@@ -321,7 +332,12 @@ export function PdfReader() {
       event.preventDefault();
       event.returnValue = "";
     };
-    const hide = () => { void positionSession.current?.writer.flush().catch(() => undefined); };
+    const hide = () => {
+      void positionSession.current?.writer.flush().catch(() => undefined);
+      // Page teardown may prevent this best-effort message; a replacement
+      // reader is independently denied by the background's document binding.
+      if (handoffToken) void request({ type: "pdf.handoff.revoke", token: handoffToken }).catch(() => undefined);
+    };
     window.addEventListener("beforeunload", guard);
     window.addEventListener("pagehide", hide);
     return () => {
@@ -604,15 +620,37 @@ export function PdfReader() {
     };
   }, [opened?.hash, layoutEpoch, positionEpoch, zoom, rotation]);
   useEffect(() => {
-    if (!settingsReady || autoOpenAttempted.current) return;
+    if (!settingsReady || !handoffReady || autoOpenAttempted.current) return;
     autoOpenAttempted.current = true;
-    if (safeSource(initialParams.get("source") || undefined)) {
+    const initialSource = initialParams.get("source");
+    const sessionSource = handoff?.accessMode === "site-session" &&
+      ((!initialParams.get("document") && !initialSource) || initialSource === ieeeRecordSource(handoff.returnUrl));
+    if (sessionSource && handoff) {
+      void loadPdf(undefined, true, handoff.returnUrl, true);
+    } else if (handoffToken && !handoff && initialSource && isIeeeSessionPage(initialSource)) {
+      setIeeeRecovery("return");
+      setError(t("登录读取授权已过期，请返回 IEEE 后重新打开。", "Sign-in access expired. Return to IEEE and open again."));
+    } else if (initialSource && safeSource(initialSource) && isIeeePdfWrapper(initialSource)) {
+      setIeeeRecovery("return");
+      setError(t("请返回 IEEE 原页面，选择「使用 IEEE 登录状态打开」。", "Return to the IEEE paper page and choose Open using IEEE sign-in."));
+    } else if (safeSource(initialParams.get("source") || undefined)) {
       // A side-panel click starts this handoff. Never request site access from
       // an effect: if needed, the reader's Open URL button supplies the gesture.
       void loadPdf(undefined, true);
     }
-  }, [settingsReady]);
-  async function loadPdf(file?: File, automatic = false, chosenSource = source) {
+  }, [settingsReady, handoffReady]);
+  async function claimIeeeGrant(): Promise<PdfHandoff> {
+    const grant = handoffToken ? await request<PdfHandoff | null>({ type: "pdf.handoff.get", token: handoffToken }) : null;
+    if (!grant || grant.token !== handoffToken || grant.accessMode !== "site-session" ||
+      grant.allowedOrigin !== "https://ieeexplore.ieee.org" || !Number.isFinite(grant.expiresAt) || grant.expiresAt! <= Date.now()) {
+      setIeeeRecovery("return");
+      throw Error(t("登录读取授权已过期，请返回 IEEE 后重新打开。", "Sign-in access expired. Return to IEEE and open again."));
+    }
+    ieeeSourceUrl(grant.returnUrl);
+    if (grant.sourceUrl) ieeeSourceUrl(grant.sourceUrl);
+    return grant;
+  }
+  async function loadPdf(file?: File, automatic = false, chosenSource = source, siteSession = false) {
     const openingParams = new URLSearchParams(location.search);
     const openingIntent = intentEpoch.current;
     const chromeVersion = Number(
@@ -631,6 +669,7 @@ export function PdfReader() {
       signal: AbortSignal | undefined;
     setError("");
     setNotice("");
+    setIeeeRecovery(undefined);
     setBusy(true);
     // Invalidate every async callback from the currently displayed document
     // before a new source read can complete.
@@ -662,22 +701,47 @@ export function PdfReader() {
       const active = await session.current.begin();
       token = active.token;
       signal = active.signal;
+      if (!siteSession && handoff?.accessMode === "site-session" && handoffToken) {
+        await request({ type: "pdf.handoff.revoke", token: handoffToken });
+        if (!session.current.isCurrent(token)) return;
+        setHandoff({ ...handoff, expiresAt: 0, sourceUrl: undefined });
+      }
       let remote: string | undefined;
+      let ieeeGrant: PdfHandoff | null = null;
+      if (!file && siteSession) {
+        ieeeGrant = await claimIeeeGrant();
+        if (!session.current.isCurrent(token)) return;
+        // Download tickets stay in session storage. Records keep only the
+        // observed paper page, with its article identifier when available.
+        remote = ieeeRecordSource(ieeeGrant.returnUrl);
+      }
       if (!file) {
-        const url = pdfSourceUrl(chosenSource.trim());
+        const url = pdfSourceUrl(remote ?? chosenSource.trim());
         remote = url.href;
         const origins = [`${url.origin}/*`];
         if (!(await chrome.permissions.contains({ origins }))) {
           if (automatic) {
-            setNotice(t("链接已带入。点击「打开网址」授权并读取，或选择本地 PDF。", "Link ready. Click Open URL to grant access, or choose a local PDF."));
+            if (siteSession) setIeeeRecovery("permission");
+            setNotice(siteSession
+              ? t("需要允许访问 IEEE。点击「允许访问 IEEE 并重试」继续。", "Grant IEEE access with Allow IEEE and retry.")
+              : t("链接已带入。点击「打开网址」授权并读取，或选择本地 PDF。", "Link ready. Click Open URL to grant access, or choose a local PDF."));
             return;
           }
-          if (!(await chrome.permissions.request({ origins })))
+          if (!(await chrome.permissions.request({ origins }))) {
+            if (siteSession) setIeeeRecovery("permission");
             throw Error(t("未授予网站访问权限。", "Site permission was not granted."));
+          }
         }
       }
+      if (ieeeGrant) {
+        // A permission dialog can remain open beyond the ten-minute grant.
+        ieeeGrant = await claimIeeeGrant();
+        if (!session.current.isCurrent(token)) return;
+      }
       const [bytes, api] = await Promise.all([
-        file ? readLocalPdf(file) : readRemotePdf(remote!, signal),
+        file ? readLocalPdf(file) : ieeeGrant
+          ? readIeeePdf({ pageUrl: ieeeGrant.returnUrl, ...(ieeeGrant.sourceUrl ? { sourceUrl: ieeeGrant.sourceUrl } : {}) }, signal)
+          : readRemotePdf(remote!, signal),
         import("pdfjs-dist/legacy/build/pdf.mjs"),
       ]);
       if (!session.current.isCurrent(token)) return;
@@ -720,11 +784,10 @@ export function PdfReader() {
         request<Annotation[]>({ type: "annotations.list", pageUrl }),
       ]);
       if (!session.current.isCurrent(token)) return;
-      const fileName =
-        file?.name ||
-        decodeURIComponent(
-          new URL(remote!).pathname.split("/").pop() || "Document.pdf",
-        );
+      const sourcePage = remote ? new URL(remote) : undefined;
+      const ieeeName = ieeeGrant && sourcePage?.pathname.toLowerCase() === "/stamp/stamp.jsp"
+        ? `IEEE-${sourcePage.searchParams.get("arnumber") || "paper"}.pdf` : undefined;
+      const fileName = file?.name || ieeeName || decodeURIComponent(sourcePage?.pathname.split("/").pop() || "Document.pdf");
       // Keep the reader URL aligned with the successfully loaded document so
       // a later library/source handoff cannot reuse a tab showing another PDF.
       const readerLocation = new URL(location.href);
@@ -794,6 +857,12 @@ export function PdfReader() {
         );
     } catch (cause) {
       if (token && session.current.isCurrent(token) && !signal?.aborted) {
+        if (siteSession && cause instanceof IeeePdfError) {
+          let recovery: "permission" | "retry" | "return" = "return";
+          if (cause.reason === "site-permission") recovery = "permission";
+          else if (cause.reason === "network" && !cause.stage) recovery = "retry";
+          setIeeeRecovery(recovery);
+        }
         setError(errorText(cause));
         await session.current.disposeCurrent();
       }
@@ -872,6 +941,8 @@ export function PdfReader() {
     setLeaving(true);
     try {
       await flushPosition();
+      if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "source"))
+        await request({ type: "pdf.handoff.revoke", token: handoff.token });
       switch (action.kind) {
         case "return":
           if (!handoff) throw Error(t("原阅读器会话已失效，请打开 PDF 来源或重新选择本地文件。", "Original-reader session expired. Open the public source or choose the local file again."));
@@ -1245,6 +1316,11 @@ export function PdfReader() {
         <button onClick={() => void flushPosition()}>{t("重试保存阅读位置", "Retry reading position")}</button>
         <button onClick={() => setPositionError("")}>{t("关闭", "Dismiss")}</button></div>}
       {notice && <div className="pdf-message" role="status">{notice}</div>}
+      {!opened && ieeeRecovery && (error || notice) && <div className="pdf-message">
+        {ieeeRecovery === "return" ? <button disabled={busy || leaving} onClick={() => requestLeave(backAction)}>{t("返回 IEEE", "Return to IEEE")}</button>
+          : handoff && <button disabled={busy || leaving} onClick={() => void loadPdf(undefined, false, handoff.returnUrl, true)}>
+            {ieeeRecovery === "permission" ? t("允许访问 IEEE 并重试", "Allow IEEE and retry") : t("重试读取", "Retry reading")}</button>}
+      </div>}
       {!notice && handoffToken && handoffReady && !handoff && <div className="pdf-message" role="status">
         <span>{t("暂时无法返回原阅读器。", "The original reader is unavailable.")}</span>
         <button onClick={() => requestLeave(backAction)}>{backLabel}</button>
@@ -1318,7 +1394,7 @@ export function PdfReader() {
           ? t("选择已下载的 PDF 文件。标注保存在本机，原文件不会存入资料库。", "Choose a downloaded PDF file. Annotations stay on this device; the PDF is not stored in your library.")
           : t("选择本地文件，或打开公开 PDF 网址。标注保存在本机，原文件不会存入资料库。", "Choose a local file or public PDF URL. Annotations stay on this device; the PDF is not stored in your library.")}</p>
         {sourceControls}
-        <p className="pdf-muted">{t("单份文件最多 50 MiB。登录网站的 PDF 请下载后选择本地文件；扫描件可做区域标注。", "Up to 50 MiB per file. Download authenticated PDFs first. Scanned documents support area annotations.")}</p>
+        <p className="pdf-muted">{t("单份文件最多 50 MiB。IEEE 登录论文请从原页面选择「使用 IEEE 登录状态打开」；其他受保护来源请下载后选择文件。扫描件可做区域标注。", "Up to 50 MiB. Open IEEE papers from the original page with Open using IEEE sign-in; download other protected sources first. Scans support area annotations.")}</p>
         {currentParams.has("document") && !publicUrl && <p role="status">{t("重新选择原来的 PDF，即可恢复标注与阅读位置。", "Choose the original PDF again to restore annotations and reading position.")}</p>}
       </section>}
       {sourceOpen && <div className="pdf-dialog-backdrop"><section className="pdf-dialog" role="dialog" aria-modal="true"

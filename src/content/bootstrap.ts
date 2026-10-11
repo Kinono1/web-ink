@@ -234,15 +234,55 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   const menuItems = (): PaletteMenuItem[] => {
     const zh = language === "zh-CN";
     const items: PaletteMenuItem[] = [];
-    if (menuContext?.candidates.length) {
-      const candidates = menuContext.candidates.map(candidate => {
+    const labeledCandidates = (candidates: PdfTabContext["candidates"]) => {
+      const named = candidates.map(candidate => {
         const url = new URL(candidate.url);
         return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
       });
       const nameCounts = new Map<string, number>();
-      for (const { filename } of candidates) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
-      for (const { candidate, filename } of candidates) {
-        const sourceLabel = nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename;
+      for (const { filename } of named) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
+      return named.map(({ candidate, filename }) => ({
+        candidate,
+        sourceLabel: nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename,
+      }));
+    };
+    const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
+      const url = new URL(candidate.url);
+      return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
+    };
+    if (menuContext?.publisher === "ieee") {
+      const label = zh ? "使用 IEEE 登录状态打开" : "Open using IEEE sign-in";
+      const ieeeCandidates = menuContext.candidates.filter(isIeeeCandidate);
+      const publicCandidates = menuContext.candidates.filter(candidate => !isIeeeCandidate(candidate));
+      if (!ieeeCandidates.length) {
+        items.push({
+          action: "open-ieee",
+          icon: "pdf",
+          primary: true,
+          label,
+        });
+      } else {
+        for (const { candidate, sourceLabel } of labeledCandidates(ieeeCandidates)) {
+          items.push({
+            action: "open-ieee",
+            icon: "pdf",
+            primary: true,
+            label: ieeeCandidates.length === 1 ? label : `${label}: ${sourceLabel}`,
+            candidateUrl: candidate.url,
+          });
+        }
+      }
+      for (const { candidate, sourceLabel } of labeledCandidates(publicCandidates)) {
+        items.push({
+          action: "open-pdf",
+          icon: "pdf",
+          primary: true,
+          label: `${zh ? "打开" : "Open"} ${sourceLabel}`,
+          candidateUrl: candidate.url,
+        });
+      }
+    } else if (menuContext?.candidates.length) {
+      for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
             ? zh ? "打开当前 PDF" : "Open current PDF"
@@ -293,10 +333,15 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     // Ignore an outstanding context result so it cannot erase this action's error.
     menu.update({ pending: true, loading: false, error: "" });
     try {
-      if (action === "open-pdf") {
+      if (action === "open-pdf" || action === "open-ieee") {
         if (window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
           throw Error(language === "zh-CN" ? "请先保存正在编辑的内容。" : "Save your current edits first.");
-        await request({ type: "pdf.openCurrent", expectedUrl: url, ...(candidateUrl ? { candidateUrl } : {}) });
+        await request({
+          type: "pdf.openCurrent",
+          expectedUrl: url,
+          ...(candidateUrl ? { candidateUrl } : {}),
+          ...(action === "open-ieee" ? { accessMode: "site-session" as const } : {}),
+        });
       } else if (action === "toggle") {
         if (!await setEnabled(!enabled)) throw Error(language === "zh-CN" ? "未能切换标注，请重试。" : "Could not change annotations. Try again.");
       } else {

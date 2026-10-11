@@ -61,6 +61,10 @@ function installChrome(
     title: "Article",
   },
   onTabUpdated?: (listener: TabUpdatedListener) => void,
+  ieeePermission: { contains: () => Promise<boolean>; request: () => Promise<boolean> } = {
+    contains: async () => true,
+    request: async () => true,
+  },
 ) {
   const events = { addListener: vi.fn(), removeListener: vi.fn() };
   const updated = {
@@ -76,8 +80,11 @@ function installChrome(
         getURL: (path: string) =>
           `chrome-extension://test/${path.replace(/^\//, "")}`,
       },
-      permissions: { contains: async () => true },
-      tabs: { query: async () => [tab], onActivated: events, onUpdated: updated },
+      permissions: {
+        contains: ieeePermission.contains,
+        request: ieeePermission.request,
+      },
+      tabs: { query: async () => [tab], create: vi.fn(async () => ({ id: 9 })), onActivated: events, onUpdated: updated },
     },
   });
   return globalThis.chrome.runtime.sendMessage as ReturnType<typeof vi.fn>;
@@ -264,6 +271,176 @@ describe("management UI", () => {
       expectedUrl: "https://example.test/reading",
       candidateUrl: "https://example.test/two.pdf",
     });
+  });
+
+  it("labels and opens an IEEE wrapper with the current IEEE sign-in", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return {
+          ok: true,
+          data: {
+            tabId: 7,
+            url: ieee,
+            publisher: "ieee",
+            kind: "wrapper",
+            currentReader: false,
+            candidates: [],
+          },
+        };
+      }
+      if (message.type === "pdf.openCurrent")
+        return { ok: true, data: { tabId: 7, navigation: "same-tab", token: "token" } };
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" });
+
+    const host = await mount("sidepanel");
+    const action = host.querySelector<HTMLButtonElement>(".pdf-open-current")!;
+    expect(action.textContent).toContain("使用 IEEE 登录状态打开");
+
+    await act(async () => action.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      windowId: 1,
+      expectedUrl: ieee,
+      accessMode: "site-session",
+    });
+
+    await act(async () => {
+      (host.querySelector(".pdf-local-link") as HTMLButtonElement).click();
+    });
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: "chrome-extension://test/pdf.html?open=local",
+    });
+    expect(sent.mock.calls.some(([message]) => message.type === "ui.open")).toBe(false);
+  });
+
+  it("does not open an IEEE wrapper when the exact host permission is denied", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const contains = vi.fn(async () => false);
+    const requestPermission = vi.fn(async () => false);
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return { ok: true, data: {
+          tabId: 7,
+          url: ieee,
+          publisher: "ieee",
+          kind: "wrapper",
+          currentReader: false,
+          candidates: [],
+        } };
+      }
+      if (message.type === "pdf.openCurrent")
+        return { ok: true, data: { tabId: 7, navigation: "same-tab", token: "token" } };
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" }, undefined, {
+      contains,
+      request: requestPermission,
+    });
+
+    const host = await mount("sidepanel");
+    await act(async () => {
+      (host.querySelector(".pdf-open-current") as HTMLButtonElement).click();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(contains).toHaveBeenCalledWith({ origins: ["https://ieeexplore.ieee.org/*"] });
+    expect(requestPermission).toHaveBeenCalledWith({ origins: ["https://ieeexplore.ieee.org/*"] });
+    expect(sent.mock.calls.some(([message]) => message.type === "pdf.openCurrent")).toBe(false);
+    expect(host.textContent).toContain("IEEE 网站访问权限");
+  });
+
+  it("requires an explicit IEEE source selection when several candidates are observed", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const first = "https://ieeexplore.ieee.org/download?document=one";
+    const second = "https://ieeexplore.ieee.org/download?document=two";
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return { ok: true, data: {
+          tabId: 7,
+          url: ieee,
+          publisher: "ieee",
+          kind: "wrapper",
+          currentReader: false,
+          candidates: [{ url: first, via: "iframe" }, { url: second, via: "iframe" }],
+        } };
+      }
+      if (message.type === "pdf.openCurrent")
+        return { ok: true, data: { tabId: 7, navigation: "same-tab", token: "token" } };
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" });
+
+    const host = await mount("sidepanel");
+    const choices = host.querySelectorAll<HTMLButtonElement>(".pdf-source-choice");
+    expect(choices).toHaveLength(2);
+    expect(choices[1]!.textContent).toContain("使用 IEEE 登录状态打开");
+
+    await act(async () => choices[1]!.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      windowId: 1,
+      expectedUrl: ieee,
+      candidateUrl: second,
+      accessMode: "site-session",
+    });
+  });
+
+  it("opens a cross-origin IEEE-wrapper candidate publicly without requesting IEEE access", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const second = "https://papers.example.test/second.pdf";
+    const contains = vi.fn(async () => true);
+    const requestPermission = vi.fn(async () => true);
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return { ok: true, data: {
+          tabId: 7,
+          url: ieee,
+          publisher: "ieee",
+          kind: "wrapper",
+          currentReader: false,
+          candidates: [{ url: second, via: "object" }],
+        } };
+      }
+      if (message.type === "pdf.openCurrent")
+        return { ok: true, data: { tabId: 7, navigation: "same-tab", token: "token" } };
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" }, undefined, {
+      contains,
+      request: requestPermission,
+    });
+
+    const host = await mount("sidepanel");
+    expect(host.querySelector<HTMLButtonElement>(".pdf-open-current")?.textContent)
+      .toContain("使用 IEEE 登录状态打开");
+    const publicChoice = host.querySelector<HTMLButtonElement>(".pdf-source-choice")!;
+    expect(publicChoice.textContent).toContain(second);
+
+    await act(async () => publicChoice.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      windowId: 1,
+      expectedUrl: ieee,
+      candidateUrl: second,
+    });
+    expect(requestPermission).not.toHaveBeenCalled();
+    sent.mockClear();
+    const header = host.querySelector<HTMLButtonElement>('.header-actions button[aria-label="使用 IEEE 登录状态打开"]')!;
+    await act(async () => header.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent", tabId: 7, windowId: 1, expectedUrl: ieee, accessMode: "site-session",
+    });
+    expect(sent.mock.calls.some(([message]) => message.type === "pdf.openCurrent" && 'candidateUrl' in message)).toBe(false);
   });
 
   it("uses an authoritative reader URL when Chrome withholds the active Tab URL", async () => {

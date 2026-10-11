@@ -26,14 +26,18 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 
 - Select webpage text and choose a color. Click a saved mark to add a note or remove it; removal can be undone.
 - Use the side panel's image tools for rectangles, ellipses, arrows, and freehand drawing.
-- Click Web Ink in Chrome's toolbar, then **Start annotating in this tab** in the side panel. The current tab switches to the Web Ink reader. Select text, then choose a color or add a note. **Return to original reader** opens the address observed before the switch. Choose among multiple sources when needed; download authenticated or unavailable files and choose them locally.
+- For a PDF in the current tab, click the floating pen and choose **Open current PDF**. If the pen is unavailable, open Web Ink from Chrome's toolbar and choose **Start annotating in this tab** in the existing side panel. With the IEEE PDF already open, choose **Open using IEEE sign-in** from the floating-pen menu or side panel; grant Chrome's IEEE site access if requested. On a page containing only paper information or a download link, first open the PDF on IEEE. The Web Ink reader opens in the same tab and keeps **Return to original reader**. Saved PDF marks and notes appear in the existing Web Ink side panel; the reader has no separate Notes button. If a source cannot be read, download it and choose the file locally.
 - Search the library and export JSON or Markdown. If a webpage changes, unresolved notes are retained and can be rebound.
 
 Data belongs to the current browser profile; there is no cross-device sync. Choose the same local PDF again to restore its notes and reading position. Original PDF bytes are not saved in the library. Reading and floating-button positions are local preferences outside annotation backups. Return sessions may expire after browser restart or extension Reload; the reader then offers the PDF source or file selection. Back up before clearing browser data or changing devices.
 
+## Search exported annotations
+
+The repository includes the source for an optional read-only annotation skill. Web Ink does not install it into your Codex skills root, and it does not provide a live MCP connection. The skill reads only the JSON export you select; it does not read browser profiles, access the network, or write to the export. It can search saved excerpts and notes, not the complete paper or webpage. See [usage and limitations](docs/USAGE.en.md) for the commands and scope.
+
 ## Limits and development
 
-Webpage annotations do not cover iframes, page-owned Shadow DOM, canvas, or browser-internal pages. PDFs are limited to 50 MiB; no OCR, credential forwarding, or PDF write-back is provided. Online PDFs require an authorized direct public HTTPS URL. See [detailed usage](docs/USAGE.en.md).
+Webpage annotations do not cover iframes, page-owned Shadow DOM, canvas, or browser-internal pages. PDFs are limited to 50 MiB; there is no OCR or PDF write-back. Ordinary online PDFs require an authorized direct public HTTPS URL. IEEE has a separate, explicit same-origin sign-in flow; other authenticated sites, cross-origin redirects, and password-encrypted PDFs are unsupported. See [detailed usage](docs/USAGE.en.md).
 
 ```sh
 npm ci

@@ -576,7 +576,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
     finally { pdfOpenPending.current = false; setOpeningPdf(false); }
   };
-  const openCurrentPdf = (candidateUrl?: string) => {
+  const openCurrentPdf = (candidateUrl?: string, accessMode?: "site-session") => {
     if (tab.id === undefined || pdfContext?.currentReader || pdfOpenPending.current)
       return;
     pdfOpenPending.current = true;
@@ -587,6 +587,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
       ...(tab.url ? { expectedUrl: tab.url } : {}),
       ...(candidateUrl ? { candidateUrl } : {}),
+      ...(accessMode ? { accessMode } : {}),
     })
       .catch((cause) => {
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -601,6 +602,24 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         setOpeningPdf(false);
       });
   };
+  const openIeeeSessionPdf = async (candidateUrl?: string) => {
+    const origin = { origins: ["https://ieeexplore.ieee.org/*"] };
+    try {
+      const granted = await chrome.permissions.contains(origin);
+      if (granted || await chrome.permissions.request(origin)) {
+        openCurrentPdf(candidateUrl, "site-session");
+        return;
+      }
+    } catch {
+      // A revoked extension context is handled as a denied IEEE host grant.
+    }
+    setError(t.ieeePermissionDenied);
+  };
+  const openLocalPdf = () => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("pdf.html?open=local") }).catch((cause) => {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  };
   const openPdf = (record?: Annotation) => {
     void showPdf(pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record));
   };
@@ -608,6 +627,17 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
   const showHeaderPdfAction =
     !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
+  const isIeeeSession = pdfContext?.publisher === "ieee";
+  const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
+    const url = new URL(candidate.url);
+    return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
+  };
+  const ieeeCandidates = isIeeeSession
+    ? pdfContext?.candidates.filter(isIeeeCandidate) ?? []
+    : [];
+  const publicCandidates = isIeeeSession
+    ? pdfContext?.candidates.filter(candidate => !isIeeeCandidate(candidate)) ?? []
+    : [];
   const openLibraryDetail = (id: string) => {
     if (window.innerWidth <= 699) libraryScrollY.current = window.scrollY;
     setSelectedId(id);
@@ -650,8 +680,13 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           {mode === "sidepanel" ? (
             <>
             {showHeaderPdfAction ? (
-              <button className="quiet icon-button" disabled={openingPdf} onClick={() => openCurrentPdf()}
-                title={t.openPdf} aria-label={t.openPdf}>
+              <button className="quiet icon-button" disabled={openingPdf}
+                onClick={() => {
+                  if (isIeeeSession) void openIeeeSessionPdf(ieeeCandidates[0]?.url);
+                  else openCurrentPdf(pdfContext?.candidates[0]?.url);
+                }}
+                title={isIeeeSession ? t.openIeeeSessionPdf : t.openPdf}
+                aria-label={isIeeeSession ? t.openIeeeSessionPdf : t.openPdf}>
                 <Icon name="pdf" />
               </button>
             ) : null}
@@ -758,9 +793,28 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               {tab.title ? <span className="pdf-document-name" title={tab.title}>{tab.title}</span> : null}
               {pdfContext?.currentReader ? (
                 <span className="pdf-reader-status" role="status">{t.pdfReading}</span>
-              ) : pdfContext && pdfContext.candidates.length > 1 ? (
-                <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
-                  {pdfContext.candidates.map((candidate) => (
+              ) : isIeeeSession ? (
+                <>
+                  {ieeeCandidates.length > 1 ? (
+                    <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
+                      {ieeeCandidates.map((candidate) => (
+                        <button
+                          className="quiet pdf-source-choice"
+                          disabled={openingPdf}
+                          key={candidate.url}
+                          onClick={() => void openIeeeSessionPdf(candidate.url)}
+                        >
+                          {`${t.openIeeeSessionPdf}: ${candidate.url}`}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <button className="primary pdf-open-current" disabled={openingPdf}
+                      onClick={() => void openIeeeSessionPdf(ieeeCandidates[0]?.url)}>
+                      <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openIeeeSessionPdf}
+                    </button>
+                  )}
+                  {publicCandidates.map((candidate) => (
                     <button
                       className="quiet pdf-source-choice"
                       disabled={openingPdf}
@@ -770,14 +824,34 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                       {candidate.url}
                     </button>
                   ))}
+                </>
+              ) : pdfContext && pdfContext.candidates.length > 1 ? (
+                <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
+                  {pdfContext.candidates.map((candidate) => (
+                    <button
+                      className="quiet pdf-source-choice"
+                      disabled={openingPdf}
+                      key={candidate.url}
+                      onClick={() => {
+                        if (isIeeeSession) void openIeeeSessionPdf(candidate.url);
+                        else openCurrentPdf(candidate.url);
+                      }}
+                    >
+                      {isIeeeSession ? `${t.openIeeeSessionPdf}: ${candidate.url}` : candidate.url}
+                    </button>
+                  ))}
                 </div>
               ) : (
-                <button className="primary pdf-open-current" disabled={openingPdf} onClick={() => openCurrentPdf(pdfContext?.candidates[0]?.url)}>
-                  <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openCurrentPdf}
+                <button className="primary pdf-open-current" disabled={openingPdf}
+                  onClick={() => {
+                    if (isIeeeSession) void openIeeeSessionPdf(ieeeCandidates[0]?.url);
+                    else openCurrentPdf(pdfContext?.candidates[0]?.url);
+                  }}>
+                  <Icon name="pdf" />{openingPdf ? t.openingPdf : isIeeeSession ? t.openIeeeSessionPdf : t.openCurrentPdf}
                 </button>
               )}
               {!pdfContext?.currentReader && pdfContext?.candidates.length !== undefined && pdfContext.candidates.length <= 1 ? (
-                <button className="quiet pdf-local-link" onClick={() => openCurrentPdf()}>{t.chooseLocalPdf}</button>
+                <button className="quiet pdf-local-link" onClick={openLocalPdf}>{t.chooseLocalPdf}</button>
               ) : null}
               <small>{t.pdfLocalNote}</small>
             </section>

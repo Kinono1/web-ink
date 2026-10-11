@@ -1,6 +1,6 @@
 {
   "name": "web-ink",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "description": "Local-first webpage and PDF annotations",
   "license": "MIT",
@@ -16,7 +16,7 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "zip": "node scripts/package-release.mjs",
-    "release:local": "npm run check && npm test && npm run test:bulk && npm run test:release && npm run build && npm run test:e2e && npm run zip -- --release",
+    "release:local": "npm run check && npm test && npm run test:skill && npm run test:bulk && npm run test:release && npm run build && npm run test:e2e && npm run zip -- --release",
     "postinstall": "wxt prepare",
     "benchmark": "node scripts/benchmark.mjs --mode=v02",
     "benchmark:v03": "node scripts/benchmark.mjs --mode=v03",
@@ -27,7 +27,8 @@
     "register:local": "node scripts/update-local.mjs --register",
     "test:bulk": "vitest run --config vitest.bulk.config.ts",
     "postbuild": "node scripts/seal-runtime.mjs",
-    "clean:artifacts": "node scripts/clean-artifacts.mjs"
+    "clean:artifacts": "node scripts/clean-artifacts.mjs",
+    "test:skill": "python3 -B -m unittest discover -s skills/web-ink-annotations/tests -v"
   },
   "dependencies": {
     "dexie": "4.4.6",
