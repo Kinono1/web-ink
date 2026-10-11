@@ -152,6 +152,7 @@ export function createPaletteToggle(
     if (event.pointerId === drag?.pointer) cancel();
   };
   const key = (event: KeyboardEvent) => {
+    if (!button.disabled && event.composedPath().includes(button)) interacted = true;
     if (event.key === "Escape" && drag) {
       event.preventDefault();
       event.stopPropagation();
@@ -173,7 +174,7 @@ export function createPaletteToggle(
   button.addEventListener("pointerup", up, { signal: events.signal });
   button.addEventListener("pointercancel", interrupted, { signal: events.signal });
   button.addEventListener("lostpointercapture", interrupted, { signal: events.signal });
-  window.addEventListener("keydown", key, { signal: events.signal });
+  window.addEventListener("keydown", key, { signal: events.signal, capture: true });
   window.addEventListener("blur", cancel, { signal: events.signal });
   window.addEventListener("resize", () => { cancel(); restore(); }, { signal: events.signal });
   root.append(style, button);

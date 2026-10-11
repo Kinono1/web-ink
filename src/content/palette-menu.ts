@@ -103,7 +103,8 @@ export function createPaletteMenu(
     const path = event.composedPath();
     if (!path.includes(panel) && !path.includes(anchor)) close();
   }, { signal: events.signal });
-  document.addEventListener('keydown', key, { signal: events.signal, capture: true });
+  // Runs after the pen's capture handler, so Escape also releases a pressed pointer.
+  window.addEventListener('keydown', key, { signal: events.signal, capture: true });
   anchor.addEventListener('pointermove', () => {
     if (anchor.dataset.dragging === 'true') close();
   }, { signal: events.signal });

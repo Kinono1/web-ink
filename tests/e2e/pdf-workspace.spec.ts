@@ -220,7 +220,7 @@ test("floating pen directly opens the current PDF without enabling webpage annot
 
 test("floating menu fits a narrow dark page and selects embedded PDF sources explicitly", async () => {
   const second = 'https://papers.example.test/second.pdf';
-  const original = await htmlPage(wrapper, `<iframe src="${source}"></iframe><object type="application/pdf" data="${second}"></object>`);
+  const original = await htmlPage(wrapper, `<iframe width="280" height="120" src="${source}"></iframe><object width="280" height="120" type="application/pdf" data="${second}"></object>`);
   await activeTab(original);
   await context.route(second, route => route.fulfill({ contentType: 'application/pdf', body: fixturePdf() }));
   const settings = await rpc<Settings>(control, { type: 'settings.get' });

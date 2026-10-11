@@ -170,7 +170,9 @@ async function palettePoint(page: Page) {
 async function setPageMode(page: Page, enabled: boolean) {
   const launcher = page.locator(".web-ink-palette-toggle");
   if ((await launcher.getAttribute("aria-pressed")) === String(enabled)) return;
+  const hasMenu = await launcher.getAttribute("aria-haspopup") === "menu";
   await launcher.click();
+  if (!hasMenu) return; // The pinned upgrade baseline still has a direct switch.
   await page
     .getByRole("menuitem", {
       name: enabled ? "开启本页标注" : "关闭本页标注",

@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPaletteMenu } from '../src/content/palette-menu';
+import { createPaletteToggle } from '../src/content/palette-toggle';
 
 let dispose: (() => void) | undefined;
 afterEach(() => { dispose?.(); document.body.replaceChildren(); vi.unstubAllGlobals(); });
@@ -71,4 +72,22 @@ it('starts reverse keyboard navigation at the last available action', () => {
   f.anchor.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, composed: true }));
   expect(f.menu.isOpen()).toBe(true);
   expect(f.root.activeElement).toBe(f.panel.querySelector('[data-action=sidebar]'));
+});
+
+it('Escape closes an open menu and releases an unfinished pen gesture', () => {
+  const host = document.createElement('web-ink-ui'); document.body.append(host);
+  const root = host.attachShadow({ mode: 'open' });
+  const pen = createPaletteToggle(root, () => menu.toggle());
+  const menu = createPaletteMenu(root, pen.button, () => {}, () => {});
+  dispose = () => { menu.dispose(); pen.dispose(); };
+  const captures = new Set<number>();
+  pen.button.setPointerCapture = id => { captures.add(id); };
+  pen.button.hasPointerCapture = id => captures.has(id);
+  pen.button.releasePointerCapture = id => { captures.delete(id); };
+  pen.button.focus(); pen.button.click();
+  const down = new MouseEvent('pointerdown', { bubbles: true, composed: true, button: 0 });
+  Object.defineProperties(down, { pointerId: { value: 1 }, isPrimary: { value: true } });
+  pen.button.dispatchEvent(down); expect(captures.size).toBe(1);
+  pen.button.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }));
+  expect(menu.isOpen()).toBe(false); expect(captures.size).toBe(0);
 });
