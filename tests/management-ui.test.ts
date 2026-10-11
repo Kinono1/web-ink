@@ -42,6 +42,24 @@ const record: Annotation = {
 
 let root: Root | undefined;
 const chromeDescriptor = Object.getOwnPropertyDescriptor(globalThis, "chrome");
+
+it("opens the shared preset editor from Settings without changing the annotation settings schema", async () => {
+  installChrome((message) => {
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [], total: 0 } };
+    if (message.type === "storage.stats") return { ok: false, error: "Unavailable in this fixture" };
+    return { ok: true, data: {} };
+  });
+  const set = vi.fn(async () => {});
+  Object.assign(chrome, { storage: { local: { get: async () => ({}), set } } });
+  const host = await mount("library");
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "设置与数据")!.click());
+  const launch = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "标注预设…");
+  expect(launch).toBeTruthy();
+  await act(async () => launch!.click());
+  expect(host.querySelector('[role="dialog"]')).toBeTruthy();
+  expect(set).not.toHaveBeenCalled();
+});
 type TabUpdatedListener = (tabId: number, changeInfo: { url?: string }) => void;
 type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void;
 

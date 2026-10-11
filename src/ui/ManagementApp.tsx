@@ -21,6 +21,8 @@ import {
 import { isWebPage, pageKey } from "../core/url";
 import { ICON_PATHS, type IconName } from "./icons";
 import { PdfSidebar } from "./PdfSidebar";
+import { AnnotationPresetEditor } from "./AnnotationPresets";
+import { readAnnotationPresets, saveAnnotationPresets, type AnnotationPreset } from "../core/annotation-presets";
 import { StoragePanel } from "./StoragePanel";
 import { applyPageTheme, installPageTheme } from "./page-theme";
 import "./management.css";
@@ -75,6 +77,10 @@ const isPdfSurface = (context: PdfTabContext | undefined) =>
 
 export function ManagementApp({ mode }: { mode: Mode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [presetEditor, setPresetEditor] = useState<AnnotationPreset[]>();
+  const [presetsLoading, setPresetsLoading] = useState(false);
+  const presetDraft = useRef(false), presetSaving = useRef(false);
+  const presetTrigger = useRef<HTMLElement | null>(null);
   const [tab, setTab] = useState<TabContext>({});
   const [pdfContext, setPdfContext] = useState<PdfTabContext>();
   const [hasPermission, setHasPermission] = useState(true);
@@ -115,6 +121,14 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   settingsRef.current = settings;
   const language = settings.language;
   const t = COPY[language];
+  useEffect(() => {
+    const guard = (event: BeforeUnloadEvent) => {
+      if (!presetDraft.current && !presetSaving.current) return;
+      event.preventDefault(); event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", guard);
+    return () => window.removeEventListener("beforeunload", guard);
+  }, []);
   useLayoutEffect(() => applyPageTheme(settings.theme), [settings.theme]);
   const observedUrl = pdfContext?.url ?? tab.url;
   const pageUrl =
@@ -1072,8 +1086,19 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           setOverwrite={setOverwrite}
           busyImport={busyImport}
           importBackup={importBackup}
+          presetsLoading={presetsLoading}
+          onPresets={() => {
+            if (presetsLoading) return;
+            presetTrigger.current = document.activeElement as HTMLElement;
+            setPresetsLoading(true);
+            void readAnnotationPresets(language).then(setPresetEditor).finally(() => setPresetsLoading(false));
+          }}
         />
       ) : null}
+      {presetEditor && <div className="dialog-backdrop"><AnnotationPresetEditor presets={presetEditor} language={language}
+        onSave={saveAnnotationPresets} onDirtyChange={(dirty) => { presetDraft.current = dirty; }}
+        onSavingChange={(writing) => { presetSaving.current = writing; }}
+        onClose={() => { setPresetEditor(undefined); presetTrigger.current?.focus(); }} /></div>}
     </main>
   );
 }

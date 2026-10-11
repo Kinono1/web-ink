@@ -5,7 +5,7 @@ import {
   type BrowserContext,
   type Page,
 } from "@playwright/test";
-import { cp, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, readFile, writeFile, rm, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { tmpdir } from "node:os";
 import { fixturePdf } from "../pdf-fixture";
@@ -108,6 +108,161 @@ async function viewAction(name: "旋转页面" | "适合宽度") {
   if (await toolbarAction.isVisible()) await toolbarAction.click();
   else await moreAction(name);
 }
+test("focus capsule stays reachable and preserves annotation/navigation flow", async () => {
+  await open(fixturePdf(3), "focus-reading.pdf");
+  await moreAction("专注阅读");
+  await expect(page.locator(".pdf-app")).toHaveAttribute("data-focus", "true");
+  await expect(page.locator(".pdf-toolbar")).toBeHidden();
+  const capsule = page.getByRole("navigation", { name: "专注阅读控件" });
+  await expect(capsule).toBeVisible();
+  await capsule.getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(capsule).toContainText("2 / 3");
+  await page.locator('.textLayer span').first().evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await page.getByRole("button", { name: "重要", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  expect((await rpc({ type: "annotations.list" }))[0].tags).toEqual(["重要"]);
+  await capsule.getByRole("button", { name: "退出专注阅读", exact: true }).focus();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".pdf-toolbar")).toBeVisible();
+  await expect(page.getByLabel("页码", { exact: true })).toHaveValue("2");
+});
+
+test("edited presets persist and keyboard shortcuts save only the current selection", async () => {
+  await open();
+  await moreAction("标注预设…");
+  const editor = page.getByRole("dialog", { name: "快捷标注", exact: true });
+  await expect(editor).toBeVisible();
+  await editor.locator('input[type="text"]').first().fill("待复核");
+  await editor.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(editor).toBeHidden();
+  const stored = await page.evaluate(async () => (await chrome.storage.local.get("ui.annotationPresets"))["ui.annotationPresets"]);
+  if (!Array.isArray(stored)) throw Error("Saved presets are missing");
+  expect(stored[0].label).toBe("待复核");
+  await page.reload();
+  await open();
+  await page.locator('.textLayer span').first().evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+  });
+  await expect(page.getByRole("button", { name: "待复核", exact: true })).toBeVisible();
+  await page.locator(".pdf-pages").focus();
+  await page.keyboard.press("Alt+Shift+1");
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  expect((await rpc({ type: "annotations.list" }))[0].tags).toEqual(["待复核"]);
+  await page.keyboard.press("Alt+Shift+1");
+  expect((await rpc({ type: "annotations.list" })).length).toBe(1);
+});
+
+test("refined reading surfaces fit light dark and narrow layouts with solid reduced-effect controls", async () => {
+  await open(fixturePdf(3), "A long research-paper title for responsive reading.pdf");
+  const evidence = ".local-install/v036-evidence/visual";
+  await mkdir(evidence, { recursive: true });
+  for (const theme of ["light", "dark"] as const) {
+    const settings = await rpc({ type: "settings.get" });
+    await rpc({ type: "settings.put", settings: { ...settings, theme, reduceMotion: true, reduceTransparency: true } });
+    await expect(page.locator("html")).toHaveAttribute("data-reduce-motion", "true");
+    await page.setViewportSize({ width: 1280, height: 900 });
+    if (process.env.WEB_INK_CAPTURE_VISUAL === "1") await page.screenshot({ path: `${evidence}/reader-${theme}.png` });
+    await moreAction("专注阅读");
+    await page.setViewportSize({ width: 320, height: 640 });
+    const capsule = page.locator(".pdf-focus-controls");
+    await expect(capsule).toBeVisible();
+    const effects = await capsule.evaluate(element => ({
+      blur: getComputedStyle(element).backdropFilter,
+      animation: getComputedStyle(element).animationName,
+      width: element.getBoundingClientRect().width,
+      scroll: element.scrollWidth,
+      client: element.clientWidth,
+    }));
+    expect(effects.blur).toBe("none"); expect(effects.animation).toBe("none");
+    expect(effects.width).toBeLessThanOrEqual(308);
+    expect(effects.scroll).toBeLessThanOrEqual(effects.client + 1);
+    if (process.env.WEB_INK_CAPTURE_VISUAL === "1") await page.screenshot({ path: `${evidence}/focus-narrow-${theme}.png` });
+    await capsule.getByRole("button", { name: "退出专注阅读", exact: true }).click();
+    await moreAction("标注预设…");
+    const editor = page.getByRole("dialog", { name: "快捷标注", exact: true });
+    await expect(editor).toBeVisible();
+    const box = await editor.boundingBox();
+    expect(box!.x).toBeGreaterThanOrEqual(0); expect(box!.width).toBeLessThanOrEqual(320);
+    if (process.env.WEB_INK_CAPTURE_VISUAL === "1") await page.screenshot({ path: `${evidence}/presets-narrow-${theme}.png` });
+    await editor.getByRole("button", { name: "取消", exact: true }).click();
+  }
+  await control.goto(`chrome-extension://${id}/library.html`);
+  await control.setViewportSize({ width: 320, height: 640 });
+  await control.getByRole("button", { name: "设置与数据", exact: true }).click();
+  await control.getByRole("button", { name: "标注预设…", exact: true }).click();
+  const dialog = control.getByRole("dialog", { name: "快捷标注", exact: true });
+  await expect(dialog).toBeVisible();
+  const bounds = await dialog.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0); expect(bounds!.width).toBeLessThanOrEqual(320);
+  if (process.env.WEB_INK_CAPTURE_VISUAL === "1") await control.screenshot({ path: `${evidence}/settings-presets-narrow.png` });
+});
+
+test("focus recovery keeps the full English manual-close instruction readable at narrow scale", async () => {
+  await open();
+  const settings = await rpc({ type: "settings.get" });
+  await rpc({ type: "settings.put", settings: { ...settings, language: "en", reduceMotion: true } });
+  // Controlled API rejection exercises the failure presentation; this is not
+  // native Chrome side-panel acceptance.
+  await page.evaluate(() => { chrome.sidePanel.close = async () => { throw Error("Synthetic close rejection"); }; });
+  await page.locator(".pdf-toolbar").getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("button", { name: "Focus reading", exact: true }).click();
+  await page.setViewportSize({ width: 320, height: 640 });
+  const hint = page.getByRole("status").filter({ hasText: "Close Chrome's annotations sidebar manually." });
+  await expect(hint).toBeVisible();
+  const fits = () => hint.evaluate(element => {
+    const style = getComputedStyle(element), box = element.getBoundingClientRect();
+    return { width: box.width, x: box.x, right: box.right, scroll: element.scrollWidth, client: element.clientWidth,
+      whitespace: style.whiteSpace, overflow: style.overflow, ellipsis: style.textOverflow };
+  });
+  let actual = await fits();
+  expect(actual.x).toBeGreaterThanOrEqual(0); expect(actual.right).toBeLessThanOrEqual(320);
+  expect(actual.scroll).toBeLessThanOrEqual(actual.client + 1); expect(actual.whitespace).not.toBe("nowrap");
+  await page.setViewportSize({ width: 640, height: 960 });
+  await page.evaluate(() => { document.documentElement.style.zoom = "2"; });
+  actual = await fits();
+  expect(actual.x).toBeGreaterThanOrEqual(0); expect(actual.right).toBeLessThanOrEqual(640);
+  expect(actual.scroll).toBeLessThanOrEqual(actual.client + 1);
+  const reachable = await page.locator(".pdf-focus-controls").evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    return [...element.querySelectorAll("button")].every(button => {
+      const box = button.getBoundingClientRect();
+      return box.left >= bounds.left && box.right <= bounds.right && box.right <= innerWidth;
+    });
+  });
+  expect(reachable).toBe(true);
+  await mkdir(".local-install/v036-evidence/visual", { recursive: true });
+  if (process.env.WEB_INK_CAPTURE_VISUAL === "1") await page.screenshot({ path: ".local-install/v036-evidence/visual/focus-manual-close-scaled.png" });
+});
+
+test("preset editor retains keyboard focus inside its dialog while a write is pending", async () => {
+  await open();
+  await moreAction("标注预设…");
+  const editor = page.getByRole("dialog", { name: "快捷标注", exact: true });
+  await editor.locator('input[type="text"]').first().fill("待复核");
+  await page.evaluate(() => {
+    const original = chrome.storage.local.set.bind(chrome.storage.local);
+    chrome.storage.local.set = async (entries) => {
+      if (Object.prototype.hasOwnProperty.call(entries, "ui.annotationPresets")) return new Promise<void>(() => {});
+      return original(entries);
+    };
+  });
+  await editor.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(editor).toHaveAttribute("aria-busy", "true");
+  await expect(editor).toBeFocused();
+  expect(await editor.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Tab");
+  await expect(editor).toBeFocused();
+  expect(await editor.evaluate(element => element.contains(document.activeElement))).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(editor).toBeVisible();
+});
+
 test("original PDF notes stay read-only and new notes travel in one exported PDF", async () => {
   const original = Buffer.from(await createNativePdfFixture());
   await open(original, "original-notes.pdf");

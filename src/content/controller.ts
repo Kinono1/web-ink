@@ -22,6 +22,12 @@ import { createNotifications } from "./notifications";
 import { ICON_PATHS } from "../ui/icons";
 import { annotationsAtPoint, matchingTextSelection } from "./annotation-hit";
 import { ImageLayerManager } from "./image-layers";
+import {
+  defaultAnnotationPresets,
+  presetIndexFromKey,
+  readAnnotationPresets,
+  type AnnotationPreset,
+} from "../core/annotation-presets";
 
 export interface ContentEngine {
   stop: () => void;
@@ -52,6 +58,7 @@ export function startEngine(
   let disabled = false;
   let disposed = false;
   let generation = 0;
+  let presetReadGeneration = 0;
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
   let renderFrame = 0;
   let refreshDepth = 0;
@@ -71,6 +78,9 @@ export function startEngine(
   let focusId: string | undefined;
   let passiveRetryCount = 0;
   let passiveRetryTimer: ReturnType<typeof setTimeout> | undefined;
+  let annotationPresets: AnnotationPreset[] = defaultAnnotationPresets(
+    settings.language,
+  );
   const yieldTimers = new Map<ReturnType<typeof setTimeout>, () => void>();
   // One session owns every reading index and DOM reference for this engine run.
   // It is flushed by capture/resolve, so a save cannot reuse a stale mouseup index.
@@ -240,6 +250,31 @@ export function startEngine(
       b.addEventListener("pointerdown", (e) => e.preventDefault());
       view.selection.append(b);
     };
+    const addPreset = (preset: AnnotationPreset) => {
+      const control = button(
+        preset.label,
+        () => {
+          void saveSelection(preset.color, [preset.label]);
+        },
+        `${preset.label} ${preset.color}`,
+      );
+      control.className = "preset";
+      control.dataset.annotationPreset = preset.id;
+      const swatch = document.createElement("span");
+      Object.assign(swatch.style, {
+        width: "10px",
+        height: "10px",
+        borderRadius: "50%",
+        backgroundColor: preset.color,
+        boxShadow: "inset 0 0 0 1px rgb(0 0 0 / 12%)",
+      });
+      swatch.setAttribute("aria-hidden", "true");
+      control.prepend(swatch);
+      control.addEventListener("pointerdown", (event) => event.preventDefault());
+      view.selection.append(control);
+    };
+    annotationPresets.slice(0, 5).forEach(addPreset);
+    if (annotationPresets.length) view.selection.append(separator());
     primary.forEach(addColor);
     const more = button(
       "",
@@ -506,16 +541,20 @@ export function startEngine(
       schedulePaint();
     }
   }
-  async function saveSelection(color: string) {
-    if (!selectedRange || !enabled() || pendingSave || unsaved) return;
+  async function saveSelection(
+    color: string,
+    tags: string[] = [],
+    range = selectedRange,
+  ) {
+    if (!range || !enabled() || pendingSave || unsaved) return;
     try {
       // Mouseup captured this once for the palette. Reuse only if the session
       // can prove that no queued DOM change or range-boundary drift occurred.
-      const target = textSession.captureSelected(selectedRange);
+      const target = textSession.captureSelected(range);
       const record: TextAnnotation =
         rebinding?.kind === "text"
           ? { ...rebinding, target, updatedAt: new Date().toISOString() }
-          : { ...baseRecord(color), kind: "text", target };
+          : { ...baseRecord(color), kind: "text", tags, target };
       hideSelection();
       window.getSelection()?.removeAllRanges();
       await commit(record);
@@ -744,6 +783,7 @@ export function startEngine(
   async function refresh() {
     if (disposed) return;
     const token = ++generation;
+    const presetReadToken = ++presetReadGeneration;
     refreshDepth++;
     let requestedUrl = currentUrl;
     try {
@@ -778,6 +818,7 @@ export function startEngine(
         request<Settings>({ type: "settings.get" }),
         request<PageMode>({ type: "page.mode.get", pageUrl: requestedUrl }),
       ]);
+      const newPresets = await readAnnotationPresets(newSettings.language);
       if (token !== generation || disposed) return;
       if (pageKey(location.href) !== requestedUrl) {
         queueRefresh();
@@ -789,6 +830,8 @@ export function startEngine(
       if (settings.defaultColor !== newSettings.defaultColor || mode === "idle")
         currentColor = newSettings.defaultColor;
       settings = newSettings;
+      if (presetReadToken === presetReadGeneration)
+        annotationPresets = newPresets;
       view.applyPreferences(settings);
       disabled = settings.disabledOrigins.includes(location.origin);
       pageEnabled = pageMode.enabled;
@@ -1125,6 +1168,7 @@ export function startEngine(
         rebinding = undefined;
         return;
       }
+      if (applyPresetShortcut(e)) return;
       if (
         mode === "idle" &&
         !e.shiftKey &&
@@ -1162,6 +1206,87 @@ export function startEngine(
     },
     { signal },
   );
+  const blockedShortcutTarget = (node: EventTarget | null) => {
+    const element =
+      node instanceof Element
+        ? node
+        : node instanceof Node
+          ? node.parentElement
+          : null;
+    return Boolean(
+      element?.closest(
+        "input,textarea,select,option,button,[contenteditable],dialog,[role=dialog],toolbar,[role=toolbar]",
+      ),
+    );
+  };
+  const applyPresetShortcut = (event: KeyboardEvent) => {
+    const index = presetIndexFromKey(event);
+    if (
+      index === undefined ||
+      !enabled() ||
+      mode !== "idle" ||
+      event.composedPath().includes(view.host)
+    )
+      return false;
+    if (event.composedPath().some((node) => blockedShortcutTarget(node)))
+      return false;
+    const preset = annotationPresets[index];
+    const selection = window.getSelection();
+    if (
+      !preset ||
+      pendingSave ||
+      unsaved ||
+      !selection ||
+      selection.isCollapsed ||
+      !selection.rangeCount
+    )
+      return false;
+    const range = selection.getRangeAt(0).cloneRange();
+    if (
+      !range.startContainer.isConnected ||
+      !range.endContainer.isConnected ||
+      blockedShortcutTarget(range.commonAncestorContainer) ||
+      view.host.contains(range.commonAncestorContainer)
+    )
+      return false;
+    try {
+      textSession.captureSelected(range);
+    } catch {
+      return false;
+    }
+    event.preventDefault();
+    void saveSelection(preset.color, [preset.label], range);
+    return true;
+  };
+  const onPresetStorageChanged = (
+    changes: { [key: string]: chrome.storage.StorageChange },
+    areaName: string,
+  ) => {
+    if (!changes["ui.annotationPresets"] || areaName !== "local" || disposed)
+      return;
+    const token = generation;
+    const presetReadToken = ++presetReadGeneration;
+    void readAnnotationPresets(settings.language)
+      .then((next) => {
+        if (
+          disposed ||
+          token !== generation ||
+          presetReadToken !== presetReadGeneration
+        )
+          return;
+        annotationPresets = next;
+        if (selectedRange?.startContainer.isConnected && mode === "idle")
+          showPalette(selectedRange);
+      })
+      .catch(() => undefined);
+  };
+  let presetStorageListenerRegistered = false;
+  try {
+    chrome.storage.onChanged?.addListener(onPresetStorageChanged);
+    presetStorageListenerRegistered = Boolean(chrome.storage.onChanged);
+  } catch {
+    // Chrome can invalidate storage before the engine finishes its DOM cleanup.
+  }
   window.addEventListener(
     "scroll",
     () => {
@@ -1422,6 +1547,12 @@ export function startEngine(
     } catch {
       // Extension Reload can invalidate Chrome APIs before DOM cleanup finishes.
     }
+    if (presetStorageListenerRegistered)
+      try {
+        chrome.storage.onChanged.removeListener(onPresetStorageChanged);
+      } catch {
+        // Chrome can invalidate storage before the engine finishes its DOM cleanup.
+      }
   };
   const canStop = () => {
     if (!unsaved && !pendingSave) return true;

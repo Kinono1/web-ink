@@ -53,6 +53,7 @@
   border-bottom: 1px solid var(--ink-separator);
   background: var(--ink-panel);
 }
+.pdf-toolbar[hidden] { display: none; }
 .pdf-brand {
   display: flex;
   align-items: center;
@@ -100,10 +101,12 @@
   gap: 4px;
   width: 220px;
   max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 72px);
   padding: 8px;
+  overflow-y: auto;
   border-radius: var(--ink-radius);
   background: var(--ink-panel);
-  box-shadow: var(--ink-shadow), 0 0 0 1px var(--ink-separator);
+  box-shadow: var(--ink-elevation-float);
 }
 .pdf-more-menu > button {
   display: flex;
@@ -196,7 +199,7 @@
   transform: translateX(-50%);
   border-radius: var(--ink-radius);
   background: var(--ink-panel);
-  box-shadow: var(--ink-shadow), 0 0 0 1px var(--ink-separator);
+  box-shadow: var(--ink-elevation-float);
 }
 .pdf-undo { bottom: 68px; }
 .pdf-selection button, .pdf-mark-menu button, .pdf-undo button { background: transparent; }
@@ -319,13 +322,85 @@
   border-radius: var(--ink-radius);
   color: var(--ink-text);
   background: var(--ink-panel);
-  box-shadow: var(--ink-shadow);
+  box-shadow: var(--ink-elevation-dialog);
 }
 .pdf-dialog h2 { margin: 0; font-size: var(--ink-size-title); }
 .pdf-dialog p { margin: 0; color: var(--ink-secondary); }
 .pdf-dialog p[role="alert"] { color: var(--ink-danger); }
 .pdf-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pdf-dialog-actions > button:first-child { color: var(--ink-primary-text); background: var(--ink-primary); }
+
+/* Focus controls stay available without claiming browser fullscreen. The
+ * ordinary selection fallback moves above them only while focus is active. */
+.pdf-focus-controls {
+  position: fixed;
+  z-index: 35;
+  left: 50%;
+  bottom: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  min-height: 44px;
+  padding: 4px;
+  overflow-x: auto;
+  border-radius: 999px;
+  color: var(--ink-text);
+  background: var(--ink-surface-solid);
+  box-shadow: var(--ink-elevation-float);
+  transform: translateX(-50%);
+  animation: pdf-focus-controls-arrive var(--ink-motion-context) cubic-bezier(.2, .8, .2, 1);
+}
+.pdf-focus-controls button { flex: none; background: transparent; }
+.pdf-focus-controls button:hover { background: var(--ink-fill); }
+.pdf-focus-previous .icon { transform: rotate(180deg); }
+.pdf-focus-page {
+  min-width: 44px;
+  padding-inline: 4px;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+.pdf-focus-hint {
+  position: fixed;
+  z-index: 35;
+  top: 12px;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100vw - 24px);
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: var(--ink-radius-control);
+  color: var(--ink-secondary);
+  background: var(--ink-panel);
+  box-shadow: var(--ink-elevation-float);
+  font-size: var(--ink-size-meta);
+  line-height: 1.5;
+  text-align: center;
+  transform: translateX(-50%);
+  white-space: normal;
+}
+.pdf-app[data-focus="true"] :is(.pdf-selection, .pdf-mark-menu) { bottom: 72px; }
+.pdf-app[data-focus="true"] .pdf-undo { bottom: 124px; }
+@keyframes pdf-focus-controls-arrive {
+  from { transform: translateX(-50%) translateY(4px); box-shadow: 0 3px 10px rgb(0 0 0 / 8%); }
+  to { transform: translateX(-50%); box-shadow: var(--ink-elevation-float); }
+}
+@supports ((-webkit-backdrop-filter: blur(12px)) or (backdrop-filter: blur(12px))) {
+  :root[data-reduce-transparency="false"] .pdf-focus-controls {
+    background: var(--ink-floating-surface);
+    -webkit-backdrop-filter: blur(12px) saturate(1.15);
+    backdrop-filter: blur(12px) saturate(1.15);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root[data-reduce-transparency="false"] .pdf-focus-controls,
+  .pdf-focus-controls { background: var(--ink-surface-solid); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}
 @media (max-width: 899px) {
   .pdf-notes {
   position: absolute;
@@ -352,6 +427,12 @@
   .pdf-open input[type="url"] { flex-basis: 100%; }
   .pdf-open form > button { width: 100%; }
   .pdf-dialog { padding: 16px; }
+  .pdf-focus-controls { max-width: calc(100vw - 12px); }
+  .pdf-focus-hint { top: 8px; }
+}
+@media (max-width: 700px) {
+  .pdf-focus-notes span, .pdf-focus-exit span { display: none; }
+  .pdf-focus-notes, .pdf-focus-exit { width: 36px; min-width: 36px; padding: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .pdf-app *, .pdf-app *::before, .pdf-app *::after { scroll-behavior: auto; transition: none; animation: none; } }
 [data-reduce-motion="true"] .pdf-app *, [data-reduce-motion="true"] .pdf-app *::before, [data-reduce-motion="true"] .pdf-app *::after {

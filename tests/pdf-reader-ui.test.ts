@@ -829,6 +829,159 @@ describe("PDF annotation export and original notes", () => {
 });
 
 describe("PDF reader workspace", () => {
+  it("cancels a pending focus entry when opening annotations", async () => {
+    const closeGate = deferred<void>();
+    const close = vi.fn(() => closeGate.promise);
+    Object.assign(chrome, { tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) }, sidePanel: { open: async () => {}, close } });
+    await mount();
+    await click("更多");
+    await click("专注阅读");
+    expect(close).toHaveBeenCalledWith({ windowId: 1 });
+    await click("查看标注");
+    await act(async () => closeGate.resolve());
+    await settle();
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    expect(button("旋转页面").disabled).toBe(false);
+  });
+
+  it("cancels a pending focus entry when Escape closes More", async () => {
+    const closeGate = deferred<void>();
+    Object.assign(chrome, { tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) }, sidePanel: { open: async () => {}, close: () => closeGate.promise } });
+    await mount();
+    await click("更多");
+    await click("专注阅读");
+    const pages = host.querySelector<HTMLElement>(".pdf-pages")!;
+    await act(async () => pages.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));
+    await settle();
+    expect(host.querySelector(".pdf-more-menu")).toBeNull();
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    await act(async () => closeGate.resolve());
+    await settle();
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    expect(button("旋转页面").disabled).toBe(false);
+  });
+
+  it("cancels a pending focus entry before opening another source", async () => {
+    const closeGate = deferred<void>();
+    Object.assign(chrome, { tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) }, sidePanel: { open: async () => {}, close: () => closeGate.promise } });
+    await mount();
+    await click("更多");
+    await click("专注阅读");
+    await click("打开其他文件");
+    expect(host.querySelector('[role="dialog"]')?.getAttribute("aria-label")).toBe("打开其他 PDF");
+    await act(async () => closeGate.resolve());
+    await settle();
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    expect(host.querySelector(".pdf-focus-controls")).toBeNull();
+  });
+
+  it("enters focus without changing zoom or saved records and exits by Escape", async () => {
+    await mount();
+    const pages = host.querySelector<HTMLElement>(".pdf-pages")!;
+    pages.scrollTop = 240;
+    await click("更多");
+    await click("专注阅读");
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("true");
+    expect(host.querySelector<HTMLElement>(".pdf-toolbar")?.hidden).toBe(true);
+    expect(host.querySelector(".pdf-focus-controls")).toBeTruthy();
+    expect(pages.scrollTop).toBe(240);
+    expect(puts()).toHaveLength(0);
+    await act(async () => pages.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await settle();
+    expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    expect(host.querySelector<HTMLElement>(".pdf-toolbar")?.hidden).toBe(false);
+    expect(host.querySelector(".pdf-focus-controls")).toBeNull();
+  });
+
+  it("requests closing only this window's panel and offers a manual hint on failure", async () => {
+    const close = vi.fn(async () => { throw Error("close unavailable"); });
+    Object.assign(chrome, { tabs: { getCurrent: async () => ({ id: 8, windowId: 1 }) }, sidePanel: { open: async () => {}, close } });
+    await mount();
+    await click("更多");
+    await click("专注阅读");
+    expect(close).toHaveBeenCalledWith({ windowId: 1 });
+    expect(host.querySelector(".pdf-focus-hint")?.textContent).toContain("手动");
+    await click("退出专注");
+    expect(host.querySelector(".pdf-focus-controls")).toBeNull();
+  });
+
+  it("saves a preset with its label tag only on explicit action and rejects a collapsed stale shortcut", async () => {
+    await mount();
+    await selectPage();
+    expect(puts()).toHaveLength(0);
+    await click("重要");
+    expect(puts()[0]!.annotation.color).toBe("#facd5a");
+    expect(puts()[0]!.annotation.tags).toEqual(["重要"]);
+    await selectPage();
+    getSelection()?.removeAllRanges();
+    const pages = host.querySelector<HTMLElement>(".pdf-pages")!;
+    await act(async () => pages.dispatchEvent(new KeyboardEvent("keydown", { key: "!", code: "Digit1", altKey: true, shiftKey: true, bubbles: true, cancelable: true })));
+    expect(puts()).toHaveLength(1);
+    await selectPage();
+    await act(async () => pages.dispatchEvent(new KeyboardEvent("keydown", { key: "@", code: "Digit2", altKey: true, shiftKey: true, bubbles: true, cancelable: true })));
+    await settle();
+    expect(puts()).toHaveLength(2);
+    expect(puts()[1]!.annotation.tags).toEqual(["疑问"]);
+  });
+
+  it("updates shared preset choices from local preference changes without writing records", async () => {
+    let listener: ((changes: Record<string, chrome.storage.StorageChange>, area: string) => void) | undefined;
+    const removeListener = vi.fn();
+    Object.assign(chrome.storage, { onChanged: { addListener: (next: typeof listener) => { listener = next; }, removeListener } });
+    await mount();
+    await selectPage();
+    await act(async () => listener?.({ "ui.annotationPresets": { newValue: [{ id: "review", label: "待复核", color: "#69b0f1" }] } }, "local"));
+    await settle();
+    expect(button("待复核")).toBeTruthy();
+    expect(puts()).toHaveLength(0);
+    await act(async () => root!.unmount()); root = undefined;
+    expect(removeListener).toHaveBeenCalled();
+  });
+
+  it("restores a pending stored preset after cancelling its editor and writes its tag", async () => {
+    const initialRead = deferred<Record<string, unknown>>();
+    Object.assign(chrome.storage.local, { get: async (key: string) => {
+      readKeys.push(key);
+      return key === "ui.annotationPresets" ? initialRead.promise : { [key]: storedPosition };
+    } });
+    await mount();
+    expect(readKeys).toContain("ui.annotationPresets");
+    await click("更多");
+    await click("标注预设…");
+    await click("取消");
+    await act(async () => initialRead.resolve({ "ui.annotationPresets": [{ id: "review", label: "待复核", color: "#69b0f1" }] }));
+    await settle();
+    await selectPage();
+    expect(button("待复核")).toBeTruthy();
+    await click("待复核");
+    expect(puts()[0]!.annotation.tags).toEqual(["待复核"]);
+  });
+
+  it("keeps an explicitly saved preset when an older initial read resolves later", async () => {
+    const initialRead = deferred<Record<string, unknown>>();
+    Object.assign(chrome.storage.local, { get: async (key: string) => {
+      readKeys.push(key);
+      return key === "ui.annotationPresets" ? initialRead.promise : { [key]: storedPosition };
+    } });
+    await mount();
+    await click("更多");
+    await click("标注预设…");
+    const input = host.querySelector<HTMLInputElement>('input[aria-label="名称 1"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(input, "已保存");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("保存");
+    await act(async () => initialRead.resolve({ "ui.annotationPresets": [{ id: "stale", label: "过期", color: "#69b0f1" }] }));
+    await settle();
+    await selectPage();
+    expect(button("已保存")).toBeTruthy();
+    expect([...host.querySelectorAll("button")].some((node) => node.textContent?.trim() === "过期")).toBe(false);
+    await click("已保存");
+    expect(puts()[0]!.annotation.tags).toEqual(["已保存"]);
+  });
+
   it("saves the explicit metadata DOI as the source for new signed-in IEEE annotations", async () => {
     io.metadataDoi = "10.1109/TII.2026.3716639";
     handoff = { token: TOKEN, tabId: 8, returnUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626",

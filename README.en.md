@@ -25,6 +25,7 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 ## Read, annotate, return
 
 - Select webpage text and choose a color. Click a saved mark to add a note or remove it; removal can be undone.
+- Use editable color/tag presets for selected text. PDF **More → Focus reading** hides the reader bar while keeping pages, annotations and exit available.
 - Use the side panel's image tools for rectangles, ellipses, arrows, and freehand drawing.
 - For a PDF in the current tab, click the floating pen and choose **Open current PDF**. If the pen is unavailable, open Web Ink from Chrome's toolbar and choose **Start annotating in this tab** in the existing side panel. With the IEEE PDF already open, choose **Open using IEEE sign-in** from the floating-pen menu or side panel; grant Chrome's IEEE site access if requested. On a page containing only paper information or a download link, first open the PDF on IEEE. The Web Ink reader opens in the same tab and keeps **Return to original reader**. Saved PDF marks and notes appear in the existing Web Ink side panel; the reader has no separate Notes button. If a source cannot be read, download it and choose the file locally.
 - Read original PDF notes in the sidebar and export a separate annotated PDF from **More**. The source is not overwritten. A current-file JSON notes snapshot is also available for the read-only skill.

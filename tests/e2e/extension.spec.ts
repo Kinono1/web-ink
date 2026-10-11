@@ -133,6 +133,23 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     .toBe(1);
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
+test("web preset shortcut captures live text and keeps ordinary copy inert", async () => {
+  await enable();
+  const page = await article();
+  await page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+  });
+  await page.keyboard.press("Control+c");
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+  await page.keyboard.press("Alt+Shift+2");
+  await expect.poll(async () => (await rpc(manager, { type: "annotations.list" })).length).toBe(1);
+  const records = await rpc(manager, { type: "annotations.list" });
+  expect(records[0].tags).toEqual(["疑问"]);
+  expect(records[0].color).toBe("#69b0f1");
+  await page.keyboard.press("Alt+Shift+2");
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(1);
+});
 
 async function openSidepanel(activePage: Page) {
   await manager.goto(`chrome-extension://${extensionId}/sidepanel.html`);

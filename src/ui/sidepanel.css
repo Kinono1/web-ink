@@ -211,7 +211,7 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 8px;
   min-height: 200px;
   padding: 32px 16px 48px;
   text-align: center;
@@ -234,7 +234,7 @@
 }
 .sidepanel .empty p,
 .sidepanel .pdf-handoff p {
-  max-width: 260px;
+  max-width: 32ch;
   color: var(--ink-secondary);
   line-height: 1.6;
 }
@@ -309,3 +309,9 @@
 .pdf-sidebar .pdf-note-source { font-family: inherit; }
 .pdf-sidebar .pdf-note-editor :is(textarea, input:not([type="color"])) { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--ink-separator); border-radius: var(--ink-radius-control); color: var(--ink-text); background: var(--ink-fill); font: inherit; }
 .pdf-sidebar .pdf-note-editor input[type="color"] { width: 36px; height: 36px; border: 0; background: transparent; }
+
+@media (max-width: 320px) {
+  .sidepanel .topbar { padding-right: 8px; }
+  .sidepanel .sidepanel-dock { padding-inline: 8px; }
+  .sidepanel .dock-draw { padding-right: 8px; }
+}

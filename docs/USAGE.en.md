@@ -67,6 +67,16 @@ PDF support covers baseline text and area annotations. Coordinates are normalize
 
 The renderer uses PDF.js `6.3.289` legacy build with its matching worker and packaged resources. See [third-party notices](../THIRD_PARTY_NOTICES.md).
 
+## Focus reading and quick annotation presets (0.3.6)
+
+Choose **More → Focus reading** to hide the reader bar. The bottom capsule keeps page navigation, annotations and exit available. Exit or press Escape from reading controls to restore the bar without changing zoom or document identity. Save or discard note drafts first. When Chrome cannot close the sidebar, close it manually as prompted. This does not enter browser fullscreen.
+
+Select text and choose **Important / Question / Insight**, or use `Alt+Shift+1` through `Alt+Shift+5`, to explicitly save its preset color and label tag. Shortcuts require a live text selection and do not operate inside inputs, note editors or dialogs. Selecting and copying alone never saves an annotation. Existing five-color and custom-color actions remain available.
+
+Edit up to five labels/colors from **Settings & data → Annotation presets…** or the reader's More menu. Presets are a separate browser-local preference, outside annotation records and JSON backups. Concurrent editors use the last successful write; there is no cross-window transaction lock. Failed saving keeps the draft for retry. Existing colors, tags and notes are not rewritten.
+
+Small floating controls may use a subtle translucent material. System or product reduced transparency/motion selects solid controls or disables animation. Installation synchronization and actual native Chrome Reload acceptance remain separate checks.
+
 ## Original PDF annotations and sharing
 
 Open a PDF saved in Preview to see its existing markup. Use **Original** or **All** in the existing Web Ink sidebar to read notes. Original annotations are read-only, stay outside the library database, and cannot be edited or removed here. Popups and replies are grouped with their parent annotation; unsupported interactions are identified explicitly.

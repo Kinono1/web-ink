@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startBootstrap } from '../src/content/bootstrap';
 import { startEngine } from '../src/content/controller';
 import { createView } from '../src/content/view-lite';
-import { DEFAULT_SETTINGS } from '../src/core/model';
+import { DEFAULT_SETTINGS, type Annotation } from '../src/core/model';
 
 const HEALTH = { generation: 'generation-a', version: '0.3.2', commit: 'a'.repeat(40), dirty: false };
 const NEXT_HEALTH = { ...HEALTH, generation: 'generation-b' };
@@ -14,9 +14,11 @@ let removeListener: ReturnType<typeof vi.fn>;
 let modeEnabled: boolean;
 let frames: Map<number, FrameRequestCallback>;
 let observers: Array<{ disconnected: boolean }>;
+let annotationRecords: Annotation[];
+let storageListeners: Set<(changes: Record<string, unknown>, areaName: string) => void>;
 
 beforeEach(() => {
-  listeners = new Set(); messages = []; disposers = []; frames = new Map(); observers = []; modeEnabled = false;
+  listeners = new Set(); messages = []; disposers = []; frames = new Map(); observers = []; modeEnabled = false; annotationRecords = []; storageListeners = new Set();
   window.history.replaceState(null, '', '/runtime-page');
   vi.stubGlobal('innerWidth', 1200); vi.stubGlobal('innerHeight', 900);
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { const id = frames.size + 1; frames.set(id, callback); return id; });
@@ -47,12 +49,18 @@ beforeEach(() => {
         if (message.type === 'settings.get') return { ok: true, data: DEFAULT_SETTINGS };
         if (message.type === 'page.mode.put') modeEnabled = message.enabled!;
         if (message.type.startsWith('page.mode.')) return { ok: true, data: { enabled: modeEnabled } };
-        if (message.type === 'annotations.list') return { ok: true, data: [] };
+        if (message.type === 'annotations.list') return { ok: true, data: annotationRecords };
         return { ok: true, data: true };
       },
       onMessage: { addListener: (listener: Listener) => listeners.add(listener), removeListener },
     },
-    storage: { local: { get: async () => ({ 'ui.palettePosition': { x: .5, y: .5 } }), set: async () => {} } },
+    storage: {
+      local: { get: async () => ({ 'ui.palettePosition': { x: .5, y: .5 } }), set: async () => {} },
+      onChanged: {
+        addListener: (listener: (changes: Record<string, unknown>, areaName: string) => void) => storageListeners.add(listener),
+        removeListener: (listener: (changes: Record<string, unknown>, areaName: string) => void) => storageListeners.delete(listener),
+      },
+    },
   });
   vi.stubGlobal('defineContentScript', (definition: unknown) => definition);
   vi.stubGlobal('defineUnlistedScript', (definition: unknown) => definition);
@@ -324,5 +332,188 @@ describe('engine bridge ownership', () => {
     expect(vi.getTimerCount()).toBe(0);
     await Promise.resolve(); await Promise.resolve();
     expect(document.querySelector('style[data-web-ink]')).toBeNull();
+  });
+});
+
+describe('content annotation presets', () => {
+  function selectLiveText(host: HTMLElement) {
+    const node = host.firstChild!;
+    const range = document.createRange();
+    range.setStart(node, 7);
+    range.setEnd(node, 13);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(range);
+    return range;
+  }
+
+  async function runningEngine() {
+    modeEnabled = true;
+    document.body.insertAdjacentHTML(
+      'afterbegin',
+      '<main><p id="preset-source">before chosen after</p></main>',
+    );
+    const view = createView();
+    const engine = startEngine(view);
+    disposers.push(engine.stop);
+    await vi.waitFor(() => expect(engine.snapshot().enabled).toBe(true));
+    await vi.waitFor(() =>
+      expect(messages.some((message) => message.type === 'annotations.list')).toBe(true),
+    );
+    return { engine, view, source: document.querySelector<HTMLElement>('#preset-source')! };
+  }
+
+  function presetWrites() {
+    return messages.filter((message) => message.type === 'annotations.put');
+  }
+
+  function applyPresetShortcut(target: EventTarget, options: KeyboardEventInit = {}) {
+    target.dispatchEvent(new KeyboardEvent('keydown', {
+      code: 'Digit1', key: '!', altKey: true, shiftKey: true,
+      bubbles: true, cancelable: true, ...options,
+    }));
+  }
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    return {
+      promise: new Promise<T>((done) => { resolve = done; }),
+      resolve,
+    };
+  }
+
+  function preset(id: string, label: string, color: string) {
+    return { id, label, color };
+  }
+
+  it('adds a preset button that saves its label as a tag while preserving the selection on pointerdown', async () => {
+    const { view, source } = await runningEngine();
+    const range = selectLiveText(source);
+    Object.defineProperty(range, 'getBoundingClientRect', {
+      value: () => ({ left: 10, bottom: 20 }),
+    });
+    source.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    const preset = view.selection.querySelector<HTMLButtonElement>('.preset[aria-label="重要 #facd5a"]');
+    expect(preset, view.selection.innerHTML).toBeTruthy();
+    preset!.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+    expect(window.getSelection()!.toString()).toBe('chosen');
+    preset!.click();
+    await vi.waitFor(() => expect(presetWrites()).toHaveLength(1));
+    const record = presetWrites()[0] as unknown as { annotation: { color: string; tags: string[]; target: { exact: string } } };
+    expect(record.annotation).toMatchObject({
+      color: '#facd5a',
+      tags: ['重要'],
+      target: { exact: 'chosen' },
+    });
+  });
+
+  it('uses the live range for an accepted preset shortcut instead of a mouseup-cached range', async () => {
+    const { source } = await runningEngine();
+    const stale = selectLiveText(source);
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    stale.setStart(source.firstChild!, 0);
+    stale.setEnd(source.firstChild!, 6);
+    selectLiveText(source);
+    applyPresetShortcut(document);
+    await vi.waitFor(() => expect(presetWrites()).toHaveLength(1));
+    const record = presetWrites()[0] as unknown as { annotation: { target: { exact: string }; tags: string[] } };
+    expect(record.annotation.target.exact).toBe('chosen');
+    expect(record.annotation.tags).toEqual(['重要']);
+  });
+
+  it('does not write a preset for repeated, editable, collapsed, or disabled shortcut events', async () => {
+    const { engine, source } = await runningEngine();
+    selectLiveText(source);
+    applyPresetShortcut(document, { repeat: true });
+    expect(presetWrites()).toHaveLength(0);
+    const editor = document.createElement('div');
+    editor.setAttribute('contenteditable', 'true');
+    editor.textContent = 'before chosen after';
+    document.body.append(editor);
+    selectLiveText(editor);
+    applyPresetShortcut(editor);
+    expect(presetWrites()).toHaveLength(0);
+    window.getSelection()!.removeAllRanges();
+    applyPresetShortcut(document);
+    expect(presetWrites()).toHaveLength(0);
+    for (const listener of listeners)
+      listener({ type: 'permissions.revoked' }, {}, () => {});
+    selectLiveText(source);
+    applyPresetShortcut(document);
+    await Promise.resolve();
+    expect(engine.snapshot().enabled).toBe(false);
+    expect(presetWrites()).toHaveLength(0);
+  });
+
+  it('keeps an existing text annotation metadata unchanged when a preset rebinds it', async () => {
+    annotationRecords = [{
+      id: 'existing-text', kind: 'text', pageUrl: location.href, pageTitle: 'Original title',
+      color: '#69b0f1', note: 'Keep this note', tags: ['existing-tag'],
+      createdAt: '2026-10-12T00:00:00.000Z', updatedAt: '2026-10-12T00:00:00.000Z', revision: 3,
+      target: { exact: 'chosen', prefix: 'before ', suffix: ' after', start: 7, end: 13, rootSelector: 'main', containerId: 'preset-source' },
+    }];
+    const { engine, source } = await runningEngine();
+    engine.dispatch('rebind', 'existing-text');
+    selectLiveText(source);
+    applyPresetShortcut(document);
+    await vi.waitFor(() => expect(presetWrites()).toHaveLength(1));
+    const write = presetWrites()[0] as unknown as { expectedRevision: number; annotation: { color: string; note: string; tags: string[]; pageTitle: string } };
+    expect(write.expectedRevision).toBe(3);
+    expect(write.annotation).toMatchObject({
+      color: '#69b0f1', note: 'Keep this note', tags: ['existing-tag'], pageTitle: 'Original title',
+    });
+  });
+
+  it('removes its storage and keyboard listeners when stopped', async () => {
+    const { engine, source } = await runningEngine();
+    expect(storageListeners.size).toBe(1);
+    engine.stop();
+    expect(storageListeners.size).toBe(0);
+    selectLiveText(source);
+    applyPresetShortcut(document);
+    await Promise.resolve();
+    expect(presetWrites()).toHaveLength(0);
+  });
+
+  it('keeps the newest storage preset after two reads finish in reverse order', async () => {
+    const { view, source } = await runningEngine();
+    selectLiveText(source);
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value: () => ({ left: 10, bottom: 20 }),
+    });
+    source.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 }));
+    expect(view.selection.querySelector('.preset')).toBeTruthy();
+
+    const older = deferred<Record<string, unknown>>();
+    const newest = deferred<Record<string, unknown>>();
+    const pending = [older, newest];
+    const get = chrome.storage.local.get as (
+      key: string,
+    ) => Promise<Record<string, unknown>>;
+    chrome.storage.local.get = ((key: string) => {
+      if (key === 'ui.annotationPresets') return pending.shift()!.promise;
+      return get(key);
+    }) as typeof chrome.storage.local.get;
+
+    for (const listener of storageListeners)
+      listener({ 'ui.annotationPresets': {} }, 'local');
+    for (const listener of storageListeners)
+      listener({ 'ui.annotationPresets': {} }, 'local');
+    expect(pending).toHaveLength(0);
+
+    newest.resolve({ 'ui.annotationPresets': [preset('newest', 'Newest', '#69b0f1')] });
+    await vi.waitFor(() =>
+      expect(view.selection.querySelector('[data-annotation-preset="newest"]')).toBeTruthy(),
+    );
+    older.resolve({ 'ui.annotationPresets': [preset('older', 'Older', '#facd5a')] });
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(view.selection.querySelector('[data-annotation-preset="newest"]')).toBeTruthy();
+    expect(view.selection.querySelector('[data-annotation-preset="older"]')).toBeNull();
+
+    selectLiveText(source);
+    applyPresetShortcut(document);
+    await vi.waitFor(() => expect(presetWrites()).toHaveLength(1));
+    const write = presetWrites()[0] as unknown as { annotation: { tags: string[] } };
+    expect(write.annotation.tags).toEqual(['Newest']);
   });
 });
