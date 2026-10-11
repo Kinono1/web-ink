@@ -84,7 +84,7 @@ function installChrome(
         contains: ieeePermission.contains,
         request: ieeePermission.request,
       },
-      tabs: { query: async () => [tab], onActivated: events, onUpdated: updated },
+      tabs: { query: async () => [tab], create: vi.fn(async () => ({ id: 9 })), onActivated: events, onUpdated: updated },
     },
   });
   return globalThis.chrome.runtime.sendMessage as ReturnType<typeof vi.fn>;
@@ -312,14 +312,10 @@ describe("management UI", () => {
     await act(async () => {
       (host.querySelector(".pdf-local-link") as HTMLButtonElement).click();
     });
-    const localMessage = sent.mock.calls
-      .map(([message]) => message)
-      .filter((message) => message.type === "ui.open")
-      .at(-1);
-    expect(localMessage).toEqual({
-      type: "ui.open",
-      target: "local-pdf",
+    expect(chrome.tabs.create).toHaveBeenCalledWith({
+      url: "chrome-extension://test/pdf.html?open=local",
     });
+    expect(sent.mock.calls.some(([message]) => message.type === "ui.open")).toBe(false);
   });
 
   it("does not open an IEEE wrapper when the exact host permission is denied", async () => {

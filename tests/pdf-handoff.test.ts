@@ -91,6 +91,37 @@ describe('IEEE site-session authority', () => {
     expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
     expect(updates).toHaveLength(0);
   });
+  it.each([
+    'https://ieeexplore.ieee.org/document/11643626',
+    'https://ieeexplore.ieee.org/document/11643626/',
+  ])('opens an actual same-origin PDF embedded on an IEEE document page with explicit session mode: %s', async page => {
+    const source = 'https://ieeexplore.ieee.org/paper.pdf';
+    setUrl(page); visibleEmbeds(`<iframe src="${source}"></iframe>`);
+    expect(value(await inspect())).toMatchObject({ publisher: 'ieee', kind: 'embedded', candidates: [{ url: source, via: 'iframe' }] });
+    const opened = value(await open({ accessMode: 'site-session', candidateUrl: source }));
+    expect(opened).toMatchObject({ navigation: 'same-tab', sourceUrl: source });
+    expect(new URL(opened.readerUrl).searchParams.has('source')).toBe(false);
+    expect(session[`pdf.handoff.${opened.token}`]).toMatchObject({ accessMode: 'site-session', returnUrl: page, sourceUrl: source });
+  });
+  it.each([
+    '<article>Abstract only</article>',
+    '<article>Abstract</article><a href="https://ieeexplore.ieee.org/paper.pdf">Download PDF</a>',
+    '<embed type="application/pdf" src="https://other.test/paper.pdf">',
+  ])('does not grant or navigate an IEEE document session without an actual same-origin source: %s', async html => {
+    setUrl('https://ieeexplore.ieee.org/document/11643626'); visibleEmbeds(html);
+    expect(value(await inspect())).not.toHaveProperty('publisher');
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+    expect(created).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
+  });
+  it('rejects an explicit cross-origin PDF on an IEEE document page in session mode', async () => {
+    const source = 'https://other.test/paper.pdf';
+    setUrl('https://ieeexplore.ieee.org/document/11643626'); visibleEmbeds(`<embed type="application/pdf" src="${source}">`);
+    expect(await open({ accessMode: 'site-session', candidateUrl: source })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
+  });
   it('does not save or navigate an IEEE session without the exact host permission', async () => {
     setUrl(ieee);
     const contains = vi.fn(async () => false);

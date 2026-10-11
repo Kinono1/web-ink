@@ -186,11 +186,14 @@ export function isIeeePdfWrapper(raw: string): boolean {
       url.pathname.toLowerCase() === "/stamp/stamp.jsp";
   } catch { return false; }
 }
+export function isIeeeDocumentPath(pathname: string): boolean {
+  return /^\/document\/[0-9]+\/?$/.test(pathname);
+}
 export function isIeeeSessionPage(raw: string): boolean {
   try {
     const url = new URL(raw);
     return url.protocol === "https:" && !url.username && !url.password && url.origin === "https://ieeexplore.ieee.org" &&
-      (isIeeePdfWrapper(raw) || isPdfPath(url));
+      (isIeeePdfWrapper(raw) || isPdfPath(url) || isIeeeDocumentPath(url.pathname));
   } catch { return false; }
 }
 export function publicPdfSource(raw: string): string | undefined {
@@ -199,10 +202,13 @@ export function publicPdfSource(raw: string): string | undefined {
 
 /** URL/MIME hints are candidates, never proof that bytes are a PDF. */
 export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPdfCandidate[] = []): PdfTabContext {
-  const base: PdfTabContext = { tabId, ...(raw ? { url: raw } : {}), ...(raw && isIeeeSessionPage(raw) ? { publisher: "ieee" as const } : {}), kind: "unavailable", candidates: [], currentReader: false };
+  const base: PdfTabContext = { tabId, ...(raw ? { url: raw } : {}), kind: "unavailable", candidates: [], currentReader: false };
   if (!raw) return { ...base, reason: "context-unavailable" };
   let page: URL;
   try { page = new URL(raw); } catch { return { ...base, reason: "context-unavailable" }; }
+  const ieeePage = isIeeeSessionPage(raw);
+  const ieeeDocument = ieeePage && isIeeeDocumentPath(page.pathname);
+  if (ieeePage && !ieeeDocument) base.publisher = "ieee";
   const direct = getPdfContext(raw);
   const wrapper = isKnownPdfViewer(raw) || isIeeePdfWrapper(raw);
   if (direct?.kind === "remote") return {
@@ -245,7 +251,12 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
     } else if ((url.protocol === "http:" || url.protocol === "file:") && !url.username && !url.password) local = true;
     else unsafe = true;
   }
-  if (candidates.size) return { ...base, kind: wrapper ? "wrapper" : "embedded", candidates: [...candidates.values()] };
+  if (candidates.size) {
+    // Article routes become PDF contexts only from observed usable sources.
+    if (ieeeDocument && [...candidates.keys()].some((source) => new URL(source).origin === page.origin))
+      base.publisher = "ieee";
+    return { ...base, kind: wrapper ? "wrapper" : "embedded", candidates: [...candidates.values()] };
+  }
   let reason: PdfContextReason = wrapper ? "source-unknown" : "not-pdf";
   if (local) reason = "local-source";
   if (unsafe || (isPdfPath(page) && !direct)) reason = "unsafe-source";

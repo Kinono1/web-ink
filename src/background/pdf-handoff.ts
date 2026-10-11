@@ -342,6 +342,8 @@ export function createPdfHandoffHandler() {
     const original = returnUrl(snapshot.url);
     if (siteSession && (!original || !isIeeeSessionPage(original) || (source && new URL(source).origin !== "https://ieeexplore.ieee.org")))
       throw new PdfNavigationError("FORBIDDEN", "IEEE login reading is available only from the current IEEE PDF page.");
+    if (siteSession && !source && !isIeeePdfWrapper(original!))
+      throw new PdfNavigationError("FORBIDDEN", "Open the PDF on IEEE first; this page has no observed same-origin PDF source.");
     if (siteSession && !(await chrome.permissions.contains({ origins: ["https://ieeexplore.ieee.org/*"] }).catch(() => false)))
       throw new PdfNavigationError("FORBIDDEN", "Allow access to IEEE before opening with its sign-in session.");
     const base = chrome.runtime.getURL("pdf.html");

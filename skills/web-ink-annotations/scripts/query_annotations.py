@@ -43,6 +43,10 @@ def output(value: object) -> None:
     print(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
 
 
+def has_lone_surrogate(value: str) -> bool:
+    return any(0xD800 <= ord(character) <= 0xDFFF for character in value)
+
+
 def utf16_length(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
@@ -54,6 +58,8 @@ def require_object(value: Any, name: str) -> dict[str, Any]:
 
 
 def exact_keys(value: dict[str, Any], name: str, required: set[str], optional: set[str] | None = None) -> None:
+    if any(has_lone_surrogate(key) for key in value):
+        raise QueryError(f"{name} has an invalid field name")
     allowed = required | (optional or set())
     unknown = sorted(set(value) - allowed)
     if unknown:
@@ -64,7 +70,9 @@ def exact_keys(value: dict[str, Any], name: str, required: set[str], optional: s
 
 
 def require_text(value: Any, name: str, maximum: int, *, allow_empty: bool = True) -> str:
-    if not isinstance(value, str) or utf16_length(value) > maximum or (not allow_empty and not value) or CONTROL.search(value):
+    if not isinstance(value, str) or has_lone_surrogate(value):
+        raise QueryError(f"{name} must be plain text up to {maximum} characters")
+    if utf16_length(value) > maximum or (not allow_empty and not value) or CONTROL.search(value):
         raise QueryError(f"{name} must be plain text up to {maximum} characters")
     return value
 
@@ -99,10 +107,22 @@ def parse_timestamp(value: Any, name: str) -> datetime:
         raise QueryError(f"{name} must be an ISO-8601 UTC timestamp") from error
 
 
+def parse_url(value: str, name: str):
+    try:
+        return urlparse(value)
+    except ValueError as error:
+        raise QueryError(f"{name} must be an HTTP(S) URL") from error
+
+
 def require_http_url(value: Any, name: str, maximum: int = 8_192) -> str:
     url = require_text(value, name, maximum, allow_empty=False)
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or any(char.isspace() for char in url):
+    parsed = parse_url(url, name)
+    try:
+        host = parsed.hostname
+        parsed.port
+    except ValueError as error:
+        raise QueryError(f"{name} must be an HTTP(S) URL") from error
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or not host or any(char.isspace() for char in url):
         raise QueryError(f"{name} must be an HTTP(S) URL")
     return url
 
@@ -123,8 +143,8 @@ def require_image_source(value: Any, page_url: str, name: str) -> str:
             raise QueryError(f"{name} has an unsafe data image URL")
         return source
     if source.startswith("blob:"):
-        blob = urlparse(source[5:])
-        page = urlparse(page_url)
+        blob = parse_url(source[5:], name)
+        page = parse_url(page_url, name)
         if blob.scheme not in {"http", "https"} or not blob.netloc or (blob.scheme, blob.netloc) != (page.scheme, page.netloc):
             raise QueryError(f"{name} blob URL must belong to this page origin")
         return source
@@ -378,12 +398,37 @@ def parse_nonnegative(value: str, name: str) -> int:
     return result
 
 
+def document_summaries(annotations: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    groups: dict[tuple[str, ...], dict[str, Any]] = {}
+    for annotation in annotations:
+        if annotation["kind"] in {"pdf-text", "pdf-area"}:
+            target = annotation["target"]
+            key = ("pdf", annotation["pageUrl"], target["documentHash"])
+            document = groups.setdefault(key, {
+                "title": annotation["pageTitle"],
+                "pageUrl": annotation["pageUrl"],
+                "sourceUrl": target.get("sourceUrl"),
+                "fileName": target["fileName"],
+                "documentHash": target["documentHash"],
+                "count": 0,
+            })
+        else:
+            key = ("web", annotation["pageUrl"])
+            document = groups.setdefault(key, {
+                "title": annotation["pageTitle"],
+                "pageUrl": annotation["pageUrl"],
+                "sourceUrl": annotation["pageUrl"],
+                "count": 0,
+            })
+        document["count"] += 1
+    return sorted(groups.values(), key=lambda document: (document["pageUrl"], document.get("documentHash", "")))
+
+
 def inspect(envelope: dict[str, Any], annotations: list[dict[str, Any]]) -> dict[str, Any]:
     counts = Counter(annotation["kind"] for annotation in annotations)
-    documents = Counter((annotation["pageTitle"], source_url(annotation)) for annotation in annotations)
     first = min(annotations, key=lambda annotation: parse_timestamp(annotation["createdAt"], "annotation.createdAt"), default=None)
     last = max(annotations, key=lambda annotation: parse_timestamp(annotation["createdAt"], "annotation.createdAt"), default=None)
-    return {"format": "web-ink", "schemaVersion": envelope["schemaVersion"], "exportedAt": envelope["exportedAt"], "total": len(annotations), "countsByKind": {kind: counts[kind] for kind in sorted(KINDS)}, "documents": [{"title": title, "sourceUrl": url, "count": count} for (title, url), count in sorted(documents.items(), key=lambda item: (item[0][0], item[0][1] or ""))], "createdAtRange": {"from": first["createdAt"] if first else None, "to": last["createdAt"] if last else None}, "coverage": "Counts and time range describe only this selected export. Annotations are excerpts and notes, not full document text."}
+    return {"format": "web-ink", "schemaVersion": envelope["schemaVersion"], "exportedAt": envelope["exportedAt"], "total": len(annotations), "countsByKind": {kind: counts[kind] for kind in sorted(KINDS)}, "documents": document_summaries(annotations), "createdAtRange": {"from": first["createdAt"] if first else None, "to": last["createdAt"] if last else None}, "coverage": "Counts and time range describe only this selected export. Annotations are excerpts and notes, not full document text."}
 
 
 def search(args: argparse.Namespace, annotations: list[dict[str, Any]]) -> dict[str, Any]:

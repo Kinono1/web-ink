@@ -237,7 +237,8 @@ class QueryAnnotationsTest(unittest.TestCase):
                 backup["annotations"][0]["pageUrl"] = route
                 code, output = run_backup(backup, "inspect")
                 self.assertEqual(code, 0)
-                self.assertEqual(output["documents"][-1]["sourceUrl"], route)
+                route_documents = [item for item in output["documents"] if item["pageUrl"] == route]
+                self.assertEqual(route_documents[0]["sourceUrl"], route)
 
         backup = fixture_backup()
         backup["annotations"][0]["pageUrl"] = "https://example.test/article#methods"
@@ -307,6 +308,71 @@ class QueryAnnotationsTest(unittest.TestCase):
 
         self.assertEqual(code, 2)
         self.assertNotIn("Traceback", output["error"])
+
+    def test_rejects_lone_surrogates_from_every_command_as_json_errors(self) -> None:
+        """Would fail if a lone surrogate escaped UTF-16 validation or JSON output."""
+        commands = (
+            ("inspect",),
+            ("search", "--text", "模型"),
+            ("show", "--id", "web-note"),
+        )
+        for command in commands:
+            with self.subTest(command=command[0]):
+                backup = fixture_backup()
+                backup["annotations"][0]["note"] = "invalid\ud800text"
+                code, output = run_backup(backup, *command)
+                self.assertEqual(code, 2)
+                self.assertIn("plain text", output["error"])
+                self.assertNotIn("Traceback", output["error"])
+
+    def test_rejects_malformed_urls_from_every_command_as_json_errors(self) -> None:
+        """Would fail if any urlparse boundary leaked ValueError into a traceback."""
+        cases = (
+            ("inspect", lambda backup: backup["annotations"][0].__setitem__("pageUrl", "https://[")),
+            ("search", lambda backup: backup["annotations"][1]["target"].__setitem__("src", "https://[")),
+            ("show", lambda backup: backup["annotations"][2]["target"].__setitem__("sourceUrl", "https://[")),
+            ("blob", lambda backup: backup["annotations"][1]["target"].__setitem__("src", "blob:https://[")),
+            ("invalid-port", lambda backup: backup["annotations"][0].__setitem__("pageUrl", "https://example.test:bad")),
+            ("high-port", lambda backup: backup["annotations"][1]["target"].__setitem__("src", "https://example.test:99999/image.png")),
+            ("userinfo-without-host", lambda backup: backup["annotations"][2]["target"].__setitem__("sourceUrl", "https://user@")),
+        )
+        for name, mutate in cases:
+            with self.subTest(location=name):
+                backup = fixture_backup()
+                mutate(backup)
+                command = ("search", "--text", "模型") if name == "search" else ("show", "--id", "pdf-finding") if name == "show" else ("inspect",)
+                code, output = run_backup(backup, *command)
+                self.assertEqual(code, 2)
+                self.assertIn("URL", output["error"])
+                self.assertNotIn("Traceback", output["error"])
+
+    def test_inspect_groups_documents_by_canonical_page_identity(self) -> None:
+        """Would fail if title or filename merged distinct documents or split one webpage."""
+        backup = fixture_backup()
+        first_hash = "0" * 64
+        second_hash = "a" * 64
+        backup["annotations"][2]["target"].pop("sourceUrl")
+
+        same_document = json.loads(json.dumps(backup["annotations"][0]))
+        same_document["id"] = "web-note-renamed"
+        same_document["pageTitle"] = "Renamed Web model paper"
+        backup["annotations"].append(same_document)
+
+        other_document = json.loads(json.dumps(backup["annotations"][3]))
+        other_document["id"] = "pdf-region-other-document"
+        other_document["target"]["documentHash"] = second_hash
+        other_document["pageUrl"] = f"urn:web-ink:pdf:{second_hash}"
+        backup["annotations"].append(other_document)
+
+        code, output = run_backup(backup, "inspect")
+
+        self.assertEqual(code, 0)
+        web_documents = [item for item in output["documents"] if item.get("pageUrl") == "https://example.test/article"]
+        self.assertEqual(len(web_documents), 1)
+        self.assertEqual(web_documents[0]["count"], 2)
+
+        pdf_documents = [item for item in output["documents"] if item.get("fileName") == "study.pdf" and item["sourceUrl"] is None]
+        self.assertEqual({item["documentHash"]: item["count"] for item in pdf_documents}, {first_hash: 2, second_hash: 1})
 
 
 if __name__ == "__main__":

@@ -616,7 +616,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     setError(t.ieeePermissionDenied);
   };
   const openLocalPdf = () => {
-    void request({ type: "ui.open", target: "local-pdf" }).catch((cause) => {
+    void chrome.tabs.create({ url: chrome.runtime.getURL("pdf.html?open=local") }).catch((cause) => {
       setError(cause instanceof Error ? cause.message : String(cause));
     });
   };

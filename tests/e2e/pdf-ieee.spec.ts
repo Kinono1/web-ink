@@ -230,6 +230,22 @@ test("IEEE content menu delegates the site-session grant to the background and o
   expect(fetch?.cookie).toContain("ieee-session=granted");
 });
 
+test("sidepanel local PDF choice opens a file-only reader and preserves the IEEE tab", async () => {
+  const ieee = await context.newPage();
+  await ieee.goto(WRAPPER);
+  await activeTab(ieee);
+  const localChoice = control.locator(".pdf-local-link");
+  await expect(localChoice).toBeVisible();
+  const pickerOpened = context.waitForEvent("page");
+  await localChoice.click();
+  const picker = await pickerOpened;
+  await expect(picker).toHaveURL(`chrome-extension://${extensionId}/pdf.html?open=local`);
+  await expect(picker.getByLabel("选择本地 PDF", { exact: true })).toBeEnabled();
+  expect(await picker.locator('input[type="url"]').count()).toBe(0);
+  expect(ieee.url()).toBe(WRAPPER);
+  await expect(control.getByText("Invalid floating action", { exact: true })).toHaveCount(0);
+});
+
 test("session-only IEEE source succeeds with the site session while ordinary public fetches omit cookies and ticket fetches fail safely", async () => {
   const ieee = await context.newPage();
   await ieee.goto(WRAPPER);

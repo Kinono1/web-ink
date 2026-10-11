@@ -1,4 +1,5 @@
 import { PdfResponseError, readResponseBytes, verifyPdf } from "./source";
+import { isIeeeDocumentPath } from "./context";
 
 const IEEE_ORIGIN = "https://ieeexplore.ieee.org";
 const MAX_WRAPPER_BYTES = 1024 * 1024;
@@ -79,7 +80,8 @@ export async function readIeeePdf(
     const page = ieeeSourceUrl(input.pageUrl);
     let source = input.sourceUrl === undefined ? undefined : ieeeSourceUrl(input.sourceUrl);
     const wrapper = page.pathname.toLowerCase() === "/stamp/stamp.jsp";
-    if (!wrapper && source?.href !== page.href) throw new IeeePdfError("source-hidden");
+    const documentEmbed = isIeeeDocumentPath(page.pathname) && source !== undefined;
+    if (!wrapper && !documentEmbed && source?.href !== page.href) throw new IeeePdfError("source-hidden");
     if (!source) {
       const response = await fetchIeee(page, signal);
       const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES);

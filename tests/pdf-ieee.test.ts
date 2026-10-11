@@ -40,8 +40,32 @@ it("accepts a validated direct-source page without a wrapper or .pdf suffix", as
 });
 
 it.each([
+  'https://ieeexplore.ieee.org/document/11643626',
+  'https://ieeexplore.ieee.org/document/11643626/',
+])('reads only the supplied observed same-origin source from an IEEE document page: %s', async page => {
+  const { fetcher } = provideFetch([new Response(pdf)]);
+  const signal = new AbortController().signal;
+  expect(Array.from(await read({ pageUrl: page, sourceUrl }, signal))).toEqual(Array.from(pdf));
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(new URL(sourceUrl), {
+    signal, credentials: 'include', cache: 'no-store', redirect: 'error',
+  });
+});
+
+it.each([
+  { pageUrl: 'https://ieeexplore.ieee.org/document/11643626' },
+  { pageUrl: 'https://ieeexplore.ieee.org/document/11643626/' },
+  { pageUrl: 'https://ieeexplore.ieee.org/document/11643626', sourceUrl: 'https://other.test/paper.pdf' },
+])('never fetches an IEEE article implicitly or forwards credentials cross-origin: %j', async input => {
+  const { fetcher, contains } = provideFetch([]);
+  await expect(read(input)).rejects.toMatchObject({ reason: 'source-hidden' });
+  expect(fetcher).not.toHaveBeenCalled();
+  expect(contains).not.toHaveBeenCalled();
+});
+
+it.each([
   { pageUrl: "https://example.test/a.pdf", sourceUrl },
-  { pageUrl: "https://ieeexplore.ieee.org/document/123", sourceUrl },
+  { pageUrl: "https://ieeexplore.ieee.org/document/123/authors", sourceUrl },
+  { pageUrl: "https://ieeexplore.ieee.org/document/123/metrics", sourceUrl },
   { pageUrl: "http://ieeexplore.ieee.org/stamp/stamp.jsp", sourceUrl },
   { pageUrl: "https://user@ieeexplore.ieee.org/stamp/stamp.jsp", sourceUrl },
   { pageUrl: "https://@ieeexplore.ieee.org/stamp/stamp.jsp", sourceUrl },
