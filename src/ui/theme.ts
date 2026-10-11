@@ -23,6 +23,9 @@ export const THEME_TOKENS = {
     "--ink-warning-fill": "#fff7df",
     "--ink-success": "#16803c",
     "--ink-shadow": "0 10px 30px rgba(0,0,0,.10)",
+    "--ink-elevation-float": "0 8px 24px rgb(0 0 0 / 12%)",
+    "--ink-elevation-dialog": "0 18px 48px rgb(0 0 0 / 18%)",
+    "--ink-floating-surface": "rgb(255 255 255 / 84%)",
   },
   dark: {
     "--ink-bg": "#111318",
@@ -44,6 +47,9 @@ export const THEME_TOKENS = {
     "--ink-warning-fill": "#4b3c00",
     "--ink-success": "#86efac",
     "--ink-shadow": "0 10px 30px rgba(0,0,0,.32)",
+    "--ink-elevation-float": "0 8px 24px rgb(0 0 0 / 36%)",
+    "--ink-elevation-dialog": "0 18px 48px rgb(0 0 0 / 48%)",
+    "--ink-floating-surface": "rgb(25 28 35 / 86%)",
   },
 } as const;
 
@@ -67,6 +73,7 @@ export const SCALE_TOKENS = {
   "--ink-radius-control": "8px",
   "--ink-radius": "12px",
   "--ink-motion-fast": "120ms",
+  "--ink-motion-context": "200ms",
 } as const;
 
 const declarations = (tokens: Readonly<Record<string, string>>) =>

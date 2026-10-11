@@ -795,6 +795,8 @@ export function SettingsView({
   setOverwrite,
   busyImport,
   importBackup,
+  onPresets,
+  presetsLoading = false,
 }: {
   settings: Settings;
   t: (typeof COPY)[Language];
@@ -808,6 +810,8 @@ export function SettingsView({
   setOverwrite: (value: boolean) => void;
   busyImport: boolean;
   importBackup: () => void;
+  onPresets?: () => void;
+  presetsLoading?: boolean;
 }) {
   return (
     <section className="settings-view">
@@ -870,6 +874,8 @@ export function SettingsView({
             label={t.customColor}
           />
         </label>
+        {onPresets && <button className="quiet" disabled={presetsLoading} onClick={onPresets}>
+          {language === "zh-CN" ? "标注预设…" : "Annotation presets…"}</button>}
       </section>
       <StoragePanel language={language} />
       <section className="settings-group">

@@ -101,6 +101,13 @@ separator ring; page paper has its thin document edge.
 **The Quiet-Surface Rule.** Keep page chrome and rows flat at rest; lift only
 transient or selected surfaces.
 
+The 0.3.6 refinement adds paired `--ink-elevation-float` and
+`--ink-elevation-dialog` roles. Small focus controls may use
+`--ink-floating-surface` with 12px backdrop blur; ordinary chrome, record rows
+and the PDF paper stay opaque. Unsupported blur, system reduced transparency
+or the product preference select a solid surface. One 200ms capsule reveal
+communicates entering focus; system and product reduced motion remove it.
+
 ## Shapes
 
 Controls, rows, inputs, and note cards use the control radius. Splits, dialogs,
@@ -202,3 +209,22 @@ PR/main/installation acceptance remain pending.
 ### Floating launcher
 
 The draggable pen opens a compact, document-aware menu and closes on its second click, outside input, Escape, drag, or document replacement. PDF sources lead directly to the same-tab reader; multiple embedded sources are explicit choices. Normal webpages expose their annotation mode in the first action. Local PDF, current notes, and library remain fixed destinations. The menu does not show annotation records, download a PDF on expansion, or load the annotation engine. It uses the shared surface, type, focus, and theme tokens and stays inside the viewport.
+
+### Focus reading and annotation presets
+
+Focus is optional and scoped to the current reader session. It hides the 52px
+reader row, requests closing this window's existing Web Ink panel, and retains
+a bottom capsule for pages, annotations and exit. Escape from reading controls
+exits; editors and modal dialogs retain their own Escape behavior. A browser
+without a usable side-panel close API gets an accurate manual-close hint.
+Unsaved notes block entering focus. Focus never changes PDF identity or zoom.
+
+Presets pair a label with a saved color; the swatch and label communicate the
+choice together. Three defaults are Important, Question and Insight
+(重要、疑问、精彩); up to five may be edited from Settings or the reader's More
+menu. Clicking one explicitly saves the selected text and its label as a tag.
+Alt+Shift+1–5 operates on a live selection, avoiding Chrome's Cmd+number tab
+shortcuts. Copy and ordinary selection remain inert. The independent local
+preference does not change durable annotations or JSON backups. Different
+extension views share the preference but have no cross-view transaction lock;
+the last successful write wins.

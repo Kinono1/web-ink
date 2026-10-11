@@ -1,4 +1,7 @@
 import { PdfFind } from "./PdfFind";
+import { FocusControls } from "./FocusControls";
+import { AnnotationPresetActions, AnnotationPresetEditor } from "../ui/AnnotationPresets";
+import { defaultAnnotationPresets, readAnnotationPresets, saveAnnotationPresets, validateAnnotationPresets, presetIndexFromKey, type AnnotationPreset } from "../core/annotation-presets";
 import type { PdfSearchMatch } from "./search";
 import { PdfPage } from "./PdfPage";
 import { PdfNote, type PdfNoteDraft } from "./PdfNote";
@@ -144,10 +147,21 @@ export function PdfReader() {
   const [notesOpen, setNotesOpen] = useState(false),
     [moreOpen, setMoreOpen] = useState(false),
     [sourceOpen, setSourceOpen] = useState(false);
+  const [focusMode, setFocusMode] = useState(false);
+  const [focusBusy, setFocusBusy] = useState(false);
+  const [focusHint, setFocusHint] = useState(false);
+  const focusScroll = useRef<number | undefined>(undefined);
+  const focusAttempt = useRef(0);
+  const [presets, setPresets] = useState(() => defaultAnnotationPresets(DEFAULT_SETTINGS.language));
+  const [presetsOpen, setPresetsOpen] = useState(false);
+  const presetReadGeneration = useRef(0);
+  const presetDraft = useRef(false);
+  const presetSaving = useRef(false);
   const moreMenu = useRef<HTMLDivElement>(null);
   const moreTrigger = useRef<HTMLButtonElement>(null);
   const notesRail = useRef<HTMLElement>(null);
   const readerTab = useRef<number | undefined>(undefined);
+  const readerWindow = useRef<number | undefined>(undefined);
   const supportsSidebar = typeof chrome.sidePanel?.open === "function";
   const [fallbackNotes, setFallbackNotes] = useState(false);
   const [sidebarAttached, setSidebarAttached] = useState(false);
@@ -233,7 +247,7 @@ export function PdfReader() {
   const noteCount = nativeFilter === "web-ink" ? records.length : nativeFilter === "original" ? nativeRecords.length : records.length + nativeRecords.length;
   useEffect(() => {
     void chrome.tabs?.getCurrent?.()
-      .then((tab) => { readerTab.current = tab?.id; })
+      .then((tab) => { readerTab.current = tab?.id; readerWindow.current = tab?.windowId; })
       .catch((cause) => setError(errorText(cause)));
     if (!chrome.runtime.connect) return;
     const client = connectPdfSidebar("web-ink-pdf-reader", (message) => {
@@ -250,7 +264,13 @@ export function PdfReader() {
     sidebarClient.current = client;
     return () => { sidebarClient.current = undefined; client.dispose(); };
   }, []);
+  function cancelFocusAttempt() {
+    focusAttempt.current++;
+    setFocusBusy(false);
+    setFocusMode(false);
+  }
   function openNotes() {
+    cancelFocusAttempt();
     if (!supportsSidebar) { setNotesOpen((open) => !open); return; }
     setNotesOpen(true);
     if (readerTab.current === undefined) {
@@ -375,7 +395,7 @@ export function PdfReader() {
   }, [handoffToken]);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
-      if (!unsavedRef.current && !annotationWrites.current.size && !Object.values(draftsRef.current).some(dirtyDraft)) return;
+      if (!unsavedRef.current && !annotationWrites.current.size && !Object.values(draftsRef.current).some(dirtyDraft) && !presetDraft.current && !presetSaving.current) return;
       event.preventDefault();
       event.returnValue = "";
     };
@@ -418,6 +438,29 @@ export function PdfReader() {
     setColor(settings.defaultColor);
   }, [settings.defaultColor]);
   useEffect(() => {
+    if (!settingsReady) return;
+    let active = true;
+    const generation = ++presetReadGeneration.current;
+    const changed = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area !== "local" || !changes["ui.annotationPresets"]) return;
+      presetReadGeneration.current++;
+      try { setPresets(validateAnnotationPresets(changes["ui.annotationPresets"].newValue)); }
+      catch { setPresets(defaultAnnotationPresets(settings.language)); }
+    };
+    chrome.storage.onChanged?.addListener(changed);
+    void readAnnotationPresets(settings.language).then((next) => {
+      if (active && generation === presetReadGeneration.current) setPresets(next);
+    });
+    return () => { active = false; releaseChromeListener(() => chrome.storage.onChanged?.removeListener(changed)); };
+  }, [settingsReady, settings.language]);
+  useLayoutEffect(() => {
+    if (focusScroll.current !== undefined && container.current) {
+      container.current.scrollTop = focusScroll.current;
+      focusScroll.current = undefined;
+    }
+    if (focusMode) container.current?.focus({ preventScroll: true });
+  }, [focusMode]);
+  useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
       const theme =
@@ -441,6 +484,7 @@ export function PdfReader() {
   }, [settings]);
   useEffect(
     () => () => {
+      focusAttempt.current++;
       documentSessionRef.current++;
       nativeScan.current?.abort();
       originalNotes.current?.dispose();
@@ -619,7 +663,7 @@ export function PdfReader() {
     const page = scroller.getBoundingClientRect();
     const bounds = bar.getBoundingClientRect();
     const left = Math.max(8, page.left), right = Math.min(innerWidth - 8, page.right);
-    const top = Math.max(60, page.top), bottom = Math.min(innerHeight - 8, page.bottom);
+    const top = Math.max(focusMode ? 8 : 60, page.top), bottom = Math.min(innerHeight - (focusMode ? 80 : 8), page.bottom);
     const anchor = selection.anchor;
     const above = anchor.top - bounds.height - 8;
     const below = anchor.bottom + 8;
@@ -629,7 +673,7 @@ export function PdfReader() {
     }
     setSelectionStyle({ left: Math.max(left, Math.min(right - bounds.width, (anchor.left + anchor.right - bounds.width) / 2)),
       top: above >= top ? above : below, bottom: "auto", transform: "none" });
-  }, [selection, layoutEpoch]);
+  }, [selection, layoutEpoch, focusMode]);
   useEffect(() => { savePosition(); }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
   useEffect(() => {
     const scroller = container.current;
@@ -767,6 +811,10 @@ export function PdfReader() {
     setNoteConflicts({});
     setShowMarks(true);
     setNotesOpen(false);
+    focusAttempt.current++;
+    setFocusMode(false);
+    setFocusBusy(false);
+    setFocusHint(false);
     setSourceOpen(false);
     setPositionError("");
     setFitWidth(false);
@@ -1156,6 +1204,7 @@ export function PdfReader() {
   }
   function requestLeave(action: LeaveAction) {
     if ((action.kind === "export" || action.kind === "ai") && exportController.current) return;
+    if (focusBusy || focusMode) cancelFocusAttempt();
     if (action.kind === "open") {
       autoOpenAttempted.current = true;
       // Cancel old initialization without queuing another old-document write.
@@ -1264,6 +1313,7 @@ export function PdfReader() {
     kind: "pdf-text" | "pdf-area",
     chosen = color,
     editNote = false,
+    tags: string[] = [],
   ) {
     if (!opened || !key || locked || annotationWrites.current.size) return;
     const now = new Date().toISOString();
@@ -1281,7 +1331,7 @@ export function PdfReader() {
       pageTitle: opened.fileName,
       color: chosen,
       note: "",
-      tags: [],
+      tags,
       createdAt: now,
       updatedAt: now,
       revision: 0,
@@ -1365,7 +1415,48 @@ export function PdfReader() {
     nativeFocus.current = { session: active, pageNumber: record.pageNumber, top: position.y, intent };
     setPositionEpoch((epoch) => epoch + 1);
   }
-  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0 || !!exportStage;
+  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0 || !!exportStage || focusBusy;
+  const dirtyNotes = Object.values(noteDrafts).some(dirtyDraft);
+  async function enterFocus() {
+    if (locked || dirtyNotes || presetsOpen) return;
+    const attempt = ++focusAttempt.current;
+    setFocusBusy(true);
+    let hint = supportsSidebar;
+    try {
+      if (typeof chrome.sidePanel?.close === "function" && readerWindow.current !== undefined) {
+        // The reader uses the global panel; tabId-only close rejects on Chrome 145+.
+        await chrome.sidePanel.close({ windowId: readerWindow.current });
+        hint = false;
+      }
+    } catch { /* The visible manual-close hint is the older-browser/failure fallback. */ }
+    if (attempt !== focusAttempt.current) return;
+    setFocusBusy(false);
+    if (Object.values(draftsRef.current).some(dirtyDraft)) return;
+    focusScroll.current = container.current?.scrollTop;
+    setNotesOpen(false);
+    setMoreOpen(false);
+    setFocusHint(hint);
+    setFocusMode(true);
+  }
+  function exitFocus() {
+    cancelFocusAttempt();
+    focusScroll.current = container.current?.scrollTop;
+    container.current?.focus({ preventScroll: true });
+  }
+  function choosePreset(preset: AnnotationPreset) {
+    const current = getSelection();
+    if (!selection || locked || presetsOpen || !current?.rangeCount || current.isCollapsed) return false;
+    const range = current.getRangeAt(0);
+    const layer = container.current?.querySelector(`[data-page="${selection.target.pageNumber}"] .textLayer`);
+    if (!layer || !layer.contains(range.startContainer) || !layer.contains(range.endContainer) || current.toString().trim() !== selection.target.exact) return false;
+    const before = range.cloneRange(), after = range.cloneRange();
+    before.selectNodeContents(layer); before.setEnd(range.startContainer, range.startOffset);
+    after.selectNodeContents(layer); after.setStart(range.endContainer, range.endOffset);
+    if (before.toString().slice(-64) !== selection.target.prefix || after.toString().slice(0, 64) !== selection.target.suffix) return false;
+    setColor(preset.color);
+    mark(selection.target, "pdf-text", preset.color, false, [preset.label]);
+    return true;
+  }
   const sidebarState: PdfSidebarState | null = opened && key && !busy ? {
     sessionId: sidebarSession, pageUrl: key, fileName: opened.fileName,
     totalCount: records.length,
@@ -1512,10 +1603,20 @@ export function PdfReader() {
     </section>
   );
   return (
-    <main className="pdf-app" onKeyDown={(event) => {
+    <main className="pdf-app" data-focus={focusMode} onKeyDown={(event) => {
+      const editable = event.target instanceof Element && event.target.closest("input, textarea, select, button, [contenteditable]:not([contenteditable='false']), [role='textbox'], [role='dialog'], .pdf-native-layer");
+      const presetIndex = presetIndexFromKey(event.nativeEvent);
+      if (!event.defaultPrevented && !editable && !pendingLeave && !sourceOpen && !presetsOpen && presetIndex !== undefined) {
+        const preset = presets[presetIndex];
+        if (preset && choosePreset(preset)) event.preventDefault();
+        return;
+      }
       if (event.key !== "Escape" || guardSaving || leaving) return;
+      if (presetsOpen) return;
       if (pendingLeave) keepEditing();
       else if (sourceOpen) setSourceOpen(false);
+      else if (focusBusy) { event.preventDefault(); exitFocus(); setMoreOpen(false); }
+      else if (focusMode && !(event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox'], .pdf-native-layer"))) { event.preventDefault(); exitFocus(); }
       else {
         if (moreOpen) moreTrigger.current?.focus();
         setMoreOpen(false);
@@ -1524,7 +1625,7 @@ export function PdfReader() {
         setArea(false);
       }
     }}>
-      {opened ? <nav className="pdf-toolbar" aria-label={t("PDF 工具栏", "PDF toolbar")}>
+      {opened ? <nav className="pdf-toolbar" hidden={focusMode} aria-label={t("PDF 工具栏", "PDF toolbar")}>
         <button className="quiet icon-button pdf-back" aria-label={backLabel} title={backLabel}
           disabled={leaving || !handoffReady} onClick={() => requestLeave(backAction)}><Icon name="chevron" /></button>
         <span className="pdf-name" title={opened.fileName}>{opened.fileName}</span>
@@ -1541,7 +1642,7 @@ export function PdfReader() {
           disabled={locked} onClick={() => { userIntent(); setFitWidth(true); }}><Icon name="fitWidth" /></button>
         <button className="quiet icon-button pdf-view-action" aria-label={t("旋转页面", "Rotate page")} title={t("旋转页面", "Rotate page")}
           disabled={locked} onClick={() => applyView(zoom, ((rotation + 90) % 360) as PdfRotation)}><Icon name="rotate" /></button>
-        <PdfFind opened={opened} language={settings.language} blocked={leaving || guardSaving || !!pendingLeave || sourceOpen || !!exportStage}
+        <PdfFind opened={opened} language={settings.language} blocked={focusMode || presetsOpen || leaving || guardSaving || !!pendingLeave || sourceOpen || !!exportStage}
           onMatch={(match) => { pendingSearchPosition.current = undefined; setSearchMatch(match); }}
           onNavigate={(page) => { jump(page); pendingSearchPosition.current = { pageNumber: page, intent: intentEpoch.current }; }} />
         <div className="pdf-more" ref={moreMenu}>
@@ -1550,6 +1651,10 @@ export function PdfReader() {
             onClick={() => setMoreOpen((open) => !open)}><Icon name="more" /></button>
           {moreOpen && <div className="pdf-more-menu" id="pdf-more-menu" aria-label={t("更多阅读器操作", "More reader actions")}>
             <div className="pdf-more-zoom">{zoomControls}</div>
+            <button disabled={locked || dirtyNotes} onClick={() => void enterFocus()} title={dirtyNotes ? t("先保存或放弃正在编辑的笔记", "Save or discard the note draft first") : undefined}>
+              <Icon name="focus" />{t("专注阅读", "Focus reading")}</button>
+            <button disabled={locked} onClick={() => { setPresetsOpen(true); setMoreOpen(false); }}>
+              <Icon name="highlight" />{t("标注预设…", "Annotation presets…")}</button>
             {!sidebarAttached && !inlineNotes && <button onClick={() => { openNotes(); setMoreOpen(false); }}>
               <Icon name="note" />{t("查看标注", "View annotations")}</button>}
             <button className="pdf-more-page" disabled={locked || pageNumber <= 1} onClick={() => { jump(pageNumber - 1); setMoreOpen(false); }}>
@@ -1607,7 +1712,10 @@ export function PdfReader() {
         <button onClick={() => requestLeave(backAction)}>{backLabel}</button>
       </div>}
       {opened ? <>
+        {focusMode && <FocusControls language={settings.language} pageNumber={pageNumber} totalPages={opened.document.numPages}
+          blocked={locked} onJump={jump} onExit={exitFocus} onNotes={openNotes} sidebarHint={focusHint} />}
         {selection && <div className="pdf-selection" ref={selectionBar} style={selectionStyle} role="toolbar" aria-label={t("选中文字高亮", "Highlight selected text")}>
+          <AnnotationPresetActions language={settings.language} presets={presets} disabled={locked} onChoose={choosePreset} />
           {COLORS.map((chosen) => <button className="pdf-swatch" key={chosen} aria-label={`${t("高亮", "Highlight")} ${chosen}`}
             title={`${t("高亮", "Highlight")} ${chosen}`} style={{ background: chosen }} disabled={locked}
             onPointerDown={(event) => event.preventDefault()} onClick={() => mark(selection.target, "pdf-text", chosen)} />)}
@@ -1697,6 +1805,10 @@ export function PdfReader() {
         <p className="pdf-muted">{t("单份文件最多 50 MiB。IEEE 登录论文请从原页面选择「使用 IEEE 登录状态打开」；其他受保护来源请下载后选择文件。扫描件可做区域标注。", "Up to 50 MiB. Open IEEE papers from the original page with Open using IEEE sign-in; download other protected sources first. Scans support area annotations.")}</p>
         {currentParams.has("document") && !publicUrl && <p role="status">{t("重新选择原来的 PDF，即可恢复标注与阅读位置。", "Choose the original PDF again to restore annotations and reading position.")}</p>}
       </section>}
+      {presetsOpen && <div className="pdf-dialog-backdrop"><AnnotationPresetEditor presets={presets} language={settings.language}
+        onDirtyChange={(dirty) => { presetDraft.current = dirty; }} onSavingChange={(writing) => { presetSaving.current = writing; }}
+        onSave={async (next) => { await saveAnnotationPresets(next); presetReadGeneration.current++; setPresets(next); }}
+        onClose={() => { setPresetsOpen(false); moreTrigger.current?.focus(); }} /></div>}
       {sourceOpen && <div className="pdf-dialog-backdrop"><section className="pdf-dialog" role="dialog" aria-modal="true"
         aria-label={t("打开其他 PDF", "Open another PDF")} onKeyDown={dialogKeys}>
         <h2>{t("打开其他 PDF", "Open another PDF")}</h2><p>{t("标注保留在本机；原文件不会存入资料库。", "Annotations stay on this device; PDF files are not stored in your library.")}</p>

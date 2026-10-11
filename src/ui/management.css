@@ -260,9 +260,7 @@ button:disabled {
   padding: 6px 12px;
   border-radius: var(--ink-radius-control);
   background: var(--ink-surface-solid);
-  box-shadow:
-    var(--ink-shadow),
-    0 0 0 1px var(--ink-separator);
+  box-shadow: var(--ink-elevation-float);
 }
 .menu > button.danger:hover {
   background: color-mix(
@@ -315,7 +313,7 @@ button:disabled {
 .draft-conflict,
 .storage-warning {
   padding: 8px 12px;
-  border-left: 3px solid var(--ink-warning);
+  border: 1px solid color-mix(in srgb, var(--ink-warning) 28%, var(--ink-warning-fill));
   border-radius: var(--ink-radius-control);
   color: var(--ink-warning);
   background: var(--ink-warning-fill);
@@ -330,7 +328,8 @@ button:disabled {
   display: grid;
   gap: 8px;
   justify-items: start;
-  padding: 24px 4px;
+  max-width: 52ch;
+  padding: 32px 4px;
   color: var(--ink-secondary);
 }
 .empty h2 {
@@ -609,9 +608,7 @@ select {
   padding: 12px;
   border-radius: var(--ink-radius);
   background: var(--ink-surface-solid);
-  box-shadow:
-    var(--ink-shadow),
-    0 0 0 1px var(--ink-separator);
+  box-shadow: var(--ink-elevation-float);
 }
 .filter-popover label {
   display: grid;
@@ -876,6 +873,106 @@ select {
   font-weight: 500;
 }
 
+/* The preset editor is a compact form, so its controls retain a usable order
+ * when the panel narrows or the page is magnified. */
+.annotation-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.annotation-preset {
+  display: inline-flex;
+  align-items: center;
+  min-width: var(--ink-control-min-height);
+  padding: 4px 8px;
+}
+.annotation-preset-swatch,
+.annotation-preset .swatch {
+  display: block;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
+}
+.annotation-preset-editor {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.ink-app .dialog-backdrop {
+  position: fixed;
+  z-index: 80;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(0 0 0 / 30%);
+}
+.ink-app .annotation-preset-editor {
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 32px);
+  padding: 24px;
+  overflow: auto;
+  border-radius: var(--ink-radius);
+  color: var(--ink-text);
+  background: var(--ink-panel);
+  box-shadow: var(--ink-elevation-dialog);
+}
+.annotation-preset-editor form,
+.annotation-preset-list {
+  display: grid;
+  gap: 12px;
+}
+.annotation-preset-editor-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(84px, .45fr) auto;
+  gap: 8px;
+  min-width: 0;
+}
+.annotation-preset-row { align-items: end; }
+.annotation-preset-editor label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-weight: 500;
+}
+.annotation-preset-editor input {
+  min-width: 0;
+}
+.annotation-preset-editor input:not([type="color"]) {
+  width: 100%;
+  min-height: var(--ink-control-min-height);
+  padding: 6px 8px;
+  border: 1px solid var(--ink-separator);
+  border-radius: var(--ink-radius-control);
+  color: var(--ink-text);
+  background: var(--ink-fill);
+}
+.annotation-preset-editor input[type="color"] {
+  width: var(--ink-control-min-height);
+  height: var(--ink-control-min-height);
+  padding: 4px;
+  border: 0;
+  border-radius: var(--ink-radius-control);
+  background: transparent;
+}
+.annotation-preset-editor input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+.annotation-preset-editor input[type="color"]::-webkit-color-swatch {
+  border: 1px solid var(--ink-separator);
+  border-radius: 6px;
+}
+.annotation-preset-editor-fields > button { align-self: end; }
+.annotation-preset-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px;
+}
+
 @media (max-width: 699px) {
   .ink-app {
     padding: 16px;
@@ -916,6 +1013,16 @@ select {
   }
   .back-button .icon {
     transform: rotate(180deg);
+  }
+}
+
+@media (max-width: 420px) {
+  .ink-app .annotation-preset-editor { padding: 16px; }
+  .annotation-preset-editor-fields {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .annotation-preset-editor-fields > :first-child {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 420px) {
