@@ -35,5 +35,6 @@ for (const [name, file] of references) {
   sections.push(`Implementation reference: ${name}\n${'='.repeat(64)}\n${license.trim()}\n`);
 }
 await mkdir('public/licenses', { recursive: true });
-await writeFile('public/licenses/THIRD_PARTY_LICENSES.txt', sections.join('\n'));
-await writeFile('public/licenses/WEB_INK_LICENSE.txt', await readFile('LICENSE', 'utf8'));
+// Package licenses may use CRLF; generated text follows the repository's LF rule.
+await writeFile('public/licenses/THIRD_PARTY_LICENSES.txt', sections.join('\n').replace(/\r\n?/g, '\n'));
+await writeFile('public/licenses/WEB_INK_LICENSE.txt', (await readFile('LICENSE', 'utf8')).replace(/\r\n?/g, '\n'));
