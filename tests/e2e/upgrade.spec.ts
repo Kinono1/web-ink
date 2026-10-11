@@ -8,6 +8,7 @@ test('v0.3.0 profile upgrade preserves every durable annotation and local prefer
   if (!oldBuild) throw new Error('Set WEB_INK_OLD_BUILD to the verified v0.3.0 release archive');
 
   const candidateBuild = process.env.WEB_INK_BUILD || path.resolve('.build-output/chrome-mv3');
+  const candidateVersion = JSON.parse(await readFile(path.resolve('package.json'), 'utf8')).version as string;
   const root = await mkdtemp(path.join(tmpdir(), 'webink-upgrade-'));
   const extension = path.join(root, 'extension');
   const profile = path.join(root, 'profile');
@@ -194,10 +195,10 @@ test('v0.3.0 profile upgrade preserves every durable annotation and local prefer
 
     await browser?.close();
     browser = undefined;
-    await install(candidateBuild, '0.3.2');
+    await install(candidateBuild, candidateVersion);
     current = await start();
     expect(current.id).toBe(id);
-    expect(await current.page.evaluate(() => chrome.runtime.getManifest().version)).toBe('0.3.2');
+    expect(await current.page.evaluate(() => chrome.runtime.getManifest().version)).toBe(candidateVersion);
 
     const after = await readState(current.page, modeUrls);
     expect(after.records).toEqual(before.records);

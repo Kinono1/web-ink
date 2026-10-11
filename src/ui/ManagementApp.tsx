@@ -628,6 +628,16 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const showHeaderPdfAction =
     !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
   const isIeeeSession = pdfContext?.publisher === "ieee";
+  const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
+    const url = new URL(candidate.url);
+    return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
+  };
+  const ieeeCandidates = isIeeeSession
+    ? pdfContext?.candidates.filter(isIeeeCandidate) ?? []
+    : [];
+  const publicCandidates = isIeeeSession
+    ? pdfContext?.candidates.filter(candidate => !isIeeeCandidate(candidate)) ?? []
+    : [];
   const openLibraryDetail = (id: string) => {
     if (window.innerWidth <= 699) libraryScrollY.current = window.scrollY;
     setSelectedId(id);
@@ -672,7 +682,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             {showHeaderPdfAction ? (
               <button className="quiet icon-button" disabled={openingPdf}
                 onClick={() => {
-                  if (isIeeeSession) void openIeeeSessionPdf(pdfContext?.candidates[0]?.url);
+                  if (isIeeeSession) void openIeeeSessionPdf(ieeeCandidates[0]?.url);
                   else openCurrentPdf(pdfContext?.candidates[0]?.url);
                 }}
                 title={isIeeeSession ? t.openIeeeSessionPdf : t.openPdf}
@@ -783,6 +793,38 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               {tab.title ? <span className="pdf-document-name" title={tab.title}>{tab.title}</span> : null}
               {pdfContext?.currentReader ? (
                 <span className="pdf-reader-status" role="status">{t.pdfReading}</span>
+              ) : isIeeeSession ? (
+                <>
+                  {ieeeCandidates.length > 1 ? (
+                    <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
+                      {ieeeCandidates.map((candidate) => (
+                        <button
+                          className="quiet pdf-source-choice"
+                          disabled={openingPdf}
+                          key={candidate.url}
+                          onClick={() => void openIeeeSessionPdf(candidate.url)}
+                        >
+                          {`${t.openIeeeSessionPdf}: ${candidate.url}`}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <button className="primary pdf-open-current" disabled={openingPdf}
+                      onClick={() => void openIeeeSessionPdf(ieeeCandidates[0]?.url)}>
+                      <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openIeeeSessionPdf}
+                    </button>
+                  )}
+                  {publicCandidates.map((candidate) => (
+                    <button
+                      className="quiet pdf-source-choice"
+                      disabled={openingPdf}
+                      key={candidate.url}
+                      onClick={() => openCurrentPdf(candidate.url)}
+                    >
+                      {candidate.url}
+                    </button>
+                  ))}
+                </>
               ) : pdfContext && pdfContext.candidates.length > 1 ? (
                 <div className="pdf-source-choices" aria-label={t.choosePdfSource}>
                   {pdfContext.candidates.map((candidate) => (
@@ -802,7 +844,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               ) : (
                 <button className="primary pdf-open-current" disabled={openingPdf}
                   onClick={() => {
-                    if (isIeeeSession) void openIeeeSessionPdf(pdfContext?.candidates[0]?.url);
+                    if (isIeeeSession) void openIeeeSessionPdf(ieeeCandidates[0]?.url);
                     else openCurrentPdf(pdfContext?.candidates[0]?.url);
                   }}>
                   <Icon name="pdf" />{openingPdf ? t.openingPdf : isIeeeSession ? t.openIeeeSessionPdf : t.openCurrentPdf}

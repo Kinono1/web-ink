@@ -397,6 +397,56 @@ describe("management UI", () => {
     });
   });
 
+  it("opens a cross-origin IEEE-wrapper candidate publicly without requesting IEEE access", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    const second = "https://papers.example.test/second.pdf";
+    const contains = vi.fn(async () => true);
+    const requestPermission = vi.fn(async () => true);
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") {
+        return { ok: true, data: {
+          tabId: 7,
+          url: ieee,
+          publisher: "ieee",
+          kind: "wrapper",
+          currentReader: false,
+          candidates: [{ url: second, via: "object" }],
+        } };
+      }
+      if (message.type === "pdf.openCurrent")
+        return { ok: true, data: { tabId: 7, navigation: "same-tab", token: "token" } };
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" }, undefined, {
+      contains,
+      request: requestPermission,
+    });
+
+    const host = await mount("sidepanel");
+    expect(host.querySelector<HTMLButtonElement>(".pdf-open-current")?.textContent)
+      .toContain("使用 IEEE 登录状态打开");
+    const publicChoice = host.querySelector<HTMLButtonElement>(".pdf-source-choice")!;
+    expect(publicChoice.textContent).toContain(second);
+
+    await act(async () => publicChoice.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent",
+      tabId: 7,
+      windowId: 1,
+      expectedUrl: ieee,
+      candidateUrl: second,
+    });
+    expect(requestPermission).not.toHaveBeenCalled();
+    sent.mockClear();
+    const header = host.querySelector<HTMLButtonElement>('.header-actions button[aria-label="使用 IEEE 登录状态打开"]')!;
+    await act(async () => header.click());
+    expect(sent).toHaveBeenCalledWith({
+      type: "pdf.openCurrent", tabId: 7, windowId: 1, expectedUrl: ieee, accessMode: "site-session",
+    });
+    expect(sent.mock.calls.some(([message]) => message.type === "pdf.openCurrent" && 'candidateUrl' in message)).toBe(false);
+  });
+
   it("uses an authoritative reader URL when Chrome withholds the active Tab URL", async () => {
     const sent = installChrome((message) => {
       if (message.type === "settings.get") return { ok: true, data: settings };

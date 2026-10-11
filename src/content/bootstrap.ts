@@ -234,43 +234,55 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   const menuItems = (): PaletteMenuItem[] => {
     const zh = language === "zh-CN";
     const items: PaletteMenuItem[] = [];
+    const labeledCandidates = (candidates: PdfTabContext["candidates"]) => {
+      const named = candidates.map(candidate => {
+        const url = new URL(candidate.url);
+        return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
+      });
+      const nameCounts = new Map<string, number>();
+      for (const { filename } of named) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
+      return named.map(({ candidate, filename }) => ({
+        candidate,
+        sourceLabel: nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename,
+      }));
+    };
+    const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
+      const url = new URL(candidate.url);
+      return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
+    };
     if (menuContext?.publisher === "ieee") {
       const label = zh ? "使用 IEEE 登录状态打开" : "Open using IEEE sign-in";
-      if (menuContext.candidates.length <= 1) {
+      const ieeeCandidates = menuContext.candidates.filter(isIeeeCandidate);
+      const publicCandidates = menuContext.candidates.filter(candidate => !isIeeeCandidate(candidate));
+      if (!ieeeCandidates.length) {
         items.push({
           action: "open-ieee",
           icon: "pdf",
           primary: true,
           label,
-          ...(menuContext.candidates[0] ? { candidateUrl: menuContext.candidates[0].url } : {}),
         });
       } else {
-        const candidates = menuContext.candidates.map(candidate => {
-          const url = new URL(candidate.url);
-          return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
-        });
-        const nameCounts = new Map<string, number>();
-        for (const { filename } of candidates) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
-        for (const { candidate, filename } of candidates) {
-          const sourceLabel = nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename;
+        for (const { candidate, sourceLabel } of labeledCandidates(ieeeCandidates)) {
           items.push({
             action: "open-ieee",
             icon: "pdf",
             primary: true,
-            label: `${label}: ${sourceLabel}`,
+            label: ieeeCandidates.length === 1 ? label : `${label}: ${sourceLabel}`,
             candidateUrl: candidate.url,
           });
         }
       }
+      for (const { candidate, sourceLabel } of labeledCandidates(publicCandidates)) {
+        items.push({
+          action: "open-pdf",
+          icon: "pdf",
+          primary: true,
+          label: `${zh ? "打开" : "Open"} ${sourceLabel}`,
+          candidateUrl: candidate.url,
+        });
+      }
     } else if (menuContext?.candidates.length) {
-      const candidates = menuContext.candidates.map(candidate => {
-        const url = new URL(candidate.url);
-        return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
-      });
-      const nameCounts = new Map<string, number>();
-      for (const { filename } of candidates) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
-      for (const { candidate, filename } of candidates) {
-        const sourceLabel = nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename;
+      for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
             ? zh ? "打开当前 PDF" : "Open current PDF"

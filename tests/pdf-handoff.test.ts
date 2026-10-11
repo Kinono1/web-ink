@@ -101,9 +101,50 @@ describe('IEEE site-session authority', () => {
     expect(created).toHaveLength(0);
     expect(handoffs()).toHaveLength(0);
   });
-  it('rejects a cross-origin candidate before IEEE session navigation', async () => {
-    setUrl(ieee); visibleEmbeds('<embed type="application/pdf" src="https://other.test/paper.pdf">');
-    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  it('rejects an explicitly chosen cross-origin candidate before IEEE session navigation', async () => {
+    const crossOrigin = 'https://other.test/paper.pdf';
+    setUrl(ieee); visibleEmbeds(`<embed type="application/pdf" src="${crossOrigin}">`);
+    expect(await open({ accessMode: 'site-session', candidateUrl: crossOrigin })).toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(updates).toHaveLength(0);
+  });
+  it.each([
+    '<embed type="application/pdf" src="https://other.test/paper.pdf">',
+    '<embed type="application/pdf" src="https://other.test/first.pdf"><object type="application/pdf" data="https://other.test/second.pdf"></object>',
+  ])('uses IEEE wrapper discovery when session mode has only public cross-origin candidates: %s', async html => {
+    setUrl(ieee); visibleEmbeds(html);
+    const opened = value(await open({ accessMode: 'site-session' }));
+    expect(opened.navigation).toBe('same-tab');
+    expect(opened.sourceUrl).toBeUndefined();
+    expect(new URL(opened.readerUrl).searchParams.has('source')).toBe(false);
+    expect(session[`pdf.handoff.${opened.token}`]).toMatchObject({ accessMode: 'site-session', returnUrl: ieee });
+    expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('sourceUrl');
+  });
+  it('automatically selects the sole actual IEEE candidate when public cross-origin choices also exist', async () => {
+    setUrl(ieee);
+    visibleEmbeds(`<embed type="application/pdf" src="https://other.test/paper.pdf"><iframe src="${download}"></iframe>`);
+    const opened = value(await open({ accessMode: 'site-session' }));
+    expect(opened).toMatchObject({ navigation: 'same-tab', sourceUrl: download });
+    expect(new URL(opened.readerUrl).searchParams.has('source')).toBe(false);
+  });
+  it('still requires a choice between multiple actual IEEE session candidates', async () => {
+    setUrl(ieee);
+    visibleEmbeds('<embed type="application/pdf" src="https://other.test/paper.pdf"><iframe src="/first-file"></iframe><iframe src="/second-file"></iframe>');
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'PDF_CHOICE_REQUIRED' });
+    expect(updates).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
+  });
+  it.each([undefined, 'public'])('retains cross-origin IEEE-wrapper candidates in public mode (%s)', async accessMode => {
+    const crossOrigin = 'https://other.test/paper.pdf';
+    setUrl(ieee); visibleEmbeds(`<embed type="application/pdf" src="${crossOrigin}">`);
+    const opened = value(await open(accessMode ? { accessMode } : {}));
+    expect(opened).toMatchObject({ navigation: 'same-tab', sourceUrl: crossOrigin });
+    expect(new URL(opened.readerUrl).searchParams.get('source')).toBe(crossOrigin);
+    expect(session[`pdf.handoff.${opened.token}`]).not.toHaveProperty('accessMode');
+  });
+  it.each([undefined, 'public'])('retains the full observed candidate choice in public mode (%s)', async accessMode => {
+    setUrl(ieee);
+    visibleEmbeds(`<embed type="application/pdf" src="https://other.test/paper.pdf"><iframe src="${download}"></iframe>`);
+    expect(await open(accessMode ? { accessMode } : {})).toMatchObject({ ok: false, code: 'PDF_CHOICE_REQUIRED' });
     expect(updates).toHaveLength(0);
   });
   it('retains the return path after the session grant expires', async () => {

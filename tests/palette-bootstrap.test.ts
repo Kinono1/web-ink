@@ -111,6 +111,25 @@ it('renders explicit IEEE candidate choices when the wrapper observed several so
 
 });
 
+it('keeps a cross-origin PDF candidate public on an IEEE wrapper', async () => {
+  const second = 'https://papers.example.test/second.pdf';
+  const f = fixture(async () => ({}), async () => ({
+    tabId: 7,
+    url: location.href,
+    publisher: 'ieee',
+    kind: 'wrapper',
+    currentReader: false,
+    candidates: [{ url: second, via: 'object' }],
+  }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.button.click();
+  const root = f.host.shadowRoot!;
+  await vi.waitFor(() => expect(root.querySelector('[data-action="open-ieee"]')).not.toBeNull());
+  expect(root.querySelector<HTMLButtonElement>('[data-action="open-ieee"]')!.dataset.primary).toBe('true');
+  expect(root.querySelector<HTMLButtonElement>('[data-action="open-pdf"]')!.textContent)
+    .toBe('打开 second.pdf');
+});
+
 it('keeps an ordinary PDF opening public', async () => {
   const candidateUrl = 'https://papers.example.test/paper.pdf';
   const f = fixture(async () => ({}), async () => ({

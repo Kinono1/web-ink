@@ -330,13 +330,16 @@ export function createPdfHandoffHandler() {
       ...(context.handoffToken ? { token: context.handoffToken } : {}),
       ...(context.candidates[0] ? { sourceUrl: context.candidates[0].url } : {}),
     };
-    let source = context.candidates[0]?.url;
+    const siteSession = input.accessMode === "site-session";
+    const candidates = siteSession
+      ? context.candidates.filter(item => new URL(item.url).origin === "https://ieeexplore.ieee.org")
+      : context.candidates;
+    let source = candidates[0]?.url;
     if (input.candidateUrl) {
       source = context.candidates.find(item => item.url === input.candidateUrl)?.url;
       if (!source) throw new PdfNavigationError("PDF_SOURCE_UNAVAILABLE", "This PDF source is no longer available. Choose a source again.");
-    } else if (context.candidates.length > 1) throw new PdfNavigationError("PDF_CHOICE_REQUIRED", "Choose which PDF to open.");
+    } else if (candidates.length > 1) throw new PdfNavigationError("PDF_CHOICE_REQUIRED", "Choose which PDF to open.");
     const original = returnUrl(snapshot.url);
-    const siteSession = input.accessMode === "site-session";
     if (siteSession && (!original || !isIeeeSessionPage(original) || (source && new URL(source).origin !== "https://ieeexplore.ieee.org")))
       throw new PdfNavigationError("FORBIDDEN", "IEEE login reading is available only from the current IEEE PDF page.");
     if (siteSession && !(await chrome.permissions.contains({ origins: ["https://ieeexplore.ieee.org/*"] }).catch(() => false)))
