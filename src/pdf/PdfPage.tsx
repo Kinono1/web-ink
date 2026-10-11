@@ -252,7 +252,11 @@ export function PdfPage({
       const page = root.current.getBoundingClientRect();
       const x = event.clientX - page.left,
         y = event.clientY - page.top;
-      const picked = [...records].reverse().find((record) =>
+      // Area outlines paint above the text SVG, regardless of record age.
+      const picked = [
+        ...records.filter((record) => record.kind === "pdf-area").reverse(),
+        ...records.filter((record) => record.kind === "pdf-text").reverse(),
+      ].find((record) =>
         (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box) : record.target.rects).some((rect) => {
           const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
           return (

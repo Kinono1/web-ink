@@ -216,6 +216,16 @@ describe("PdfPage staged rendering", () => {
     expect(props.onPick).toHaveBeenCalledWith(record);
   });
 
+  it("picks the top area layer before a later overlapping text annotation", async () => {
+    const text = props.records[0]!;
+    const area = { ...text, id: "area-mark", kind: "pdf-area" as const };
+    await paint({ records: [area, text] });
+    await act(async () => pageRoot().dispatchEvent(new MouseEvent("mouseup", {
+      bubbles: true, clientX: 90, clientY: 220,
+    })));
+    expect(props.onPick).toHaveBeenCalledWith(area);
+  });
+
   it("keeps the committed page visible until the new raster and text both finish", async () => {
     await paint();
     const canvas = visibleCanvas();
