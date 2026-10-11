@@ -6,6 +6,7 @@ export type PdfFixtureOptions = {
   oversizedImage?: boolean;
   /** Per-page MediaBox dimensions; omitted entries retain the default letter page. */
   pageSizes?: Array<{ width: number; height: number }>;
+  font?: "Helvetica" | "Helvetica-Bold";
 };
 export function fixturePdf(
   pages = 1,
@@ -25,7 +26,7 @@ export function fixturePdf(
     objects.push(
       "<< /Type /FontDescriptor /FontName /STSong-Light /Flags 6 /FontBBox [0 -200 1000 900] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 700 /StemV 80 >>",
     );
-  } else objects.push("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  } else objects.push(`<< /Type /Font /Subtype /Type1 /BaseFont /${options.font || "Helvetica"} >>`);
   const encoded = (value: string) =>
     unicode
       ? `<${Array.from(value, (c) => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}>`

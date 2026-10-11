@@ -189,6 +189,18 @@ export function isIeeePdfWrapper(raw: string): boolean {
 export function isIeeeDocumentPath(pathname: string): boolean {
   return /^\/document\/[0-9]+\/?$/.test(pathname);
 }
+/** A saved paper needs a fresh user-initiated grant, not an old download link. */
+export function ieeePaperUrl(raw: string | undefined): string | undefined {
+  if (!raw) return;
+  try {
+    const url = new URL(raw);
+    if (url.origin !== "https://ieeexplore.ieee.org" || url.username || url.password) return;
+    const article = isIeeeDocumentPath(url.pathname)
+      ? url.pathname.split("/")[2]
+      : isIeeePdfWrapper(raw) ? url.searchParams.get("arnumber") : undefined;
+    if (article && /^\d+$/.test(article)) return `https://ieeexplore.ieee.org/document/${article}`;
+  } catch { /* Unknown sources retain the normal reader entry. */ }
+}
 export function isIeeeSessionPage(raw: string): boolean {
   try {
     const url = new URL(raw);

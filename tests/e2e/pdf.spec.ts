@@ -107,6 +107,26 @@ async function viewAction(name: "旋转页面" | "适合宽度") {
   if (await toolbarAction.isVisible()) await toolbarAction.click();
   else await moreAction(name);
 }
+test("mouse selection preserves complete words in bold PDF text at both zoom levels", async () => {
+  await open(fixturePdf(1, "A small example. These priors are dynamically arranged.", { font: "Helvetica-Bold" }));
+  for (const [index, scale] of [1, 2].entries()) {
+    await page.getByLabel("缩放比例", { exact: true }).fill(`${scale * 100}%`);
+    await page.getByLabel("缩放比例", { exact: true }).press("Enter");
+    await expect.poll(async () => (await page.locator(".pdf-page").first().boundingBox())?.width).toBe(612 * scale);
+    await expect(page.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+    const box = (await page.locator(".pdf-page").first().boundingBox())!;
+    // Literal word bounds independently obtained from Poppler's PDF glyph
+    // metrics, not from the transparent DOM selection layer under test.
+    await page.mouse.move(box.x + 256.098 * scale, box.y + 57 * scale);
+    await page.mouse.down();
+    await page.mouse.move(box.x + 447.186 * scale, box.y + 57 * scale, { steps: 20 });
+    await page.mouse.up();
+    await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
+    await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(index + 1);
+    const records = await rpc({ type: "annotations.list" });
+    expect(records.every((record: any) => record.target.exact === "priors are dynamically")).toBe(true);
+  }
+});
 test("PDF text and area annotations survive reselect, zoom and rotation without storing bytes", async () => {
   await open();
   await expect(page.getByRole("button", { name: /^(开启标注|关闭标注)$/ })).toHaveCount(0);

@@ -15,6 +15,9 @@ const io = vi.hoisted(() => ({
   rejectOversizedImage: false,
   renderGates: {} as Record<number, Promise<unknown> | undefined>,
   parseGate: undefined as Promise<unknown> | undefined,
+  metadataTitle: "",
+  metadataDoi: "",
+  metadataFailure: false,
 }));
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
@@ -45,6 +48,12 @@ vi.mock("pdfjs-dist/legacy/build/pdf.mjs", () => ({
       destroy: async () => undefined,
       promise: (io.parseGate ?? Promise.resolve()).then(() => ({
         numPages: io.pageCount,
+        getMetadata: async () => {
+          if (io.metadataFailure) throw Error("metadata unavailable");
+          return { info: { Title: io.metadataTitle }, metadata: {
+            get: (name: string) => name === "dc:title" ? io.metadataTitle : name === "prism:doi" ? io.metadataDoi : null,
+          } };
+        },
         getPage: async (number: number) => {
           io.pagesRead.push(number);
           const width = 600;
@@ -140,6 +149,9 @@ beforeEach(() => {
   io.rejectOversizedImage = false;
   io.renderGates = {};
   io.parseGate = undefined;
+  io.metadataTitle = "";
+  io.metadataDoi = "";
+  io.metadataFailure = false;
   records = [];
   messages = [];
   writes = [];
@@ -385,6 +397,29 @@ async function selectPage(number = 1) {
   await settle();
 }
 function puts() { return messages.filter((message) => message.type === "annotations.put"); }
+it("uses PDF metadata for the reader and new annotations without renaming old records", async () => {
+  io.metadataTitle = "A scientific paper";
+  io.metadataDoi = "10.1109/TII.2026.3716639";
+  records = [baseRecord()];
+  await mount();
+  const display = "A scientific paper — DOI: 10.1109/TII.2026.3716639";
+  expect(host.querySelector(".pdf-name")?.textContent).toBe(display);
+  await selectPage();
+  await click("高亮 #facd5a");
+  const write = puts().at(-1)!;
+  if (write.type !== "annotations.put") throw Error("Missing annotation write");
+  expect(write.annotation.pageTitle).toBe(display);
+  if (write.annotation.kind !== "pdf-text") throw Error("Not a text annotation");
+  expect(write.annotation.target.fileName).toBe(display);
+  expect(records.find(record => record.id === "saved-highlight")?.pageTitle).toBe("fixture.pdf");
+});
+it("keeps a PDF usable when reading its metadata fails", async () => {
+  io.metadataFailure = true;
+  await mount();
+  expect(host.querySelector(".pdf-name")?.textContent).toBe("fixture.pdf");
+  await selectPage();
+  expect(host.querySelector(".pdf-selection")).not.toBeNull();
+});
 function unloadBlocked() {
   const event = new Event("beforeunload", { cancelable: true });
   window.dispatchEvent(event);

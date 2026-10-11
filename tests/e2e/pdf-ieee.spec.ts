@@ -65,6 +65,11 @@ async function ieeeRoute(route: Route): Promise<void> {
   const evidence = await requestEvidence(route);
   requests.push(evidence);
 
+  if (url.pathname === "/document/11643626") {
+    await route.fulfill({ contentType: "text/html", body: `<!doctype html><title>IEEE paper</title><a href="${WRAPPER}">PDF</a>` });
+    return;
+  }
+
   if (url.pathname === "/stamp/stamp.jsp") {
     const body = ieeeMode === "unavailable"
       ? "<!doctype html><title>IEEE fixture</title><h1>No visible file</h1>"
@@ -163,6 +168,38 @@ test.beforeEach(async () => {
 test.afterEach(async () => {
   await context?.close();
   if (folder) await rm(folder, { recursive: true, force: true });
+});
+
+test("legacy IEEE reader recovery opens the article page without replaying a download", async () => {
+  const reader = await context.newPage();
+  await reader.goto(`chrome-extension://${extensionId}/pdf.html?source=${encodeURIComponent(WRAPPER)}&document=${"a".repeat(64)}`);
+  await expect(reader.getByRole("alert").first()).toBeVisible();
+  await reader.getByRole("button", { name: "返回 IEEE", exact: true }).click();
+  await expect(reader).toHaveURL(`${IEEE}/document/11643626`);
+  expect(requests.filter(request => request.resourceType === "fetch")).toHaveLength(0);
+});
+
+test("saved IEEE records reopen through the article and a fresh same-tab session", async () => {
+  const reader = await context.newPage();
+  await reader.goto(WRAPPER);
+  await openThroughSidepanel(reader);
+  const record = await selectAndHighlight(reader);
+  const library = await context.newPage();
+  await library.goto(`chrome-extension://${extensionId}/library.html`);
+  await library.getByRole("button", { name: new RegExp(record.target.exact) }).first().click();
+  await library.locator(".detail-actions").getByRole("button", { name: "打开 PDF", exact: true }).click();
+  await expect.poll(() => context.pages().map(page => page.url())).toContain(`${IEEE}/document/11643626`);
+  const article = context.pages().find(page => page.url() === `${IEEE}/document/11643626`)!;
+  await expect(article).toHaveURL(`${IEEE}/document/11643626`);
+  // A tabs.create navigation can start before Playwright attaches the new
+  // page. Reload the now-attached tab to serve the synthetic IEEE page.
+  await article.reload();
+  const tabId = await activeTab(article);
+  await article.getByRole("link", { name: "PDF", exact: true }).click();
+  await expect(article).toHaveURL(WRAPPER);
+  await openThroughSidepanel(article);
+  expect(await activeTab(article)).toBe(tabId);
+  await expect(article.locator(`[data-pdf-annotation="${record.id}"]`)).toBeVisible();
 });
 
 test("sidepanel IEEE session handoff keeps the ticket out of reader and persistent data, requires a fresh grant after reload, then restores saved marks in the same tab", async () => {

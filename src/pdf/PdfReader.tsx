@@ -35,7 +35,8 @@ import { THEME_TOKENS } from "../ui/theme";
 import { Icon } from "../ui/management/helpers";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "./source";
 import { readIeeePdf, ieeeSourceUrl, IeeePdfError } from "./ieee";
-import { isIeeeSessionPage, isIeeePdfWrapper } from "./context";
+import { ieeePaperUrl, isIeeeSessionPage, isIeeePdfWrapper } from "./context";
+import { pdfDisplayName } from "./metadata";
 import { PageLayoutIndex } from "./layout";
 import { PdfSession } from "./session";
 import {
@@ -63,7 +64,7 @@ const dirtyDraft = (draft: PdfNoteDraft) =>
   draft.color !== draft.base.color ||
   noteTags(draft.tags).join("\0") !== draft.base.tags.join("\0");
 type LeaveAction =
-  | { kind: "return" | "source" | "library" | "choose" }
+  | { kind: "return" | "source" | "paper" | "library" | "choose" }
   | { kind: "open"; file?: File; source: string };
 type PositionSession = {
   session: number;
@@ -787,7 +788,10 @@ export function PdfReader() {
       const sourcePage = remote ? new URL(remote) : undefined;
       const ieeeName = ieeeGrant && sourcePage?.pathname.toLowerCase() === "/stamp/stamp.jsp"
         ? `IEEE-${sourcePage.searchParams.get("arnumber") || "paper"}.pdf` : undefined;
-      const fileName = file?.name || ieeeName || decodeURIComponent(sourcePage?.pathname.split("/").pop() || "Document.pdf");
+      const fallbackName = file?.name || ieeeName || decodeURIComponent(sourcePage?.pathname.split("/").pop() || "Document.pdf");
+      const metadata = await doc.getMetadata().catch(() => ({}));
+      if (!session.current.isCurrent(token)) return;
+      const fileName = pdfDisplayName(metadata, fallbackName);
       // Keep the reader URL aligned with the successfully loaded document so
       // a later library/source handoff cannot reuse a tab showing another PDF.
       const readerLocation = new URL(location.href);
@@ -936,12 +940,13 @@ export function PdfReader() {
   }
   const currentParams = new URLSearchParams(location.search);
   const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
+  const paperUrl = ieeePaperUrl(handoff?.returnUrl || publicUrl);
   async function executeLeave(action: LeaveAction) {
     if (leaving) return;
     setLeaving(true);
     try {
       await flushPosition();
-      if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "source"))
+      if (handoff?.accessMode === "site-session" && (action.kind === "library" || action.kind === "source" || action.kind === "paper"))
         await request({ type: "pdf.handoff.revoke", token: handoff.token });
       switch (action.kind) {
         case "return":
@@ -949,7 +954,11 @@ export function PdfReader() {
           await request<PdfReturnResult>({ type: "pdf.returnOriginal", token: handoff.token });
           break;
         case "source":
-          if (publicUrl) location.assign(publicUrl);
+          if (publicUrl) location.assign(ieeePaperUrl(publicUrl) || publicUrl);
+          else setSourceOpen(true);
+          break;
+        case "paper":
+          if (paperUrl) location.assign(paperUrl);
           else setSourceOpen(true);
           break;
         case "library": location.assign(chrome.runtime.getURL("/library.html")); break;
@@ -1317,7 +1326,7 @@ export function PdfReader() {
         <button onClick={() => setPositionError("")}>{t("关闭", "Dismiss")}</button></div>}
       {notice && <div className="pdf-message" role="status">{notice}</div>}
       {!opened && ieeeRecovery && (error || notice) && <div className="pdf-message">
-        {ieeeRecovery === "return" ? <button disabled={busy || leaving} onClick={() => requestLeave(backAction)}>{t("返回 IEEE", "Return to IEEE")}</button>
+        {ieeeRecovery === "return" ? <button disabled={busy || leaving} onClick={() => requestLeave(paperUrl ? { kind: "paper" } : backAction)}>{t("返回 IEEE", "Return to IEEE")}</button>
           : handoff && <button disabled={busy || leaving} onClick={() => void loadPdf(undefined, false, handoff.returnUrl, true)}>
             {ieeeRecovery === "permission" ? t("允许访问 IEEE 并重试", "Allow IEEE and retry") : t("重试读取", "Retry reading")}</button>}
       </div>}

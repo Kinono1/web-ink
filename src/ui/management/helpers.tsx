@@ -1,6 +1,7 @@
 import type { Annotation, AnchorState, Language } from "../../core/model";
 import type { FilterKind, AnnotationKind } from "./types";
 import { ICON_PATHS, type IconName } from "../icons";
+import { ieeePaperUrl } from "../../pdf/context";
 export function tagText(tags: string[]): string {
   return tags.join(", ");
 }
@@ -51,6 +52,10 @@ export function isPdf(
   return annotation.kind === "pdf-text" || annotation.kind === "pdf-area";
 }
 export function pdfReaderUrl(readerBase: string, record?: Annotation): string {
+  if (record && isPdf(record)) {
+    const paper = ieeePaperUrl(record.target.sourceUrl);
+    if (paper) return paper;
+  }
   const url = new URL(readerBase);
   if (record && isPdf(record)) {
     url.searchParams.set("document", record.target.documentHash);

@@ -90,7 +90,10 @@ beforeEach(() => {
         },
       };
     },
-    streamTextContent: () => undefined,
+    streamTextContent: () => new ReadableStream({ start(controller) {
+      controller.enqueue({ items: [], styles: {} });
+      controller.close();
+    } }),
     cleanup: cleanupPage,
   };
   class TextLayer {
