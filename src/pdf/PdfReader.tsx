@@ -82,6 +82,7 @@ function safeSource(raw: string | undefined): string | undefined {
 
 export function PdfReader() {
   const [initialParams] = useState(() => new URLSearchParams(location.search));
+  const localFileEntry = initialParams.get("open") === "local";
   const handoffToken = initialParams.get("handoff");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsReady, setSettingsReady] = useState(false);
@@ -1159,11 +1160,11 @@ export function PdfReader() {
             event.target.value = "";
           }} />
       </label>
-      <form onSubmit={(event) => { event.preventDefault(); requestLeave({ kind: "open", source }); }}>
+      {(!localFileEntry || opened) && <form onSubmit={(event) => { event.preventDefault(); requestLeave({ kind: "open", source }); }}>
         <input aria-label={t("公开 PDF 网址", "Public PDF URL")} type="url" value={source} disabled={locked}
           placeholder="https://…/paper.pdf" onChange={(event) => setSource(event.target.value)} required />
         <button disabled={locked}>{busy ? t("正在读取…", "Loading…") : t("打开网址", "Open URL")}</button>
-      </form>
+      </form>}
     </section>
   );
   return (
@@ -1311,8 +1312,11 @@ export function PdfReader() {
         </div>
       </> : <section className="pdf-welcome" aria-busy={busy}>
         <span className="pdf-welcome-icon" aria-hidden="true"><Icon name="pdf" /></span>
-        <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : t("选择 PDF", "Choose a PDF")}</h1>
-        <p>{t("选择本地文件，或打开公开 PDF 网址。标注保存在本机，原文件不会存入资料库。", "Choose a local file or public PDF URL. Annotations stay on this device; the PDF is not stored in your library.")}</p>
+        <h1>{busy ? t("正在打开 PDF…", "Opening PDF…") : localFileEntry
+          ? t("选择电脑上的 PDF", "Choose a PDF from your computer") : t("选择 PDF", "Choose a PDF")}</h1>
+        <p>{localFileEntry
+          ? t("选择已下载的 PDF 文件。标注保存在本机，原文件不会存入资料库。", "Choose a downloaded PDF file. Annotations stay on this device; the PDF is not stored in your library.")
+          : t("选择本地文件，或打开公开 PDF 网址。标注保存在本机，原文件不会存入资料库。", "Choose a local file or public PDF URL. Annotations stay on this device; the PDF is not stored in your library.")}</p>
         {sourceControls}
         <p className="pdf-muted">{t("单份文件最多 50 MiB。登录网站的 PDF 请下载后选择本地文件；扫描件可做区域标注。", "Up to 50 MiB per file. Download authenticated PDFs first. Scanned documents support area annotations.")}</p>
         {currentParams.has("document") && !publicUrl && <p role="status">{t("重新选择原来的 PDF，即可恢复标注与阅读位置。", "Choose the original PDF again to restore annotations and reading position.")}</p>}

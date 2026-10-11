@@ -14,6 +14,10 @@ export async function openPdfTab(url: string): Promise<void> {
     if (!tab.url || tab.id < 0) return false;
     const candidate = new URL(tab.url);
     if (candidate.protocol !== target.protocol || candidate.host !== target.host || candidate.pathname !== target.pathname) return false;
+    // An empty local picker has no document to preserve and cannot offer URL input.
+    const emptyLocalPicker = candidate.searchParams.get("open") === "local" &&
+      !candidate.searchParams.has("source") && !candidate.searchParams.has("document");
+    if (!requestedSource && !requestedDocument && target.searchParams.get("open") !== "local" && emptyLocalPicker) return false;
     // A generic PDF entry brings back a reader; choosing a specific record or
     // source must never silently open a different document.
     return (!requestedSource && !requestedDocument) ||

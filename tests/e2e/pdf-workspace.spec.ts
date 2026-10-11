@@ -202,11 +202,11 @@ test("floating pen directly opens the current PDF without enabling webpage annot
   const pen = original.locator('.web-ink-palette-toggle');
   await expect(pen).toBeEnabled();
   await pen.click();
-  await expect(original.getByRole('menuitem', { name: '用 Web Ink 标注此 PDF', exact: true })).toBeVisible();
+  await expect(original.getByRole('menuitem', { name: '打开当前 PDF', exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute('aria-pressed', 'false');
   await pen.click(); await expect(original.locator('.web-ink-palette-menu')).toBeHidden();
   await pen.click();
-  await original.getByRole('menuitem', { name: '用 Web Ink 标注此 PDF', exact: true }).click();
+  await original.getByRole('menuitem', { name: '打开当前 PDF', exact: true }).click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
   expect(context.pages()).toHaveLength(count);
@@ -217,6 +217,33 @@ test("floating pen directly opens the current PDF without enabling webpage annot
   await original.getByRole('button', { name: '返回原阅读器', exact: true }).click();
   await expect(original).toHaveURL(source);
   expect(await activeTab(original)).toBe(tabId);
+});
+
+test("local PDF menu action opens a separate file-only reader and leaves the source tab unchanged", async () => {
+  const { original, tabId } = await publicPdfOriginal();
+  const originalUrl = original.url();
+  const pageCount = context.pages().length;
+  const pen = original.locator(".web-ink-palette-toggle");
+  await expect(pen).toBeEnabled();
+  await pen.click();
+  const localAction = original.getByRole("menuitem", { name: "选择电脑上的 PDF…", exact: true });
+  await expect(localAction).toBeVisible();
+
+  const readerOpened = context.waitForEvent("page");
+  await localAction.click();
+  const localReader = await readerOpened;
+  await expect(localReader).toHaveURL(`chrome-extension://${id}/pdf.html?open=local`);
+  await expect(localReader.getByLabel("选择本地 PDF", { exact: true })).toBeVisible();
+  await expect(localReader.getByLabel("公开 PDF 网址", { exact: true })).toHaveCount(0);
+
+  const name = "scholar-local-copy.pdf";
+  await openLocal(localReader, fixturePdf(2, "Local PDF selected from Scholar"), name);
+  await expect(localReader.locator(".pdf-name")).toHaveText(name);
+  await expect(localReader.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
+  await expect(original).toHaveURL(originalUrl);
+  expect(context.pages()).toHaveLength(pageCount + 1);
+  expect(await activeTab(original)).toBe(tabId);
+  observations.push({ originalUrl, readerUrl: localReader.url(), tabId, pageCount, localFile: name });
 });
 
 test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keeps the pen draggable", async () => {
@@ -310,7 +337,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   const menu = original.locator(".web-ink-palette-menu");
   await pen.click();
   await expect(menu).toBeVisible();
-  await expect(original.getByRole("menuitem", { name: "用 Web Ink 标注此 PDF", exact: true })).toBeVisible();
+  await expect(original.getByRole("menuitem", { name: "打开当前 PDF", exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute("aria-pressed", "false");
   expect(await focusTrace()).toEqual(focusEvidence);
 
@@ -318,7 +345,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   await expect(menu).toBeHidden();
   await pen.click();
   await expect(menu).toBeVisible();
-  const openPdf = original.getByRole("menuitem", { name: "用 Web Ink 标注此 PDF", exact: true });
+  const openPdf = original.getByRole("menuitem", { name: "打开当前 PDF", exact: true });
   await openPdf.click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();

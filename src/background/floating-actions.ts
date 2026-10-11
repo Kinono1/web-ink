@@ -60,7 +60,7 @@ export function createFloatingActionHandler(
       await resolveContentPage(sender);
       const url = raw.target === "library"
         ? chrome.runtime.getURL("library.html")
-        : chrome.runtime.getURL("pdf.html");
+        : chrome.runtime.getURL("pdf.html?open=local");
       await chrome.tabs.create({ url });
       return { ok: true, data: true };
     } catch (error) {

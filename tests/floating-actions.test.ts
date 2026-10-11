@@ -45,7 +45,7 @@ describe("floating action navigation", () => {
 
   it.each([
     ["library", "library.html"],
-    ["local-pdf", "pdf.html"],
+    ["local-pdf", "pdf.html?open=local"],
   ] as const)("opens only the fixed %s destination after resolving the page", async (target, path) => {
     const resolve = vi.fn().mockResolvedValue("https://example.test/article");
     const result = await createFloatingActionHandler(resolve)({

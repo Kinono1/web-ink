@@ -239,7 +239,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         const filename = new URL(candidate.url).pathname.split("/").pop();
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
-            ? zh ? "用 Web Ink 标注此 PDF" : "Annotate this PDF in Web Ink"
+            ? zh ? "打开当前 PDF" : "Open current PDF"
             : `${zh ? "打开" : "Open"} ${filename || new URL(candidate.url).hostname}`,
           candidateUrl: candidate.url });
       }
@@ -249,7 +249,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
           : enabled ? "Disable annotations on this page" : "Enable annotations on this page" });
     }
     items.push(
-      { action: "local-pdf", icon: "pdf", label: zh ? "打开本地 PDF" : "Open local PDF" },
+      { action: "local-pdf", icon: "pdf", label: zh ? "选择电脑上的 PDF…" : "Choose a local PDF…" },
       { action: "sidebar", icon: "note", label: zh ? "查看本篇标注" : "Page annotations" },
       { action: "library", icon: "library", label: zh ? "资料库" : "Library" },
     );

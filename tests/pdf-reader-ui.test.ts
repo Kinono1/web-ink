@@ -228,6 +228,26 @@ async function mount(query = "", local = true) {
     await settle();
   }
 }
+
+it('keeps the local-file entry focused on choosing a file without asking for a URL', async () => {
+  await mount('?open=local', false);
+  expect(host.querySelector('input[type="file"]')).not.toBeNull();
+  expect(host.querySelector('input[type="url"]')).toBeNull();
+  expect(host.querySelector('h1')?.textContent).toBe('选择电脑上的 PDF');
+  expect(io.remoteReads).toEqual([]);
+  const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+  Object.defineProperty(input, 'files', { configurable: true, value: [new File(['%PDF-'], 'local.pdf', { type: 'application/pdf' })] });
+  await act(async () => input.dispatchEvent(new Event('change', { bubbles: true })));
+  await settle();
+  expect(host.querySelector('.pdf-name')?.textContent).toBe('local.pdf');
+  expect(io.remoteReads).toEqual([]);
+});
+
+it('retains URL input in the generic PDF entry', async () => {
+  await mount('', false);
+  expect(host.querySelector('input[type="file"]')).not.toBeNull();
+  expect(host.querySelector('input[type="url"]')).not.toBeNull();
+});
 function button(label: string) {
   const result = [...host.querySelectorAll<HTMLButtonElement>("button")].find((node) => node.getAttribute("aria-label") === label || node.textContent?.trim() === label);
   expect(result, `action ${label}`).toBeTruthy();
