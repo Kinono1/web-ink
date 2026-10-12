@@ -31,7 +31,7 @@ export default defineBackground(() => {
   const pageStates = new Map<number, PageState>();
   const resolveContentPage = createContentPageResolver();
   const handleFloatingAction = createFloatingActionHandler(resolveContentPage);
-  const handlePdfRequest = createPdfHandoffHandler();
+  const handlePdfRequest = createPdfHandoffHandler(async () => (await runtimeHealth).generation);
   const broadcast = async (message: object, pageUrl?: string) => {
     void chrome.runtime.sendMessage(message).catch(() => undefined);
     const tabs = await chrome.tabs.query({});
@@ -168,7 +168,7 @@ export default defineBackground(() => {
           return { ok: true, data: await runtimeHealth };
         }
         if (type === "ui.open") return handleFloatingAction(raw, sender);
-        if (["pdf.context.get", "pdf.openCurrent", "pdf.handoff.get", "pdf.handoff.revoke", "pdf.returnOriginal"].includes(type))
+        if (["pdf.context.get", "pdf.openCurrent", "pdf.cancelCurrent", "pdf.handoff.get", "pdf.handoff.revoke", "pdf.returnOriginal", "pdf.prepared.claim", "pdf.prepared.chunk", "pdf.prepared.release"].includes(type))
           return handlePdfRequest(raw, sender);
         if (
           !trusted &&

@@ -1,4 +1,6 @@
-import { request } from "../core/client";
+import { RequestError, request } from "../core/client";
+import { pdfPreparationLabel, ieeeFailureMessage, formatIeeeDiagnostic } from '../pdf/ieee-status';
+import type { IeeePdfDiagnostic } from '../pdf/ieee-diagnostics';
 import {
   DEFAULT_SETTINGS,
   type PageMode,
@@ -231,6 +233,9 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   let menuEpoch = 0;
   let menuContext: PdfTabContext | undefined;
   let opening = false;
+  let preparationPhase: string | undefined;
+  let preparationError = '';
+  let preparationDiagnostic: string | undefined;
   const menuItems = (): PaletteMenuItem[] => {
     const zh = language === "zh-CN";
     const items: PaletteMenuItem[] = [];
@@ -251,7 +256,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
     };
     if (menuContext?.publisher === "ieee") {
-      const label = zh ? "使用 IEEE 登录状态打开" : "Open using IEEE sign-in";
+      const label = zh ? "用 Web Ink 标注当前 PDF" : "Annotate current PDF in Web Ink";
       const ieeeCandidates = menuContext.candidates.filter(isIeeeCandidate);
       const publicCandidates = menuContext.candidates.filter(candidate => !isIeeeCandidate(candidate));
       if (!ieeeCandidates.length) {
@@ -285,7 +290,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
-            ? zh ? "打开当前 PDF" : "Open current PDF"
+            ? zh ? "用 Web Ink 标注当前 PDF" : "Annotate current PDF in Web Ink"
             : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
@@ -295,25 +300,30 @@ export function startBootstrap(health: RuntimeHealth): () => void {
           : enabled ? "Disable annotations on this page" : "Enable annotations on this page" });
     }
     items.push(
-      { action: "local-pdf", icon: "pdf", label: zh ? "选择电脑上的 PDF…" : "Choose a local PDF…" },
       { action: "sidebar", icon: "note", label: zh ? "查看本篇标注" : "Page annotations" },
       { action: "library", icon: "library", label: zh ? "资料库" : "Library" },
+      { action: "local-pdf", icon: "pdf", label: zh ? "选择电脑上的 PDF…" : "Choose a local PDF…" },
     );
+    if (opening && menuContext?.publisher === 'ieee') {
+      if (items[0]) items[0].label = pdfPreparationLabel(preparationPhase, language);
+      items.push({ action: 'cancel', icon: 'close', label: zh ? '取消读取' : 'Cancel reading' });
+    }
     return items;
   };
   const loadMenu = async () => {
+    if (opening) { menu.update({ pending: true, items: menuItems(), status: pdfPreparationLabel(preparationPhase, language) }); return; }
     const epoch = ++menuEpoch;
     const url = location.href;
     menuContext = undefined;
-    menu.update({ items: menuItems(), loading: true, pending: opening, error: "" });
+    menu.update({ items: menuItems(), loading: true, pending: opening, error: preparationError, diagnostic: preparationDiagnostic });
     try {
       const context = await request<PdfTabContext>({ type: "pdf.context.get", expectedUrl: url });
       if (disposed || epoch !== menuEpoch || location.href !== url || !menu.isOpen()) return;
       menuContext = context;
       const recovery = context.reason && context.reason !== "not-pdf" && !context.candidates.length;
-      menu.update({ items: menuItems(), loading: false, error: recovery
+      menu.update({ items: menuItems(), loading: false, error: preparationError || (recovery
         ? language === "zh-CN" ? "无法取得 PDF 来源，请打开已下载的本地文件。" : "PDF source unavailable. Open the downloaded file instead."
-        : "" });
+        : ""), diagnostic: preparationDiagnostic });
     } catch (cause) {
       if (disposed || epoch !== menuEpoch || location.href !== url || !menu.isOpen()) return;
       menu.update({ loading: false, error: cause instanceof Error ? cause.message : String(cause), items: [
@@ -322,6 +332,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     }
   };
   const runMenuAction = async (action: PaletteAction, candidateUrl?: string) => {
+    if (action === 'cancel') { await request({ type: 'pdf.cancelCurrent', expectedUrl: location.href }).catch(() => undefined); return; }
     if (disposed || opening) return;
     if (action === "retry") { void loadMenu(); return; }
     const url = location.href;
@@ -330,8 +341,9 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       void loadMenu(); return;
     }
     opening = true;
+    preparationPhase = 'identify'; preparationError = ''; preparationDiagnostic = undefined;
     // Ignore an outstanding context result so it cannot erase this action's error.
-    menu.update({ pending: true, loading: false, error: "" });
+    menu.update({ pending: true, loading: false, error: "", diagnostic: undefined, items: menuItems(), status: pdfPreparationLabel(preparationPhase, language) });
     try {
       if (action === "open-pdf" || action === "open-ieee") {
         if (window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
@@ -350,11 +362,14 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       }
       if (!disposed && epoch === menuEpoch && location.href === url) menu.close();
     } catch (cause) {
-      if (!disposed && epoch === menuEpoch && location.href === url)
-        menu.update({ error: cause instanceof Error ? cause.message : String(cause) });
+      if (!disposed && location.href === url) {
+        preparationError = cause instanceof RequestError ? ieeeFailureMessage(cause.code, language) ?? cause.message : cause instanceof Error ? cause.message : String(cause);
+        preparationDiagnostic = cause instanceof RequestError && cause.diagnostic ? formatIeeeDiagnostic(cause.diagnostic, health.version) : undefined;
+        menu.update({ error: preparationError, diagnostic: preparationDiagnostic });
+      }
     } finally {
       opening = false;
-      if (!disposed) menu.update({ pending: false, items: menuItems() });
+      if (!disposed) menu.update({ pending: false, status: undefined, items: menuItems() });
     }
   };
   const menu = createPaletteMenu(view.root, toggle.button, open => {
@@ -368,11 +383,16 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     })
     .catch(() => undefined);
   const onMessage = (
-    message: { type?: string; pageUrl?: string; action?: string; id?: string },
+    message: { type?: string; pageUrl?: string; action?: string; id?: string; diagnostic?: IeeePdfDiagnostic; stage?: string },
     _sender: chrome.runtime.MessageSender,
     respond: (value: unknown) => void,
   ) => {
     if (disposed) return false;
+    if (message.type === 'pdf.preparation.changed' && _sender.id === chrome.runtime.id && opening) {
+      preparationPhase = message.stage ?? message.diagnostic?.phase;
+      menu.update({ pending: true, status: pdfPreparationLabel(preparationPhase, language), items: menuItems() });
+      return false;
+    }
     if (message.type === "permissions.revoked") {
       menu.close();
       permissionEpoch++;

@@ -202,11 +202,11 @@ test("floating pen directly opens the current PDF without enabling webpage annot
   const pen = original.locator('.web-ink-palette-toggle');
   await expect(pen).toBeEnabled();
   await pen.click();
-  await expect(original.getByRole('menuitem', { name: '打开当前 PDF', exact: true })).toBeVisible();
+  await expect(original.getByRole('menuitem', { name: '用 Web Ink 标注当前 PDF', exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute('aria-pressed', 'false');
   await pen.click(); await expect(original.locator('.web-ink-palette-menu')).toBeHidden();
   await pen.click();
-  await original.getByRole('menuitem', { name: '打开当前 PDF', exact: true }).click();
+  await original.getByRole('menuitem', { name: '用 Web Ink 标注当前 PDF', exact: true }).click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
   expect(context.pages()).toHaveLength(count);
@@ -337,7 +337,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   const menu = original.locator(".web-ink-palette-menu");
   await pen.click();
   await expect(menu).toBeVisible();
-  await expect(original.getByRole("menuitem", { name: "打开当前 PDF", exact: true })).toBeVisible();
+  await expect(original.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute("aria-pressed", "false");
   expect(await focusTrace()).toEqual(focusEvidence);
 
@@ -345,7 +345,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   await expect(menu).toBeHidden();
   await pen.click();
   await expect(menu).toBeVisible();
-  const openPdf = original.getByRole("menuitem", { name: "打开当前 PDF", exact: true });
+  const openPdf = original.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true });
   await openPdf.click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();

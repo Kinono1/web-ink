@@ -19,6 +19,19 @@ function fixture() {
   return { root, anchor, menu, visible, action, panel: root.querySelector<HTMLElement>('[role=menu]')! };
 }
 
+it('keeps explicit cancel reachable while the PDF action is pending', () => {
+  const f = fixture(); f.menu.toggle();
+  f.menu.update({ pending: true, status: 'Reading PDF…', items: [
+    { action: 'open-ieee', label: 'Read current PDF', icon: 'pdf' },
+    { action: 'cancel', label: 'Cancel reading', icon: 'close' },
+  ] });
+  const cancel = f.panel.querySelector<HTMLButtonElement>('[data-action=cancel]')!;
+  expect(cancel.disabled).toBe(false); cancel.click();
+  expect(f.action).toHaveBeenCalledWith('cancel', undefined);
+  f.menu.toggle(); expect(f.panel.hidden).toBe(true);
+  expect(f.action).toHaveBeenCalledTimes(1);
+});
+
 it('opens and closes without running an action, and retains errors for retry', () => {
   const f = fixture(); f.menu.toggle();
   expect(f.panel.hidden).toBe(false); expect(f.anchor.getAttribute('aria-expanded')).toBe('true');

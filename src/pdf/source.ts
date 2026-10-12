@@ -58,6 +58,7 @@ export async function readRemotePdf(
 export async function readResponseBytes(
   response: Response,
   maxBytes = MAX_PDF_BYTES,
+  onBodyBytes?: (byteLength: number) => void,
 ): Promise<Uint8Array> {
   if (!response.ok || !response.body)
     throw Error(`PDF 读取失败 / PDF request failed (${response.status}).`);
@@ -80,13 +81,14 @@ export async function readResponseBytes(
     throw new PdfResponseError("size-limit", maxBytes);
   }
   if (identity && contentLength !== undefined)
-    return readExact(response.body, contentLength);
-  return readBounded(response.body, maxBytes);
+    return readExact(response.body, contentLength, onBodyBytes);
+  return readBounded(response.body, maxBytes, onBodyBytes);
 }
 
 async function readExact(
   body: ReadableStream<Uint8Array>,
   length: number,
+  onBodyBytes?: (byteLength: number) => void,
 ): Promise<Uint8Array> {
   const reader = body.getReader();
   const bytes = new Uint8Array(length);
@@ -95,6 +97,7 @@ async function readExact(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (value.length) onBodyBytes?.(value.length);
       if (offset + value.length > length)
         throw new PdfResponseError("length-mismatch");
       bytes.set(value, offset);
@@ -114,6 +117,7 @@ async function readExact(
 async function readBounded(
   body: ReadableStream<Uint8Array>,
   maxBytes: number,
+  onBodyBytes?: (byteLength: number) => void,
 ): Promise<Uint8Array> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
@@ -122,6 +126,7 @@ async function readBounded(
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (value.length) onBodyBytes?.(value.length);
       size += value.length;
       if (size > maxBytes)
         throw new PdfResponseError("size-limit", maxBytes);

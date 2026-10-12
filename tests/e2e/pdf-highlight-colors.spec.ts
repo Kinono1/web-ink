@@ -224,6 +224,7 @@ for (const rotation of [90, 270]) {
     ];
     await rpc({ type: "annotations.put", annotation: textAnnotation("native-rotated", previewColors[0]!, hash, rects), expectedRevision: 0 });
     await expect(page.locator('[data-pdf-annotation="native-rotated"]')).toHaveCount(1);
+    await page.getByRole("button", { name: "更多", exact: true }).click();
     await page.getByRole("button", { name: "旋转页面", exact: true }).click();
     await expect(page.locator('.textLayer')).toHaveAttribute("data-main-rotation", String((rotation + 90) % 360));
     await expect(page.locator('.pdf-page[data-ready=true]')).toBeVisible();

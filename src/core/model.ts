@@ -159,6 +159,7 @@ export interface PdfHandoff {
   allowedOrigin?: string;
   expiresAt?: number;
   readerDocumentId?: string;
+  preparedToken?: string;
 }
 export interface PdfOpenResult {
   tabId: number;
@@ -246,7 +247,7 @@ export interface StorageStats {
 }
 export type Result<T> =
   | { ok: true; data: T }
-  | { ok: false; error: string; code?: string };
+  | { ok: false; error: string; code?: string; diagnostic?: import('../pdf/ieee-diagnostics').IeeePdfDiagnostic };
 export type Request =
   | { type: "runtime.health" }
   | { type: "ui.open"; target: "sidebar" | "library" | "local-pdf" }
@@ -255,6 +256,10 @@ export type Request =
   | { type: "pdf.handoff.get"; token: string }
   | { type: "pdf.handoff.revoke"; token: string }
   | { type: "pdf.returnOriginal"; token: string }
+  | { type: "pdf.cancelCurrent"; tabId?: number; windowId?: number; expectedUrl?: string }
+  | { type: "pdf.prepared.claim"; token: string }
+  | { type: "pdf.prepared.chunk"; token: string; index: number }
+  | { type: "pdf.prepared.release"; token: string }
   | { type: "annotations.list"; pageUrl?: string }
   | {
       type: "annotations.put";

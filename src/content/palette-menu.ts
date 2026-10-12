@@ -1,6 +1,6 @@
 import { ICON_PATHS, type IconName } from '../ui/icons';
 
-export type PaletteAction = 'toggle' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry';
+export type PaletteAction = 'toggle' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry' | 'cancel';
 export interface PaletteMenuItem {
   action: PaletteAction;
   label: string;
@@ -15,6 +15,8 @@ interface MenuState {
   loading?: boolean;
   pending?: boolean;
   error?: string;
+  status?: string;
+  diagnostic?: string;
 }
 
 /** A transient launcher; annotation records continue to live in the side panel. */
@@ -136,7 +138,7 @@ export function createPaletteMenu(
       const button = document.createElement('button'); button.type = 'button';
       button.setAttribute('role', 'menuitem'); button.dataset.action = item.action;
       button.dataset.primary = String(Boolean(item.primary));
-      button.disabled = Boolean(item.disabled || state.pending);
+      button.disabled = Boolean(item.disabled || (state.pending && item.action !== 'cancel'));
       const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true');
       const path = document.createElementNS(icon.namespaceURI, 'path'); path.setAttribute('d', ICON_PATHS[item.icon]); icon.append(path);
@@ -146,7 +148,7 @@ export function createPaletteMenu(
         if (event.pointerType === 'mouse' && event.button === 0) event.preventDefault();
       });
       button.addEventListener('click', event => {
-        if (!disposed && !state.pending && !button.disabled &&
+        if (!disposed && (!state.pending || item.action === 'cancel') && !button.disabled &&
           (item.action !== 'open-ieee' || event.isTrusted))
           onAction(item.action, item.candidateUrl);
       });
@@ -155,10 +157,23 @@ export function createPaletteMenu(
     if (state.loading || state.pending || state.error) {
       const message = document.createElement('p');
       message.setAttribute('role', state.error ? 'alert' : 'status');
-      message.textContent = state.error || (state.language === 'zh-CN'
+      message.textContent = state.error || state.status || (state.language === 'zh-CN'
         ? state.pending ? '正在打开…' : '正在识别页面…'
         : state.pending ? 'Opening…' : 'Checking this page…');
       panel.append(message);
+    }
+    if (state.diagnostic) {
+      const details = document.createElement('details');
+      const summary = document.createElement('summary');
+      summary.textContent = state.language === 'zh-CN' ? '诊断详情' : 'Diagnostic details';
+      const pre = document.createElement('pre'); pre.textContent = state.diagnostic;
+      pre.style.cssText = 'font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px;user-select:text';
+      const copy = document.createElement('button'); copy.type = 'button';
+      copy.textContent = state.language === 'zh-CN' ? '复制诊断摘要' : 'Copy diagnostic summary';
+      copy.addEventListener('click', () => { void navigator.clipboard.writeText(state.diagnostic!).then(() => {
+        copy.textContent = state.language === 'zh-CN' ? '已复制' : 'Copied';
+      }).catch(() => { pre.focus(); }); });
+      details.append(summary, pre, copy); panel.append(details);
     }
     if (!panel.hidden) {
       position();

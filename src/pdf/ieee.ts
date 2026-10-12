@@ -1,5 +1,12 @@
 import { PdfResponseError, readResponseBytes, verifyPdf } from "./source";
 import { isIeeeDocumentPath } from "./context";
+import {
+  createIeeePdfDiagnostic,
+  createIeeePdfReadId,
+  type IeeePdfDiagnostic,
+  type IeeePdfPhase,
+  type IeeePdfSourceKind,
+} from "./ieee-diagnostics";
 
 const IEEE_ORIGIN = "https://ieeexplore.ieee.org";
 const MAX_WRAPPER_BYTES = 1024 * 1024;
@@ -25,11 +32,24 @@ const failureMessages: Record<IeeePdfReason, string> = {
 
 export class IeeePdfError extends Error {
   readonly stage?: PdfResponseError["stage"];
-  constructor(readonly reason: IeeePdfReason, responseError?: PdfResponseError) {
+  readonly diagnostic: IeeePdfDiagnostic;
+  constructor(
+    readonly reason: IeeePdfReason,
+    responseError?: PdfResponseError,
+    diagnostic = createIeeePdfDiagnostic({ id: createIeeePdfReadId(), phase: "identify", startedAt: 0, now: 0 }),
+  ) {
     super(responseError?.message ?? failureMessages[reason]);
     this.name = "IeeePdfError";
     this.stage = responseError?.stage;
+    this.diagnostic = diagnostic;
   }
+}
+
+export interface IeeePdfReadOptions {
+  onProgress?: (diagnostic: IeeePdfDiagnostic) => void;
+  onActivity?: (byteLength: number) => void;
+  /** Only a verified top-level IEEE content script can rely on the backend's grant. */
+  sourcePage?: boolean;
 }
 
 /** Only this issuer can participate in an IEEE session handoff. */
@@ -74,59 +94,121 @@ export function parseIeeePdfSource(html: string, pageUrl: string): string {
 export async function readIeeePdf(
   input: { pageUrl: string; sourceUrl?: string },
   signal: AbortSignal,
+  options?: IeeePdfReadOptions,
 ): Promise<Uint8Array> {
+  const id = createIeeePdfReadId();
+  const startedAt = Date.now();
+  let phase: IeeePdfPhase = "identify";
+  let sourceKind: IeeePdfSourceKind = "unknown";
+  const diagnostic = (details: { status?: number; mime?: string } = {}) => createIeeePdfDiagnostic({
+    id,
+    phase,
+    startedAt,
+    sourceKind,
+    ...details,
+  });
+  const fail = (reason: IeeePdfReason, responseError?: PdfResponseError, details?: { status?: number; mime?: string }) =>
+    new IeeePdfError(reason, responseError, diagnostic(details));
+  const progress = (nextPhase: IeeePdfPhase, nextSourceKind: IeeePdfSourceKind) => {
+    phase = nextPhase;
+    sourceKind = nextSourceKind;
+    options?.onProgress?.(diagnostic());
+  };
+
   try {
+    progress("identify", "unknown");
     signal.throwIfAborted();
-    const page = ieeeSourceUrl(input.pageUrl);
-    let source = input.sourceUrl === undefined ? undefined : ieeeSourceUrl(input.sourceUrl);
+    let page: URL;
+    let source: URL | undefined;
+    try {
+      page = ieeeSourceUrl(input.pageUrl);
+      source = input.sourceUrl === undefined ? undefined : ieeeSourceUrl(input.sourceUrl);
+    } catch {
+      throw fail("source-hidden");
+    }
+    if (options?.sourcePage && !isExactIeeeSourcePage(page)) throw fail("source-hidden");
     const wrapper = page.pathname.toLowerCase() === "/stamp/stamp.jsp";
     const documentEmbed = isIeeeDocumentPath(page.pathname) && source !== undefined;
-    if (!wrapper && !documentEmbed && source?.href !== page.href) throw new IeeePdfError("source-hidden");
+    if (!wrapper && !documentEmbed && source?.href !== page.href) throw fail("source-hidden");
     if (!source) {
-      const response = await fetchIeee(page, signal);
-      const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES);
+      progress("wrapper", "wrapper");
+      const response = await fetchIeee(page, signal, options?.sourcePage === true, diagnostic);
+      const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES, options?.onActivity);
       signal.throwIfAborted();
-      source = ieeeSourceUrl(parseIeeePdfSource(new TextDecoder().decode(bytes), page.href));
+      try {
+        const wrapperUrl = response.url ? ieeeSourceUrl(response.url) : page;
+        source = ieeeSourceUrl(parseIeeePdfSource(new TextDecoder().decode(bytes), wrapperUrl.href));
+      } catch {
+        throw fail("source-hidden");
+      }
     }
-    const response = await fetchIeee(source, signal);
+    progress("file", "file");
+    const response = await fetchIeee(source, signal, options?.sourcePage === true, diagnostic);
     const mime = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase();
     if (mime === "text/html" || mime === "application/xhtml+xml") {
       await response.body?.cancel().catch(() => undefined);
-      throw new IeeePdfError("not-pdf");
+      throw fail("not-pdf", undefined, { status: response.status, mime });
     }
-    const bytes = await readResponseBytes(response);
+    const bytes = await readResponseBytes(response, undefined, options?.onActivity);
     signal.throwIfAborted();
-    try { return verifyPdf(bytes); } catch { throw new IeeePdfError("not-pdf"); }
+    progress("validate", "file");
+    try { return verifyPdf(bytes); } catch { throw fail("not-pdf", undefined, { status: response.status, mime }); }
   } catch (error) {
     signal.throwIfAborted();
     if (error instanceof IeeePdfError || (error instanceof Error && error.name === "AbortError")) throw error;
-    if (error instanceof PdfResponseError) throw new IeeePdfError("network", error);
+    if (error instanceof PdfResponseError) throw fail("network", error);
     // redirect:error and a network failure both reject opaquely; do not guess.
-    throw new IeeePdfError("network");
+    throw fail("network");
   }
 }
 
-async function fetchIeee(url: URL, signal: AbortSignal): Promise<Response> {
-  if (!(await chrome.permissions.contains({ origins: [`${IEEE_ORIGIN}/*`] })))
-    throw new IeeePdfError("site-permission");
+function isExactIeeeSourcePage(page: URL): boolean {
+  try {
+    return window === window.top && window.location.origin === IEEE_ORIGIN &&
+      ieeeSourceUrl(window.location.href).href === page.href;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchIeee(
+  url: URL,
+  signal: AbortSignal,
+  sourcePage: boolean,
+  diagnostic: (details?: { status?: number; mime?: string }) => IeeePdfDiagnostic,
+): Promise<Response> {
+  if (!sourcePage && !(await chrome.permissions.contains({ origins: [`${IEEE_ORIGIN}/*`] })))
+    throw new IeeePdfError("site-permission", undefined, diagnostic());
   signal.throwIfAborted();
   const response = await fetch(url, {
-    signal, credentials: "include", cache: "no-store", redirect: "error",
+    signal,
+    credentials: "include",
+    cache: "no-store",
+    // Same-origin makes the browser reject a cross-origin redirect before its
+    // next request; the final-URL check below is only a second boundary.
+    ...(sourcePage ? { mode: "same-origin" as const, redirect: "follow" as const } : { redirect: "error" as const }),
   });
   let reason: IeeePdfReason | undefined;
-  if (response.redirected || response.type === "opaqueredirect" || [300, 301, 302, 303, 307, 308].includes(response.status))
+  if (response.type === "opaqueredirect" || [300, 301, 302, 303, 307, 308].includes(response.status))
     reason = "redirect-blocked";
+  if (!sourcePage && response.redirected) reason = "redirect-blocked";
   if (response.url) {
     try {
-      if (ieeeSourceUrl(response.url).href !== url.href) reason = "redirect-blocked";
+      const finalUrl = ieeeSourceUrl(response.url);
+      if (!sourcePage && finalUrl.href !== url.href) reason = "redirect-blocked";
     } catch { reason = "redirect-blocked"; }
+  } else if (sourcePage && response.redirected) {
+    reason = "redirect-blocked";
   }
   if (!reason && response.status === 401) reason = "login-required";
   if (!reason && response.status === 403) reason = "access-restricted";
   if (!reason && !response.ok) reason = "network";
   if (reason) {
     await response.body?.cancel().catch(() => undefined);
-    throw new IeeePdfError(reason);
+    throw new IeeePdfError(reason, undefined, diagnostic({
+      status: response.status,
+      mime: response.headers.get("content-type") ?? undefined,
+    }));
   }
   return response;
 }
