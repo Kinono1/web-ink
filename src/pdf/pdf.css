@@ -46,6 +46,7 @@
   display: flex;
   flex-shrink: 0;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 8px;
   height: 52px;
   min-height: 52px;
@@ -108,7 +109,15 @@
   background: var(--ink-panel);
   box-shadow: var(--ink-elevation-float);
 }
-.pdf-more-menu > button {
+.pdf-more-group {
+  display: grid;
+  gap: 4px;
+}
+.pdf-more-group + .pdf-more-group {
+  padding-top: 8px;
+  border-top: 1px solid var(--ink-separator);
+}
+.pdf-more-group > button {
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -118,14 +127,21 @@
   font-weight: 400;
   text-align: left;
 }
-.pdf-more-menu > button:hover { background: var(--ink-fill); }
+.pdf-more-group > button:hover { background: var(--ink-fill); }
 .pdf-more-zoom { display: none; }
 .pdf-area-color {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding-left: 8px;
-  color: var(--ink-secondary);
+  gap: 4px;
+  padding: 4px 8px;
+}
+.pdf-selection .pdf-swatch, .pdf-area-color .pdf-swatch {
+  width: 36px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
 }
 .pdf-workspace { position: relative; display: flex; flex: 1; min-height: 0; }
 .pdf-pages {
@@ -205,14 +221,6 @@
 .pdf-selection button, .pdf-mark-menu button, .pdf-undo button { background: transparent; }
 .pdf-selection button:hover, .pdf-mark-menu button:hover, .pdf-undo button:hover {
   background: var(--ink-fill);
-}
-.pdf-selection .pdf-swatch {
-  width: 36px;
-  height: 36px;
-  min-height: 36px;
-  padding: 0;
-  border-radius: 50%;
-  box-shadow: inset 0 0 0 1px rgb(0 0 0 / 12%);
 }
 .pdf-mark-menu span, .pdf-undo span { padding: 0 8px; color: var(--ink-secondary); }
 .pdf-notes {
@@ -459,7 +467,7 @@
 
 .pdf-previous .icon { transform: rotate(180deg); }
 .pdf-toolbar input.pdf-zoom { width: 76px; padding: 4px; text-align: center; color: var(--ink-text); }
-.pdf-more-menu > .pdf-more-view, .pdf-more-menu > .pdf-more-page { display: none; }
+.pdf-more-menu .pdf-more-view, .pdf-more-menu .pdf-more-page { display: none; }
 .pdf-find-tool { position: relative; flex-shrink: 0; }
 .pdf-find {
   position: absolute;
@@ -480,7 +488,7 @@
 @media (max-width: 799px) {
   .pdf-toolbar > .pdf-view-action, .pdf-zoom-controls, .pdf-control-label { display: none; }
   .pdf-more-zoom { display: flex; justify-content: center; }
-  .pdf-more-menu > .pdf-more-view { display: flex; }
+  .pdf-more-menu .pdf-more-view { display: flex; }
 }
 @media (max-width: 599px) {
   .pdf-find { position: fixed; top: 56px; right: 8px; }
@@ -493,6 +501,6 @@
 
 @media (max-width: 399px) {
   .pdf-toolbar > .pdf-page-action { display: none; }
-  .pdf-more-menu > .pdf-more-page { display: flex; }
+  .pdf-more-menu .pdf-more-page { display: flex; }
   .pdf-more-page:first-of-type .icon { transform: rotate(180deg); }
 }

@@ -121,7 +121,7 @@ async function openThroughSidepanel(ieee: Page): Promise<void> {
   await activeTab(ieee);
   const action = control.locator("button.pdf-open-current");
   await expect(action).toBeVisible();
-  await expect(action).toHaveText("使用 IEEE 登录状态打开");
+  await expect(action).toHaveText("用 Web Ink 标注当前 PDF");
   await action.click();
   await expect(ieee).toHaveURL(new RegExp(`^chrome-extension://${extensionId}/pdf\\.html\\?`));
   await expect(ieee.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
@@ -266,7 +266,7 @@ test("sidepanel IEEE session handoff keeps the ticket out of reader and persiste
   const ieeeFetch = requests.find((request) =>
     request.url === DOWNLOAD && request.resourceType === "fetch",
   );
-  expect(ieeeFetch, "The reader must use a browser-session fetch for the observed IEEE source").toBeDefined();
+  expect(ieeeFetch, "The original source must prepare one browser-session fetch before switching").toBeDefined();
   expect(ieeeFetch?.cookie).toContain("ieee-session=granted");
 
   const record = await selectAndHighlight(ieee);
@@ -305,7 +305,7 @@ test("IEEE content menu delegates the site-session grant to the background and o
   const pen = ieee.locator(".web-ink-palette-toggle");
   await expect(pen).toBeEnabled();
   await pen.click();
-  const action = ieee.getByRole("menuitem", { name: "使用 IEEE 登录状态打开", exact: true });
+  const action = ieee.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true });
   await expect(action).toBeVisible();
   await action.click();
   await expect(ieee).toHaveURL(new RegExp(`^chrome-extension://${extensionId}/pdf\\.html\\?`));
@@ -358,10 +358,12 @@ test("unavailable, HTML, redirect, and expired IEEE grants leave clear recovery 
     await ieee.goto(`${WRAPPER}&case=${mode}`);
     await activeTab(ieee);
     const action = control.locator("button.pdf-open-current");
-    await expect(action).toHaveText("使用 IEEE 登录状态打开");
+    await expect(action).toHaveText("用 Web Ink 标注当前 PDF");
     await action.click();
-    await expect(ieee.getByRole("alert").first()).toBeVisible();
-    await expect(ieee.getByLabel("选择本地 PDF", { exact: true })).toBeEnabled();
+    await expect(control.getByRole("alert").first()).toBeVisible();
+    await expect(ieee).toHaveURL(`${WRAPPER}&case=${mode}`);
+    await expect(action).toBeEnabled();
+    expect(await rpc({ type: 'annotations.list' })).toEqual([]);
     expect(ieee.url()).not.toContain(TICKET);
     await ieee.close();
   }

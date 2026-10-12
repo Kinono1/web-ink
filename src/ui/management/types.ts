@@ -11,5 +11,7 @@ export type NoticeMessage = {
   pageUrl?: string;
   annotation?: Annotation;
   deletedId?: string;
+  diagnostic?: import('../../pdf/ieee-diagnostics').IeeePdfDiagnostic;
+  stage?: string;
 };
 

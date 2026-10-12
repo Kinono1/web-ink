@@ -7,7 +7,7 @@ import { validateRuntimeIntegrity } from './integrity.mjs';
 export { createRuntimeIntegrity, validateRuntimeIntegrity } from './integrity.mjs';
 
 export const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const roots = new Set(['manifest.json', 'background.js', 'engine.js', 'library.html', 'pdf.html', 'sidepanel.html', 'build-info.json', 'runtime-integrity.json']);
+const roots = new Set(['manifest.json', 'background.js', 'engine.js', 'ieee-prepare.js', 'library.html', 'pdf.html', 'sidepanel.html', 'build-info.json', 'runtime-integrity.json']);
 const folders = new Set(['assets', 'chunks', 'content-scripts', 'icon', 'licenses', 'pdfjs']);
 
 export async function runtimeFiles(root) {

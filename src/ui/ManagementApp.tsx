@@ -24,6 +24,8 @@ import { PdfSidebar } from "./PdfSidebar";
 import { AnnotationPresetEditor } from "./AnnotationPresets";
 import { readAnnotationPresets, saveAnnotationPresets, type AnnotationPreset } from "../core/annotation-presets";
 import { StoragePanel } from "./StoragePanel";
+import { pdfPreparationLabel, ieeeFailureMessage, formatIeeeDiagnostic } from '../pdf/ieee-status';
+import type { IeeePdfDiagnostic } from '../pdf/ieee-diagnostics';
 import { applyPageTheme, installPageTheme } from "./page-theme";
 import "./management.css";
 import "./sidepanel.css";
@@ -108,6 +110,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [overwrite, setOverwrite] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
   const [openingPdf, setOpeningPdf] = useState(false);
+  const [preparationStage, setPreparationStage] = useState<string>();
+  const [ieeeDiagnostic, setIeeeDiagnostic] = useState<IeeePdfDiagnostic>();
   const [moreOpen, setMoreOpen] = useState(false);
   const pdfOpenPending = useRef(false);
   const moreMenu = useRef<HTMLDetailsElement>(null);
@@ -272,6 +276,10 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   }, [mode, refreshContext]);
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
+      if (message.type === 'pdf.preparation.changed' && mode === 'sidepanel' && message.tabId === tab.id && pdfOpenPending.current) {
+        setPreparationStage(message.stage ?? message.diagnostic?.phase);
+        return;
+      }
       if (message.type === "pdf.reader.changed" && mode === "sidepanel") {
         void refreshContext();
         return;
@@ -612,6 +620,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       return;
     pdfOpenPending.current = true;
     setOpeningPdf(true);
+    setPreparationStage('identify'); setIeeeDiagnostic(undefined);
     void request<PdfOpenResult>({
       type: "pdf.openCurrent",
       tabId: tab.id,
@@ -624,13 +633,15 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         const message = cause instanceof Error ? cause.message : String(cause);
         setError(
           cause instanceof RequestError && cause.code
-            ? message
+            ? ieeeFailureMessage(cause.code, language) ?? message
             : `${message} ${t.refreshPdfHint}`,
         );
+        if (cause instanceof RequestError) setIeeeDiagnostic(cause.diagnostic);
       })
       .finally(() => {
         pdfOpenPending.current = false;
         setOpeningPdf(false);
+        setPreparationStage(undefined);
       });
   };
   const openIeeeSessionPdf = async (candidateUrl?: string) => {
@@ -792,6 +803,16 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           closeLabel={t.close}
         />
       ) : null}
+      {error && ieeeDiagnostic && <details className="ieee-diagnostic">
+        <summary>{language === 'zh-CN' ? '诊断详情' : 'Diagnostic details'}</summary>
+        <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12 }}>
+          {formatIeeeDiagnostic(ieeeDiagnostic, chrome.runtime.getManifest().version)}</pre>
+        <button className="quiet" onClick={() => {
+          void navigator.clipboard.writeText(formatIeeeDiagnostic(ieeeDiagnostic, chrome.runtime.getManifest().version))
+            .then(() => setNotice(language === 'zh-CN' ? '诊断摘要已复制' : 'Diagnostic summary copied'))
+            .catch(() => setNotice(language === 'zh-CN' ? '请手动选择上面的摘要复制' : 'Select the summary above to copy it'));
+        }}>{language === 'zh-CN' ? '复制诊断摘要' : 'Copy diagnostic summary'}</button>
+      </details>}
       {notice ? (
         <Alert
           kind="notice"
@@ -851,7 +872,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                   ) : (
                     <button className="primary pdf-open-current" disabled={openingPdf}
                       onClick={() => void openIeeeSessionPdf(ieeeCandidates[0]?.url)}>
-                      <Icon name="pdf" />{openingPdf ? t.openingPdf : t.openIeeeSessionPdf}
+                      <Icon name="pdf" />{openingPdf ? pdfPreparationLabel(preparationStage, language) : t.openIeeeSessionPdf}
                     </button>
                   )}
                   {publicCandidates.map((candidate) => (
@@ -887,9 +908,13 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                     if (isIeeeSession) void openIeeeSessionPdf(ieeeCandidates[0]?.url);
                     else openCurrentPdf(pdfContext?.candidates[0]?.url);
                   }}>
-                  <Icon name="pdf" />{openingPdf ? t.openingPdf : isIeeeSession ? t.openIeeeSessionPdf : t.openCurrentPdf}
+                  <Icon name="pdf" />{openingPdf ? isIeeeSession ? pdfPreparationLabel(preparationStage, language) : t.openingPdf : isIeeeSession ? t.openIeeeSessionPdf : t.openCurrentPdf}
                 </button>
               )}
+              {openingPdf && isIeeeSession && <button className="quiet" onClick={() => {
+                void request({ type: 'pdf.cancelCurrent', tabId: tab.id, ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}), ...(tab.url ? { expectedUrl: tab.url } : {}) })
+                  .catch(cause => setError(cause instanceof Error ? cause.message : String(cause)));
+              }}>{language === 'zh-CN' ? '取消读取' : 'Cancel reading'}</button>}
               {!pdfContext?.currentReader && pdfContext?.candidates.length !== undefined && pdfContext.candidates.length <= 1 ? (
                 <button className="quiet pdf-local-link" onClick={openLocalPdf}>{t.chooseLocalPdf}</button>
               ) : null}

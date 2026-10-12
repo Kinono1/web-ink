@@ -756,7 +756,7 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
     await chrome.tabs.update(tab!.id!, { active: true });
     return tab!.id!;
   }, source);
-  const button = page.getByRole("button", { name: "在当前页开始标注", exact: true });
+  const button = page.getByRole("button", { name: "用 Web Ink 标注当前 PDF", exact: true });
   await expect(button).toBeVisible();
   await expect(page.getByRole("switch")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "图片绘制" })).toHaveCount(0);
@@ -934,7 +934,7 @@ test("fit width uses the PDF viewport and rotating preserves annotation coordina
   const targetBefore = annotation.target.rects;
   const pageBefore = await page.locator(".pdf-page").first().boundingBox();
   await page.setViewportSize({ width: 1280, height: 900 });
-  await expect(page.locator(".pdf-toolbar").getByRole("button", { name: "旋转页面", exact: true })).toBeVisible();
+  await expect(page.locator(".pdf-toolbar").getByRole("button", { name: "旋转页面", exact: true })).toHaveCount(0);
   await viewAction("旋转页面");
   await expect(page.locator(".pdf-page[data-ready=true]")).toBeVisible();
   const pageAfter = await page.locator(".pdf-page").first().boundingBox();

@@ -374,7 +374,7 @@ describe("management UI", () => {
 
     const host = await mount("sidepanel");
     const action = host.querySelector<HTMLButtonElement>(".pdf-open-current")!;
-    expect(action.textContent).toContain("使用 IEEE 登录状态打开");
+    expect(action.textContent).toContain("用 Web Ink 标注当前 PDF");
 
     await act(async () => action.click());
     expect(sent).toHaveBeenCalledWith({
@@ -456,7 +456,7 @@ describe("management UI", () => {
     const host = await mount("sidepanel");
     const choices = host.querySelectorAll<HTMLButtonElement>(".pdf-source-choice");
     expect(choices).toHaveLength(2);
-    expect(choices[1]!.textContent).toContain("使用 IEEE 登录状态打开");
+    expect(choices[1]!.textContent).toContain("用 Web Ink 标注当前 PDF");
 
     await act(async () => choices[1]!.click());
     expect(sent).toHaveBeenCalledWith({
@@ -497,7 +497,7 @@ describe("management UI", () => {
 
     const host = await mount("sidepanel");
     expect(host.querySelector<HTMLButtonElement>(".pdf-open-current")?.textContent)
-      .toContain("使用 IEEE 登录状态打开");
+      .toContain("用 Web Ink 标注当前 PDF");
     const publicChoice = host.querySelector<HTMLButtonElement>(".pdf-source-choice")!;
     expect(publicChoice.textContent).toContain(second);
 
@@ -511,7 +511,7 @@ describe("management UI", () => {
     });
     expect(requestPermission).not.toHaveBeenCalled();
     sent.mockClear();
-    const header = host.querySelector<HTMLButtonElement>('.header-actions button[aria-label="使用 IEEE 登录状态打开"]')!;
+    const header = host.querySelector<HTMLButtonElement>('.header-actions button[aria-label="用 Web Ink 标注当前 PDF"]')!;
     await act(async () => header.click());
     expect(sent).toHaveBeenCalledWith({
       type: "pdf.openCurrent", tabId: 7, windowId: 1, expectedUrl: ieee, accessMode: "site-session",
@@ -666,7 +666,7 @@ describe("management UI", () => {
     });
 
     const host = await mount("sidepanel");
-    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("在当前页开始标注");
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("用 Web Ink 标注当前 PDF");
     const updatedSubscriptions = vi.mocked(chrome.tabs.onUpdated.addListener).mock.calls.length;
     const activatedSubscriptions = vi.mocked(chrome.tabs.onActivated.addListener).mock.calls.length;
     const updatedRemovals = vi.mocked(chrome.tabs.onUpdated.removeListener).mock.calls.length;
@@ -677,7 +677,7 @@ describe("management UI", () => {
       fireTabUpdated!(8, { url: ieeeUrl });
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("使用 IEEE 登录状态打开");
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("用 Web Ink 标注当前 PDF");
 
     // Tab subscriptions must stay live across the context-driven render; otherwise an
     // activation that lands during listener replacement can leave stale UI indefinitely.
@@ -691,7 +691,7 @@ describe("management UI", () => {
       fireTabActivated!({ tabId: 9, windowId: 1 });
       await new Promise((resolve) => setTimeout(resolve, 30));
     });
-    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("在当前页开始标注");
+    expect(host.querySelector(".pdf-open-current")?.textContent).toContain("用 Web Ink 标注当前 PDF");
     expect(sent).toHaveBeenCalledWith({
       type: "pdf.context.get",
       tabId: 9,

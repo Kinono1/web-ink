@@ -1,6 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { PdfHandoff, PdfOpenResult, PdfTabContext, Result } from '../src/core/model';
 
+let preparationFailure: Error | undefined;
+let preparationCheck: (() => Promise<void>) | undefined;
+vi.mock('../src/background/ieee-preparation', () => ({
+  createIeeePreparation: () => ({
+    prepare: async (_tab: number, _document: string, _page: string, _source: string, guard: () => Promise<void>) => {
+      await preparationCheck?.();
+      if (preparationFailure) throw preparationFailure;
+      await guard();
+      return { token: '00000000-0000-4000-8000-000000000001', byteLength: 21, chunks: 1, hash: 'a'.repeat(64) };
+    },
+    cancelTab: () => {}, releaseTab: () => {}, getStore: async () => ({ releaseTab: () => {}, claim: () => ({ byteLength: 21, chunks: 1, hash: 'a'.repeat(64) }) }),
+  }),
+}));
+
 const ID = 'webinkid';
 const READER = `chrome-extension://${ID}/pdf.html`;
 const ORIGINAL = 'https://papers.example.test/paper.pdf#page=3';
@@ -70,13 +84,41 @@ const inspect = () => rpc<PdfTabContext>({ type: 'pdf.context.get', tabId: 7, ex
 const open = (extra: object = {}) => rpc<PdfOpenResult>({ type: 'pdf.openCurrent', tabId: 7, expectedUrl: tabs.get(7)!.url, ...extra });
 
 describe('IEEE site-session authority', () => {
-  beforeEach(() => { chrome.permissions.contains = (async () => true) as typeof chrome.permissions.contains; });
+  beforeEach(() => { preparationFailure = undefined; preparationCheck = undefined; chrome.permissions.contains = (async () => true) as typeof chrome.permissions.contains; });
   const ieee = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626';
   const download = 'https://ieeexplore.ieee.org/observed-file?ticket=fixture';
   const openWithSource = async () => {
     setUrl(ieee); visibleEmbeds(`<iframe src="${download}"></iframe>`);
     return value(await open({ accessMode: 'site-session' }));
   };
+  it('retains the readable original page when source preparation fails', async () => {
+    setUrl(ieee);
+    preparationFailure = Error('Cannot read full PDF');
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false });
+    expect(updates).toHaveLength(0);
+    expect(tabs.get(7)!.url).toBe(ieee);
+    expect(handoffs()).toHaveLength(0);
+  });
+  it('does not navigate if the original document changes while preparing', async () => {
+    setUrl(ieee);
+    preparationCheck = async () => { setUrl(ieee, 'replacement-source'); };
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toHaveLength(0);
+  });
+  it('honors cancellation after byte preparation while return context is being saved', async () => {
+    setUrl(ieee);
+    afterWrite = async () => { expect(await rpc({ type: 'pdf.cancelCurrent', tabId: 7, expectedUrl: ieee })).toMatchObject({ ok: true }); };
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'CANCELLED' });
+    expect(updates).toHaveLength(0);
+    expect(handoffs()).toHaveLength(0);
+  });
+  it('rejects a replacement reader that bypasses the already pinned handoff document', async () => {
+    const opened = await openWithSource();
+    value(await rpc({ type: 'pdf.handoff.get', token: opened.token }, readerSender()));
+    loadedReader(7, opened.readerUrl, 'replacement-reader-document');
+    expect(await rpc({ type: 'pdf.prepared.claim', token: opened.token }, readerSender()))
+      .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+  });
   it('grants an observed IEEE wrapper without putting the session source in the reader URL', async () => {
     setUrl(ieee);
     const opened = value(await open({ accessMode: 'site-session' }));

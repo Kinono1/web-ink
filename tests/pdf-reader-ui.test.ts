@@ -33,9 +33,7 @@ vi.mock("../src/pdf/export-verify", () => ({ verifyPdfExport: exportIo.verify })
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
   return { ...actual, readIeeePdf: async (input: { pageUrl: string; sourceUrl?: string }) => {
-    io.ieeeReads.push(input);
-    if (io.ieeeFailure) throw new actual.IeeePdfError(io.ieeeFailure);
-    return new Uint8Array([37, 80, 68, 70]);
+    throw Error('Reader must consume prepared bytes, not download IEEE again');
   } };
 });
 vi.mock("../src/pdf/source", async (original) => {
@@ -245,6 +243,14 @@ beforeEach(() => {
           case "annotations.query": return { ok: true, data: { items: [] } };
           case "page.mode.get": return { ok: true, data: { enabled: false } };
           case "pdf.handoff.get": return { ok: true, data: handoff };
+          case 'pdf.prepared.claim': {
+            if (io.ieeeFailure) return { ok: false, error: 'Prepared PDF unavailable. Return to IEEE and open again.', code: 'PDF_SOURCE_UNAVAILABLE' };
+            if (!handoff) return { ok: false, error: 'Missing prepared file' };
+            io.ieeeReads.push({ pageUrl: handoff.returnUrl, ...(handoff.sourceUrl ? { sourceUrl: handoff.sourceUrl } : {}) });
+            return { ok: true, data: { token: message.token, byteLength: 5, chunks: 1, hash: io.hash } };
+          }
+          case 'pdf.prepared.chunk': return { ok: true, data: 'JVBERi0=' };
+          case 'pdf.prepared.release': return { ok: true, data: undefined };
           case "pdf.returnOriginal": return returnError ? { ok: false, error: returnError, code: returnErrorCode } : { ok: true, data: { tabId: 8, url: publicSource } };
           case "annotations.put": {
             if (putGate) return putGate.promise;
@@ -302,7 +308,7 @@ async function mount(query = "", local = true) {
   }
 }
 
-it('reads an IEEE session only from the claimed handoff and persists no download ticket', async () => {
+it('consumes the prepared IEEE session without downloading again or persisting a ticket', async () => {
   const pageUrl = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=11643626';
   const download = 'https://ieeexplore.ieee.org/download?ticket=private';
   handoff = { token: TOKEN, tabId: 8, returnUrl: pageUrl, sourceUrl: download, accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 600_000 };
@@ -368,7 +374,7 @@ it('does not try public fetch when an IEEE reader loses its session handoff', as
   expect(host.querySelector('[role="alert"]')?.textContent).toContain('返回 IEEE');
 });
 
-it.each([['network', '重试读取'], ['login-required', '返回 IEEE']] as const)('offers the relevant recovery for IEEE %s without a misleading permission action', async (failure, label) => {
+it.each([['network', '返回 IEEE'], ['login-required', '返回 IEEE']] as const)('returns to IEEE after a prepared session becomes unavailable (%s)', async (failure, label) => {
   handoff = { token: TOKEN, tabId: 8, returnUrl: 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=1', accessMode: 'site-session', allowedOrigin: 'https://ieeexplore.ieee.org', expiresAt: Date.now() + 60000 };
   io.ieeeFailure = failure;
   await mount(`?handoff=${TOKEN}`, false);
@@ -841,6 +847,7 @@ describe("PDF reader workspace", () => {
     await act(async () => closeGate.resolve());
     await settle();
     expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    await click("更多");
     expect(button("旋转页面").disabled).toBe(false);
   });
 
@@ -858,6 +865,7 @@ describe("PDF reader workspace", () => {
     await act(async () => closeGate.resolve());
     await settle();
     expect(host.querySelector(".pdf-app")?.getAttribute("data-focus")).toBe("false");
+    await click("更多");
     expect(button("旋转页面").disabled).toBe(false);
   });
 
@@ -1776,15 +1784,57 @@ describe("PDF reader workspace", () => {
     expect(puts()).toHaveLength(0);
   });
 
-  it("fits the current page width and exposes rotation in the toolbar", async () => {
+  it("fits the current page width and rotates from More", async () => {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, get: () => 300 });
     await mount();
     await click("适合宽度");
     expect(host.querySelector<HTMLInputElement>('[aria-label="缩放比例"]')?.value).toBe("50%");
     expect(host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')?.style.width).toBe("300px");
+    await click("更多");
     expect(host.querySelector('.pdf-toolbar [aria-label="旋转页面"]')).toBeTruthy();
     await click("旋转页面");
     expect(host.querySelector<HTMLElement>('[data-page="1"] .pdf-page')?.style.width).toBe("300px");
+  });
+
+  it("keeps rotation out of the closed toolbar and toggles it from More", async () => {
+    await mount();
+    const toolbar = host.querySelector(".pdf-toolbar")!;
+    const trigger = button("更多");
+
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(toolbar.querySelector('[aria-label="旋转页面"]')).toBeNull();
+    expect(host.querySelector(".pdf-more-menu")).toBeNull();
+
+    await click("更多");
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(host.querySelector('[role="group"][aria-label="阅读"] [aria-label="旋转页面"]')).toBeTruthy();
+
+    await click("更多");
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    expect(host.querySelector(".pdf-more-menu")).toBeNull();
+  });
+
+  it("shows the five area-color swatches only while area annotation is active", async () => {
+    await mount();
+    await click("更多");
+    expect(host.querySelector('[aria-label="标注颜色"]')).toBeNull();
+    expect(host.querySelectorAll('[aria-label^="标注颜色 #"]')).toHaveLength(0);
+
+    await click("区域标注");
+    await click("更多");
+    const colors = [...host.querySelectorAll<HTMLButtonElement>('[aria-label^="标注颜色 #"]')]
+      .map((swatch) => swatch.getAttribute("aria-label"));
+    expect(colors).toEqual([
+      "标注颜色 #facd5a",
+      "标注颜色 #7cc868",
+      "标注颜色 #69b0f1",
+      "标注颜色 #fb5c89",
+      "标注颜色 #c885da",
+    ]);
+
+    await click("文字选择");
+    await click("更多");
+    expect(host.querySelectorAll('[aria-label^="标注颜色 #"]')).toHaveLength(0);
   });
 
   it("retains the same page and relative reading position during zoom", async () => {

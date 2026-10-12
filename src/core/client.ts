@@ -3,6 +3,7 @@ export class RequestError extends Error {
   constructor(
     message: string,
     readonly code?: string,
+    readonly diagnostic?: import('../pdf/ieee-diagnostics').IeeePdfDiagnostic,
   ) {
     super(message);
     this.name = "RequestError";
@@ -17,7 +18,7 @@ export async function request<T>(message: Request): Promise<T> {
     throw new Error(
       "Extension unavailable. Reload this page. / 扩展不可用，请刷新网页。",
     );
-  if (!response.ok) throw new RequestError(response.error, response.code);
+  if (!response.ok) throw new RequestError(response.error, response.code, response.diagnostic);
   return response.data;
 }
 

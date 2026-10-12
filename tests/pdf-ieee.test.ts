@@ -39,6 +39,102 @@ it("accepts a validated direct-source page without a wrapper or .pdf suffix", as
   expect(Array.from(await read({ pageUrl: sourceUrl, sourceUrl }))).toEqual(Array.from(pdf));
 });
 
+it("reports direct IEEE reading phases without exposing the observed source URL", async () => {
+  provideFetch([new Response(pdf)]);
+  vi.stubGlobal("crypto", { randomUUID: () => "00000000-0000-4000-8000-000000000003" });
+  const now = vi.spyOn(Date, "now")
+    .mockReturnValueOnce(100)
+    .mockReturnValueOnce(100)
+    .mockReturnValueOnce(110)
+    .mockReturnValueOnce(120);
+  const progress: unknown[] = [];
+
+  try {
+    await readIeeePdf({ pageUrl, sourceUrl }, new AbortController().signal, {
+      onProgress: diagnostic => progress.push(diagnostic),
+    });
+  } finally {
+    now.mockRestore();
+  }
+
+  expect(progress).toEqual([
+    { id: "00000000-0000-4000-8000-000000000003", version: 1, phase: "identify", elapsedMs: 0, sourceKind: "unknown" },
+    { id: "00000000-0000-4000-8000-000000000003", version: 1, phase: "file", elapsedMs: 10, sourceKind: "file" },
+    { id: "00000000-0000-4000-8000-000000000003", version: 1, phase: "validate", elapsedMs: 20, sourceKind: "file" },
+  ]);
+  expect(JSON.stringify(progress)).not.toContain("ticket=fixture");
+});
+
+it("reports wrapper parsing before the observed file read", async () => {
+  provideFetch([new Response('<iframe src="/observed-file?ticket=fixture"></iframe>'), new Response(pdf)]);
+  vi.stubGlobal("crypto", { randomUUID: () => "00000000-0000-4000-8000-000000000005" });
+  const now = vi.spyOn(Date, "now")
+    .mockReturnValueOnce(100)
+    .mockReturnValueOnce(100)
+    .mockReturnValueOnce(110)
+    .mockReturnValueOnce(120)
+    .mockReturnValueOnce(130);
+  const progress: unknown[] = [];
+
+  try {
+    await readIeeePdf({ pageUrl }, new AbortController().signal, {
+      onProgress: diagnostic => progress.push(diagnostic),
+    });
+  } finally {
+    now.mockRestore();
+  }
+
+  expect(progress).toEqual([
+    { id: "00000000-0000-4000-8000-000000000005", version: 1, phase: "identify", elapsedMs: 0, sourceKind: "unknown" },
+    { id: "00000000-0000-4000-8000-000000000005", version: 1, phase: "wrapper", elapsedMs: 10, sourceKind: "wrapper" },
+    { id: "00000000-0000-4000-8000-000000000005", version: 1, phase: "file", elapsedMs: 20, sourceKind: "file" },
+    { id: "00000000-0000-4000-8000-000000000005", version: 1, phase: "validate", elapsedMs: 30, sourceKind: "file" },
+  ]);
+  expect(JSON.stringify(progress)).not.toContain("ticket=fixture");
+});
+
+it("adds a sanitized file diagnostic to an opaque network rejection", async () => {
+  vi.stubGlobal("chrome", { permissions: { contains: async () => true } });
+  vi.stubGlobal("crypto", { randomUUID: () => "00000000-0000-4000-8000-000000000004" });
+  vi.stubGlobal("fetch", vi.fn(async () => { throw TypeError(`Fetch failed for ${sourceUrl}`); }));
+
+  const error = await read().catch((failure) => failure);
+
+  expect(error).toMatchObject({
+    reason: "network",
+    diagnostic: { id: "00000000-0000-4000-8000-000000000004", version: 1, phase: "file", sourceKind: "file" },
+  });
+  expect(JSON.stringify(error)).not.toContain("fixture");
+  expect(JSON.stringify(error)).not.toContain(sourceUrl);
+});
+
+it("reads from the exact top-level IEEE source page without querying extension permissions", async () => {
+  const sourcePage = { location: { origin: "https://ieeexplore.ieee.org", href: pageUrl } };
+  Object.assign(sourcePage, { top: sourcePage });
+  vi.stubGlobal("window", sourcePage);
+  const { contains } = provideFetch([new Response(pdf)]);
+
+  expect(Array.from(await readIeeePdf({ pageUrl, sourceUrl }, new AbortController().signal, { sourcePage: true })))
+    .toEqual(Array.from(pdf));
+  expect(contains).not.toHaveBeenCalled();
+});
+
+it.each([
+  { name: "a different origin", origin: "https://example.test", href: pageUrl, topLevel: true },
+  { name: "a different IEEE page", origin: "https://ieeexplore.ieee.org", href: sourceUrl, topLevel: true },
+  { name: "an IEEE subframe", origin: "https://ieeexplore.ieee.org", href: pageUrl, topLevel: false },
+])("rejects sourcePage reading from $name before any request", async ({ origin, href, topLevel }) => {
+  const sourcePage = { location: { origin, href } };
+  Object.assign(sourcePage, { top: topLevel ? sourcePage : {} });
+  vi.stubGlobal("window", sourcePage);
+  const { contains, fetcher } = provideFetch([]);
+
+  await expect(readIeeePdf({ pageUrl, sourceUrl }, new AbortController().signal, { sourcePage: true }))
+    .rejects.toMatchObject({ reason: "source-hidden" });
+  expect(contains).not.toHaveBeenCalled();
+  expect(fetcher).not.toHaveBeenCalled();
+});
+
 it.each([
   'https://ieeexplore.ieee.org/document/11643626',
   'https://ieeexplore.ieee.org/document/11643626/',
