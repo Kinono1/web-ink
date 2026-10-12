@@ -25,8 +25,15 @@ export function installIeeePreparation(): () => void {
         const health = await chrome.runtime.sendMessage({ type: 'runtime.health' }) as Result<RuntimeHealth>;
         if (!health?.ok || health.data.generation !== input.generation || input.pageUrl !== location.href ||
           typeof input.token !== 'string') throw Error('Source document changed');
-        // Port traffic exists only during this operation; it keeps the transient
-        // broker alive while the site is waiting to send the response body.
+        const token = input.token;
+        let lastActivityAt = -Infinity;
+        const activity = (byteLength: number) => {
+          if (!byteLength || abort.signal.aborted || Date.now() - lastActivityAt < 500) return;
+          lastActivityAt = Date.now();
+          try { port.postMessage({ type: 'activity', token }); } catch { stop(); }
+        };
+        // Waiting heartbeats are diagnostic only. Body-byte activity and accepted
+        // upload chunks are the events that prove preparation is progressing.
         const heartbeat = setInterval(() => {
           try { port.postMessage({ type: 'waiting', token: input.token }); } catch { stop(); }
         }, 5000);
@@ -34,6 +41,7 @@ export function installIeeePreparation(): () => void {
           const bytes = await readIeeePdf({ pageUrl: input.pageUrl, ...(input.sourceUrl ? { sourceUrl: input.sourceUrl } : {}) }, abort.signal, {
             sourcePage: true,
             onProgress: diagnostic => port.postMessage({ type: 'progress', token: input.token, diagnostic }),
+            onActivity: activity,
           });
           for (let offset = 0, index = 0; offset < bytes.length; offset += PDF_CHUNK_BYTES, index++) {
             abort.signal.throwIfAborted();

@@ -394,6 +394,30 @@ describe("management UI", () => {
     expect(sent.mock.calls.some(([message]) => message.type === "ui.open")).toBe(false);
   });
 
+  it("clears a previous PDF error while a new read is pending", async () => {
+    const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
+    let attempts = 0;
+    let finish: ((value: unknown) => void) | undefined;
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, url: ieee, publisher: "ieee", kind: "wrapper", currentReader: false, candidates: [] } };
+      if (message.type === "pdf.openCurrent") {
+        if (++attempts === 1) return { ok: false, error: "Previous PDF read failed" };
+        return new Promise(resolve => { finish = resolve; });
+      }
+      return { ok: true, data: true };
+    }, { id: 7, windowId: 1, url: ieee, title: "IEEE paper" });
+    const host = await mount("sidepanel");
+    const action = host.querySelector<HTMLButtonElement>(".pdf-open-current")!;
+    await act(async () => { action.click(); });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Previous PDF read failed");
+    await act(async () => { action.click(); });
+    expect(action.disabled).toBe(true);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    await act(async () => { finish!({ ok: true, data: { tabId: 7, navigation: "same-tab" } }); });
+  });
+
   it("does not open an IEEE wrapper when the exact host permission is denied", async () => {
     const ieee = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
     const contains = vi.fn(async () => false);

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_PDF_BYTES } from "../src/pdf/source";
+import { MAX_PDF_BYTES, readResponseBytes } from "../src/pdf/source";
 import { readIeeePdf } from "../src/pdf/ieee";
 
 const pageUrl = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";
@@ -32,6 +32,39 @@ it("reads an observed same-origin source with permission and isolated session fe
   expect(fetcher).toHaveBeenCalledExactlyOnceWith(new URL(sourceUrl), {
     signal, credentials: "include", cache: "no-store", redirect: "error",
   });
+});
+
+it("reports each nonempty response-body chunk to the byte callback", async () => {
+  const chunks = [Uint8Array.of(1, 2), new Uint8Array(), Uint8Array.of(3)];
+  const response = new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  }));
+  const received: number[] = [];
+
+  expect(Array.from(await readResponseBytes(response, MAX_PDF_BYTES, bytes => received.push(bytes)))).toEqual([1, 2, 3]);
+  expect(received).toEqual([2, 1]);
+});
+
+it("forwards nonempty IEEE response-body activity", async () => {
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(pdf.subarray(0, 8));
+      controller.enqueue(new Uint8Array());
+      controller.enqueue(pdf.subarray(8));
+      controller.close();
+    },
+  });
+  provideFetch([new Response(body)]);
+  const activity: number[] = [];
+
+  await readIeeePdf({ pageUrl, sourceUrl }, new AbortController().signal, {
+    onActivity: bytes => activity.push(bytes),
+  });
+
+  expect(activity).toEqual([8, pdf.length - 8]);
 });
 
 it("accepts a validated direct-source page without a wrapper or .pdf suffix", async () => {

@@ -2,11 +2,13 @@ import { MAX_PDF_BYTES, pdfHash, verifyPdf } from "../pdf/source";
 
 export const PREPARED_CHUNK_BYTES = 256 * 1024;
 export const PREPARED_TTL_MS = 120_000;
+const UPLOAD_TTL_MS = 60_000;
 
 export type Owner = { tabId: number; documentId: string; generation: string };
 export type PreparedInfo = { token: string; byteLength: number; hash: string; chunks: number };
 export interface PreparedPdfStore {
   begin(owner: Owner): string;
+  touch(token: string, owner: Owner): void;
   append(token: string, owner: Owner, index: number, data: string): void;
   finish(token: string, owner: Owner, expectedByteLength: number): Promise<PreparedInfo>;
   claim(token: string, reader: Owner): PreparedInfo;
@@ -134,8 +136,13 @@ export function createPreparedPdfStore(generation: string): PreparedPdfStore {
         stage: "uploading", pages: [], byteLength: 0, nextUploadIndex: 0,
       };
       active = record;
-      expireAfter(record, 60_000);
+      expireAfter(record, UPLOAD_TTL_MS);
       return record.token;
+    },
+    touch(token, owner) {
+      const record = sourceRecord(token, owner);
+      if (record.stage !== "uploading") throw Error("Prepared PDF upload is closed.");
+      expireAfter(record, UPLOAD_TTL_MS);
     },
     append(token, owner, index, data) {
       const record = sourceRecord(token, owner);
@@ -159,6 +166,7 @@ export function createPreparedPdfStore(generation: string): PreparedPdfStore {
         record.byteLength += length;
       }
       record.nextUploadIndex++;
+      expireAfter(record, UPLOAD_TTL_MS);
     },
     async finish(token, owner, expectedByteLength) {
       const record = sourceRecord(token, owner);

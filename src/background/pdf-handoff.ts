@@ -386,14 +386,18 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     const token = crypto.randomUUID();
     let preparedToken: string | undefined;
     if (siteSession) {
-      // Pin the actual top-level source even when the sidebar initiated the action.
-      if (!snapshot.documentId) {
+      const protectedDirect = actor.kind === 'sidebar' && context.kind === 'direct' && source === publicPdfSource(original!);
+      // Browser-owned direct PDFs cannot expose a content document. Their
+      // existing URL/tab-loading epoch guard remains active during preparation.
+      if (!protectedDirect && !snapshot.documentId) {
         const results = await chrome.scripting.executeScript({ target: { tabId: actor.tabId }, func: () => ({ href: location.href, top: window === window.top }) });
         const top = results.find(item => item.frameId === 0);
         if (!top?.documentId || !top.result?.top || pageUrl(top.result.href) !== snapshot.url) throw changed();
         snapshot.documentId = top.documentId;
       }
-      const prepared = await preparation.prepare(actor.tabId, snapshot.documentId, original!, source, () => guard(actor, snapshot));
+      const prepared = protectedDirect
+        ? await preparation.prepareDirect(actor.tabId, source!, () => guard(actor, snapshot))
+        : await preparation.prepare(actor.tabId, snapshot.documentId!, original!, source, () => guard(actor, snapshot));
       preparedToken = prepared.token;
       try { await guard(actor, snapshot); } catch (error) { preparation.releaseTab(actor.tabId); throw error; }
     }

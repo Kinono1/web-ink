@@ -47,6 +47,7 @@ export class IeeePdfError extends Error {
 
 export interface IeeePdfReadOptions {
   onProgress?: (diagnostic: IeeePdfDiagnostic) => void;
+  onActivity?: (byteLength: number) => void;
   /** Only a verified top-level IEEE content script can rely on the backend's grant. */
   sourcePage?: boolean;
 }
@@ -132,7 +133,7 @@ export async function readIeeePdf(
     if (!source) {
       progress("wrapper", "wrapper");
       const response = await fetchIeee(page, signal, options?.sourcePage === true, diagnostic);
-      const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES);
+      const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES, options?.onActivity);
       signal.throwIfAborted();
       try {
         const wrapperUrl = response.url ? ieeeSourceUrl(response.url) : page;
@@ -148,7 +149,7 @@ export async function readIeeePdf(
       await response.body?.cancel().catch(() => undefined);
       throw fail("not-pdf", undefined, { status: response.status, mime });
     }
-    const bytes = await readResponseBytes(response);
+    const bytes = await readResponseBytes(response, undefined, options?.onActivity);
     signal.throwIfAborted();
     progress("validate", "file");
     try { return verifyPdf(bytes); } catch { throw fail("not-pdf", undefined, { status: response.status, mime }); }

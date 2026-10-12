@@ -620,6 +620,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       return;
     pdfOpenPending.current = true;
     setOpeningPdf(true);
+    setError(undefined);
     setPreparationStage('identify'); setIeeeDiagnostic(undefined);
     void request<PdfOpenResult>({
       type: "pdf.openCurrent",

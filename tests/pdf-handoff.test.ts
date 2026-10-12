@@ -3,12 +3,17 @@ import type { PdfHandoff, PdfOpenResult, PdfTabContext, Result } from '../src/co
 
 let preparationFailure: Error | undefined;
 let preparationCheck: (() => Promise<void>) | undefined;
+let directPreparationCheck: (() => Promise<void>) | undefined;
 vi.mock('../src/background/ieee-preparation', () => ({
   createIeeePreparation: () => ({
     prepare: async (_tab: number, _document: string, _page: string, _source: string, guard: () => Promise<void>) => {
       await preparationCheck?.();
       if (preparationFailure) throw preparationFailure;
       await guard();
+      return { token: '00000000-0000-4000-8000-000000000001', byteLength: 21, chunks: 1, hash: 'a'.repeat(64) };
+    },
+    prepareDirect: async (_tab: number, _source: string, guard: () => Promise<void>) => {
+      await directPreparationCheck?.(); await guard();
       return { token: '00000000-0000-4000-8000-000000000001', byteLength: 21, chunks: 1, hash: 'a'.repeat(64) };
     },
     cancelTab: () => {}, releaseTab: () => {}, getStore: async () => ({ releaseTab: () => {}, claim: () => ({ byteLength: 21, chunks: 1, hash: 'a'.repeat(64) }) }),
@@ -84,13 +89,28 @@ const inspect = () => rpc<PdfTabContext>({ type: 'pdf.context.get', tabId: 7, ex
 const open = (extra: object = {}) => rpc<PdfOpenResult>({ type: 'pdf.openCurrent', tabId: 7, expectedUrl: tabs.get(7)!.url, ...extra });
 
 describe('IEEE site-session authority', () => {
-  beforeEach(() => { preparationFailure = undefined; preparationCheck = undefined; chrome.permissions.contains = (async () => true) as typeof chrome.permissions.contains; });
+  beforeEach(() => { preparationFailure = undefined; preparationCheck = undefined; directPreparationCheck = undefined; chrome.permissions.contains = (async () => true) as typeof chrome.permissions.contains; });
   const ieee = 'https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626';
   const download = 'https://ieeexplore.ieee.org/observed-file?ticket=fixture';
   const openWithSource = async () => {
     setUrl(ieee); visibleEmbeds(`<iframe src="${download}"></iframe>`);
     return value(await open({ accessMode: 'site-session' }));
   };
+  it('prepares an authorized direct IEEE PDF from its observed URL without probing the protected viewer', async () => {
+    setUrl('https://ieeexplore.ieee.org/paper.pdf?ticket=fixture#page=3');
+    const script = vi.fn(async () => { throw Error('Protected native viewer'); });
+    chrome.scripting.executeScript = script as typeof chrome.scripting.executeScript;
+    const opened = value(await open({ accessMode: 'site-session' }));
+    expect(opened.navigation).toBe('same-tab');
+    expect(script).not.toHaveBeenCalled();
+    expect(handoffs()[0]![1]).toMatchObject({ preparedToken: '00000000-0000-4000-8000-000000000001' });
+  });
+  it('does not switch a protected direct PDF after a same-URL reload during preparation', async () => {
+    setUrl('https://ieeexplore.ieee.org/paper.pdf');
+    directPreparationCheck = async () => { for (const callback of onUpdated) callback(7, { status: 'loading' }); };
+    expect(await open({ accessMode: 'site-session' })).toMatchObject({ ok: false, code: 'PAGE_CHANGED' });
+    expect(updates).toEqual([]);
+  });
   it('retains the readable original page when source preparation fails', async () => {
     setUrl(ieee);
     preparationFailure = Error('Cannot read full PDF');

@@ -421,6 +421,43 @@ describe("prepared PDF ownership and lifetime", () => {
     expect(store.begin(SOURCE)).not.toBe(first);
   });
 
+  it("keeps an uploading PDF available beyond 60 seconds after source activity", async () => {
+    const token = store.begin(SOURCE);
+    vi.advanceTimersByTime(59_000);
+    store.touch(token, SOURCE);
+    vi.advanceTimersByTime(59_000);
+    store.append(token, SOURCE, 0, encoded(SMALL));
+
+    expect((await store.finish(token, SOURCE, SMALL.length)).hash).toBe(SMALL_HASH);
+  });
+
+  it("does not renew an upload after a rejected chunk", () => {
+    const token = store.begin(SOURCE);
+    vi.advanceTimersByTime(59_999);
+    expect(() => store.append(token, SOURCE, 0, "not-base64")).toThrow();
+    vi.advanceTimersByTime(1);
+
+    expect(store.peekToken(7)).toBeUndefined();
+  });
+
+  it("rejects foreign activity without extending the upload TTL", () => {
+    const token = store.begin(SOURCE);
+    vi.advanceTimersByTime(59_999);
+    expect(() => store.touch(token, { ...SOURCE, documentId: "attacker" })).toThrow(/belongs/i);
+    vi.advanceTimersByTime(1);
+
+    expect(store.peekToken(7)).toBeUndefined();
+  });
+
+  it("cannot extend the 120-second ready TTL with upload activity", async () => {
+    const { token } = await ready();
+    vi.advanceTimersByTime(119_999);
+    expect(() => store.touch(token, SOURCE)).toThrow(/closed/i);
+    vi.advanceTimersByTime(1);
+
+    expect(store.peekToken(7)).toBeUndefined();
+  });
+
   it("enforces expiry even if a timer callback has not run", () => {
     store.begin(SOURCE);
     vi.setSystemTime(new Date("2026-10-12T00:01:00Z"));

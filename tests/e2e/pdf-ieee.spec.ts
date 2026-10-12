@@ -125,7 +125,7 @@ async function ieeeRoute(route: Route): Promise<void> {
     return;
   }
 
-  if (url.pathname !== "/rest/observed-download" && url.href !== REDIRECTED_PDF) {
+  if (url.pathname !== "/rest/observed-download" && url.pathname !== "/direct.pdf" && url.href !== REDIRECTED_PDF) {
     await route.abort("blockedbyclient");
     return;
   }
@@ -275,6 +275,19 @@ test("saved IEEE records reopen through the article and a fresh same-tab session
   await openThroughSidepanel(article);
   expect(await activeTab(article)).toBe(tabId);
   await expect(article.locator(`[data-pdf-annotation="${record.id}"]`)).toBeVisible();
+});
+
+test("browser-owned direct IEEE PDF prepares through the existing side panel without injecting into its viewer", async () => {
+  const direct = `${IEEE}/direct.pdf`;
+  const reader = await context.newPage();
+  await reader.goto(direct);
+  await openThroughSidepanel(reader);
+  const downloads = requests.filter(item => item.url === direct && item.resourceType === 'fetch');
+  expect(downloads).toHaveLength(1);
+  expect(downloads[0]!.cookie).toContain('ieee-session=granted');
+  await expect(reader.locator('.pdf-page[data-ready=true]')).toHaveCount(1);
+  await reader.getByRole('button', { name: '返回原阅读器', exact: true }).click();
+  await expect(reader).toHaveURL(direct);
 });
 
 test("legacy IEEE Open PDF prefers the learned DOI, restores the same file, and links changed copies to old marks", async () => {
@@ -471,6 +484,8 @@ test("unavailable, HTML, redirect, and expired IEEE grants leave clear recovery 
     if (mode === "redirect") await interceptRedirects(ieee);
     await ieee.goto(`${WRAPPER}&case=${mode}`);
     await activeTab(ieee);
+    // Each failure case starts with a freshly mounted sidepanel bound to this tab.
+    await control.reload();
     const action = control.locator("button.pdf-open-current");
     await expect(action).toHaveText("用 Web Ink 标注当前 PDF");
     await action.click();
@@ -478,6 +493,7 @@ test("unavailable, HTML, redirect, and expired IEEE grants leave clear recovery 
     await expect(ieee).toHaveURL(`${WRAPPER}&case=${mode}`);
     await expect(action).toBeEnabled();
     if (mode === "redirect") {
+      await expect.poll(() => requests.filter(request => request.url === `${IEEE}/login` && request.resourceType === "fetch").length).toBe(1);
       const loginFetches = requests.filter(request => request.url === `${IEEE}/login` && request.resourceType === "fetch");
       expect(loginFetches).toHaveLength(1);
       expect(loginFetches[0]?.interception).toBe("cdp");
