@@ -135,7 +135,8 @@ export async function readIeeePdf(
       const bytes = await readResponseBytes(response, MAX_WRAPPER_BYTES);
       signal.throwIfAborted();
       try {
-        source = ieeeSourceUrl(parseIeeePdfSource(new TextDecoder().decode(bytes), page.href));
+        const wrapperUrl = response.url ? ieeeSourceUrl(response.url) : page;
+        source = ieeeSourceUrl(parseIeeePdfSource(new TextDecoder().decode(bytes), wrapperUrl.href));
       } catch {
         throw fail("source-hidden");
       }
@@ -179,15 +180,24 @@ async function fetchIeee(
     throw new IeeePdfError("site-permission", undefined, diagnostic());
   signal.throwIfAborted();
   const response = await fetch(url, {
-    signal, credentials: "include", cache: "no-store", redirect: "error",
+    signal,
+    credentials: "include",
+    cache: "no-store",
+    // Same-origin makes the browser reject a cross-origin redirect before its
+    // next request; the final-URL check below is only a second boundary.
+    ...(sourcePage ? { mode: "same-origin" as const, redirect: "follow" as const } : { redirect: "error" as const }),
   });
   let reason: IeeePdfReason | undefined;
-  if (response.redirected || response.type === "opaqueredirect" || [300, 301, 302, 303, 307, 308].includes(response.status))
+  if (response.type === "opaqueredirect" || [300, 301, 302, 303, 307, 308].includes(response.status))
     reason = "redirect-blocked";
+  if (!sourcePage && response.redirected) reason = "redirect-blocked";
   if (response.url) {
     try {
-      if (ieeeSourceUrl(response.url).href !== url.href) reason = "redirect-blocked";
+      const finalUrl = ieeeSourceUrl(response.url);
+      if (!sourcePage && finalUrl.href !== url.href) reason = "redirect-blocked";
     } catch { reason = "redirect-blocked"; }
+  } else if (sourcePage && response.redirected) {
+    reason = "redirect-blocked";
   }
   if (!reason && response.status === 401) reason = "login-required";
   if (!reason && response.status === 403) reason = "access-restricted";

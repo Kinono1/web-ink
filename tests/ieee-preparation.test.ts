@@ -39,7 +39,8 @@ describe('source-origin IEEE preparation', () => {
     vi.stubGlobal('fetch', async (url: URL, options: RequestInit) => {
       fetches.push(url.href);
       expect(options.credentials).toBe('include');
-      expect(options.redirect).toBe('error');
+      expect(options.mode).toBe('same-origin');
+      expect(options.redirect).toBe('follow');
       return allowed ? new Response(bytes, { headers: { 'content-type': 'application/pdf' } }) : new Response('Access denied', { status: 403 });
     });
     dispose = installIeeePreparation();

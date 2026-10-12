@@ -119,6 +119,93 @@ it("reads from the exact top-level IEEE source page without querying extension p
   expect(contains).not.toHaveBeenCalled();
 });
 
+it("follows an observed same-origin IEEE redirect only from the verified source page", async () => {
+  const sourcePage = { location: { origin: "https://ieeexplore.ieee.org", href: pageUrl } };
+  Object.assign(sourcePage, { top: sourcePage });
+  vi.stubGlobal("window", sourcePage);
+  const redirected = new Response(pdf);
+  Object.defineProperties(redirected, {
+    redirected: { value: true },
+    url: { value: "https://ieeexplore.ieee.org/final-file?temporary=fixture" },
+  });
+  const { contains, fetcher } = provideFetch([redirected]);
+  const signal = new AbortController().signal;
+
+  expect(Array.from(await readIeeePdf({ pageUrl, sourceUrl }, signal, { sourcePage: true }))).toEqual(Array.from(pdf));
+  expect(contains).not.toHaveBeenCalled();
+  expect(fetcher).toHaveBeenCalledExactlyOnceWith(new URL(sourceUrl), {
+    signal, credentials: "include", cache: "no-store", mode: "same-origin", redirect: "follow",
+  });
+});
+
+it("resolves a source-page wrapper's relative PDF element from its verified final URL", async () => {
+  const sourcePage = { location: { origin: "https://ieeexplore.ieee.org", href: pageUrl } };
+  Object.assign(sourcePage, { top: sourcePage });
+  vi.stubGlobal("window", sourcePage);
+  const wrapper = new Response('<iframe src="observed-file?ticket=fixture"></iframe>');
+  Object.defineProperties(wrapper, {
+    redirected: { value: true },
+    url: { value: "https://ieeexplore.ieee.org/document/123/" },
+  });
+  const { fetcher } = provideFetch([wrapper, new Response(pdf)]);
+
+  expect(Array.from(await readIeeePdf({ pageUrl }, new AbortController().signal, { sourcePage: true }))).toEqual(Array.from(pdf));
+  expect(fetcher.mock.calls.map(([url]) => String(url))).toEqual([
+    pageUrl,
+    "https://ieeexplore.ieee.org/document/123/observed-file?ticket=fixture",
+  ]);
+});
+
+it("keeps a final same-origin 202 HTML download response as not-pdf", async () => {
+  const sourcePage = { location: { origin: "https://ieeexplore.ieee.org", href: pageUrl } };
+  Object.assign(sourcePage, { top: sourcePage });
+  vi.stubGlobal("window", sourcePage);
+  const finalResponse = new Response("", {
+    status: 202,
+    headers: { "content-type": "text/html" },
+  });
+  Object.defineProperties(finalResponse, {
+    redirected: { value: true },
+    url: { value: "https://ieeexplore.ieee.org/document/11197215/" },
+  });
+  provideFetch([finalResponse]);
+
+  const error = await readIeeePdf({
+    pageUrl,
+    sourceUrl: "https://ieeexplore.ieee.org/stampPDF/getPDF.jsp?arnumber=123&ticket=fixture",
+  }, new AbortController().signal, { sourcePage: true }).catch(failure => failure);
+
+  expect(error).toMatchObject({ reason: "not-pdf", diagnostic: { phase: "file", status: 202, mime: "text/html" } });
+  expect(JSON.stringify(error)).not.toContain("ticket=fixture");
+  expect(JSON.stringify(error)).not.toContain("11197215");
+});
+
+it("rejects a source-page redirect whose final URL leaves the exact IEEE origin", async () => {
+  const sourcePage = { location: { origin: "https://ieeexplore.ieee.org", href: pageUrl } };
+  Object.assign(sourcePage, { top: sourcePage });
+  vi.stubGlobal("window", sourcePage);
+  const redirected = new Response(pdf);
+  Object.defineProperties(redirected, {
+    redirected: { value: true },
+    url: { value: "https://example.test/final-file" },
+  });
+  provideFetch([redirected]);
+
+  await expect(readIeeePdf({ pageUrl, sourceUrl }, new AbortController().signal, { sourcePage: true }))
+    .rejects.toMatchObject({ reason: "redirect-blocked" });
+});
+
+it("keeps default extension reads on the exact observed URL after a same-origin redirect", async () => {
+  const redirected = new Response(pdf);
+  Object.defineProperties(redirected, {
+    redirected: { value: true },
+    url: { value: "https://ieeexplore.ieee.org/final-file?temporary=fixture" },
+  });
+  provideFetch([redirected]);
+
+  await expect(read()).rejects.toMatchObject({ reason: "redirect-blocked" });
+});
+
 it.each([
   { name: "a different origin", origin: "https://example.test", href: pageUrl, topLevel: true },
   { name: "a different IEEE page", origin: "https://ieeexplore.ieee.org", href: sourceUrl, topLevel: true },
