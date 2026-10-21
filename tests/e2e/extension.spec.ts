@@ -352,6 +352,15 @@ test("linked feed titles survive refresh without binding to reused recommendatio
   await expect.poll(state).toBe("located");
   expect(await page.evaluate(() => [...CSS.highlights.values()].flatMap(h => [...h]).every(r => (r as Range).startContainer.parentElement?.closest("a")?.getAttribute("href") === "/video/original"))).toBe(true);
 
+  await page.evaluate(() => {
+    const base = document.createElement("base");
+    base.href = "https://changed.test/";
+    document.head.append(base);
+  });
+  await expect.poll(state).toBe("unresolved");
+  await page.locator("base").evaluate(base => base.remove());
+  await expect.poll(state).toBe("located");
+
   await page.locator("#target").evaluate(link => link.outerHTML = '<a href="/video/different">烧烤大王 · 店长日记</a>');
   await expect.poll(state).toBe("unresolved");
   const backup = await rpc<any>(manager, { type: "backup.export" });

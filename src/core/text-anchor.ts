@@ -152,7 +152,8 @@ export class TextAnchorSession {
       snapshot &&
       snapshot.root.isConnected &&
       (textLinkUrl(snapshot.target, this.doc.baseURI)
-        ? snapshot.root.matches(snapshot.selector)
+        ? snapshot.root instanceof HTMLAnchorElement &&
+          textLinkSelector(snapshot.root) === snapshot.selector
         : rootFromTarget(snapshot.target, this.doc) === snapshot.root) &&
       snapshot.selector === snapshot.target.rootSelector &&
       snapshot.version === this.versionFor(snapshot.root) &&
@@ -248,7 +249,13 @@ export class TextAnchorSession {
     status: AnchorStatus;
     reason?: string;
   } {
-    if (textLinkUrl(target, this.doc.baseURI)) {
+    const originalLink = textLinkUrl(target, this.doc.URL);
+    if (originalLink) {
+      if (textLinkUrl(target, this.doc.baseURI) !== originalLink)
+        return {
+          status: "unresolved",
+          reason: "The original link destination cannot be confirmed with the current document base.",
+        };
       const matches: Range[] = [];
       let roots = this.linkedRoots.get(target.rootSelector);
       if (!roots) {
@@ -503,6 +510,12 @@ function rangeBoundariesAreValid(range: Range, root: Element): boolean {
 function mutationTouchesRoot(mutation: MutationRecord, root: Element): boolean {
   if (!root.isConnected) return true;
   if (root.contains(mutation.target)) return true;
+  if (
+    mutation.attributeName === "contenteditable" &&
+    mutation.target instanceof Element &&
+    mutation.target.contains(root)
+  )
+    return true;
   if (mutation.type !== "childList") return false;
   // A cached root may itself have been detached/replaced. Added nodes outside a
   // root cannot affect its reading, but removing/reparenting the root can.

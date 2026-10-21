@@ -63,6 +63,64 @@ describe("real selection boundaries and large restore batches", () => {
 });
 
 describe("TextAnchorSession lifecycle", () => {
+  it("recaptures instead of saving a linked snapshot after the base changes", () => {
+    document.body.innerHTML = '<main><a href="/video/one">Title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    const base = document.createElement("base");
+    try {
+      session.capture(range);
+      base.href = "https://changed.test/";
+      document.head.append(base);
+      const saved = session.captureSelected(range);
+      expect(saved).toEqual(captureText(range));
+      expect(textLinkUrl(saved, document.URL)).toBeUndefined();
+    } finally {
+      base.remove();
+      session.dispose();
+    }
+  });
+
+  it("invalidates a linked capture when its ancestor becomes editable", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      document.querySelector("main")!.setAttribute("contenteditable", "true");
+      expect(session.resolve(target).status).toBe("unresolved");
+      expect(() => session.captureSelected(range)).toThrow("selection cannot be represented");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("refuses a relative linked scope when the document base changes its destination", () => {
+    document.body.innerHTML = '<a href="/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    const base = document.createElement("base");
+    try {
+      const target = session.capture(range);
+      base.href = "https://changed.test/";
+      document.head.append(base);
+      expect(session.resolve(target).status).toBe("unresolved");
+      base.remove();
+      expect(session.resolve(target).range?.toString()).toBe("Title");
+    } finally {
+      base.remove();
+      session.dispose();
+    }
+  });
+
+  it("does not interpret noncanonical JSON escapes as a linked destination", () => {
+    const rootSelector = 'a[href="https://example.test/\\u0061"]';
+    expect(textLinkUrl({ rootSelector }, "https://example.test/feed")).toBeUndefined();
+  });
+
   it("uses a linked content identity instead of a recycled DOM id", () => {
     document.body.innerHTML = '<a id="slot-one" href="https://example.test/video/one"><span id="title-one">Title</span></a>';
     const range = document.createRange();

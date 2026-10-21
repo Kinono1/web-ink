@@ -9,7 +9,13 @@ export function textLinkUrl(
   if (!match) return undefined;
   try {
     const href: unknown = JSON.parse(match[1]!);
-    if (typeof href !== "string" || /[\u0000-\u001f\u007f]/.test(href))
+    // JSON and CSS disagree on escapes such as \u0061. Only our canonical
+    // serializer is a URL identity; other imported CSS remains a legacy scope.
+    if (
+      typeof href !== "string" ||
+      JSON.stringify(href) !== match[1] ||
+      /[\u0000-\u001f\u007f]/.test(href)
+    )
       return undefined;
     const url = new URL(href, pageUrl);
     if (
