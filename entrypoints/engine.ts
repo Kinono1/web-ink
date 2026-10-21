@@ -57,6 +57,15 @@ export default defineUnlistedScript({
         },
       canStop: (generation) =>
         generation !== bridge.generation || (instance?.canStop() ?? true),
+      annotateSelection: async (range, color, generation, isCurrent) => {
+        if (generation !== bridge.generation || window.__webInkBootstrap !== bootstrap || !bootstrap.isEnabled() || !instance || !isCurrent())
+          throw Error("The webpage annotation engine changed. Select the text again.");
+        const active = instance;
+        return active.annotateSelection(range, color, () =>
+          generation === bridge.generation && window.__webInkBootstrap === bootstrap &&
+          window.__webInkEngine === bridge && instance === active && bootstrap.isEnabled() && isCurrent(),
+        );
+      },
     };
     window.__webInkEngine = bridge;
     bridge.start(bridge.generation);

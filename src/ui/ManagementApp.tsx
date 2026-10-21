@@ -27,6 +27,8 @@ import { StoragePanel } from "./StoragePanel";
 import { pdfPreparationLabel, ieeeFailureMessage, formatIeeeDiagnostic } from '../pdf/ieee-status';
 import type { IeeePdfDiagnostic } from '../pdf/ieee-diagnostics';
 import { applyPageTheme, installPageTheme } from "./page-theme";
+import { readSelectionToolbarEnabled, SELECTION_TOOLBAR_KEY, writeSelectionToolbarEnabled } from "../core/selection-toolbar";
+import { WebSelection } from "./WebSelection";
 import "./management.css";
 import "./sidepanel.css";
 
@@ -67,6 +69,7 @@ import {
   Editor,
   ColorPicker,
   SettingsView,
+  SelectionToolbarSwitch,
 } from "./management/components";
 export { pdfReaderUrl } from "./management/helpers";
 export function mountManagementApp(root: HTMLElement, mode: Mode): void {
@@ -88,6 +91,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [hasPermission, setHasPermission] = useState(true);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
+  const [selectionToolbarEnabled, setSelectionToolbarEnabled] = useState(true);
+  const [selectionToolbarSaving, setSelectionToolbarSaving] = useState(false);
+  const [selectionConnectionVersion, setSelectionConnectionVersion] = useState(0);
   const [query, setQuery] = useState("");
   const [libraryDocument, setLibraryDocument] = useState(() => {
     const hash = new URLSearchParams(location.search).get("document");
@@ -118,6 +124,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const moreTrigger = useRef<HTMLElement>(null);
   const libraryScrollY = useRef<number | undefined>(undefined);
   const contextRequest = useRef(0);
+  const activeTabId = useRef<number | undefined>(undefined);
+  const selectionToolbarVersion = useRef(0);
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
   const settingsVersion = useRef(0);
@@ -125,6 +133,27 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   settingsRef.current = settings;
   const language = settings.language;
   const t = COPY[language];
+  useEffect(() => {
+    let active = true;
+    const initialVersion = selectionToolbarVersion.current;
+    const changed = (
+      changes: Record<string, chrome.storage.StorageChange>,
+      areaName: string,
+    ) => {
+      if (!active || areaName !== "local" || !Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) return;
+      selectionToolbarVersion.current++;
+      const change = changes[SELECTION_TOOLBAR_KEY];
+      setSelectionToolbarEnabled(typeof change?.newValue === "boolean" ? change.newValue : true);
+    };
+    try { chrome.storage.onChanged?.addListener(changed); } catch { /* A revoked context cannot subscribe. */ }
+    void readSelectionToolbarEnabled().then((value) => {
+      if (active && selectionToolbarVersion.current === initialVersion) setSelectionToolbarEnabled(value);
+    });
+    return () => {
+      active = false;
+      try { releaseChromeListener(() => chrome.storage.onChanged?.removeListener(changed)); } catch { /* The context may be gone. */ }
+    };
+  }, []);
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (!presetDraft.current && !presetSaving.current) return;
@@ -193,6 +222,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   );
   const refreshContext = useCallback(async () => {
     const requestId = ++contextRequest.current;
+    setSelectionConnectionVersion((current) => current + 1);
     try {
       const nextTab =
         mode === "sidepanel"
@@ -201,6 +231,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       const context: TabContext = nextTab
         ? { id: nextTab.id, windowId: nextTab.windowId, url: nextTab.url, title: nextTab.title }
         : {};
+      if (requestId !== contextRequest.current) return;
+      activeTabId.current = context.id;
       const nextPdfContext =
         mode === "sidepanel" && context.id !== undefined
           ? await request<PdfTabContext>({
@@ -261,11 +293,14 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     };
   }, [closeMore, moreOpen]);
   useEffect(() => {
-    const activated = () => {
-      if (mode === "sidepanel") void refreshContext();
+    const activated = (activeInfo: { tabId: number }) => {
+      if (mode === "sidepanel") {
+        activeTabId.current = activeInfo.tabId;
+        void refreshContext();
+      }
     };
-    const updated = (_id: number, change: { url?: string }) => {
-      if (mode === "sidepanel" && change.url) void refreshContext();
+    const updated = (tabId: number, change: { url?: string; status?: string }) => {
+      if (mode === "sidepanel" && tabId === activeTabId.current && (change.url || change.status === "complete")) void refreshContext();
     };
     chrome.tabs.onActivated.addListener(activated);
     chrome.tabs.onUpdated.addListener(updated);
@@ -380,6 +415,20 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           pendingSettings.current--;
         }
       });
+  };
+  const toggleSelectionToolbar = async () => {
+    if (selectionToolbarSaving) return;
+    const next = !selectionToolbarEnabled;
+    const version = ++selectionToolbarVersion.current;
+    setSelectionToolbarSaving(true);
+    try {
+      await writeSelectionToolbarEnabled(next);
+      if (version === selectionToolbarVersion.current) setSelectionToolbarEnabled(next);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSelectionToolbarSaving(false);
+    }
   };
   const enablePermissions = async () => {
     try {
@@ -663,6 +712,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       setError(cause instanceof Error ? cause.message : String(cause));
     });
   };
+  const openLibrary = () => {
+    window.open(chrome.runtime.getURL("library.html"));
+  };
   const openPdf = (record?: Annotation) => {
     void showPdf(record);
   };
@@ -737,7 +789,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               className="quiet icon-button"
               aria-label={t.openLibrary}
               title={t.openLibrary}
-              onClick={() => window.open(chrome.runtime.getURL("library.html"))}
+              onClick={openLibrary}
             >
               <Icon name="library" />
             </button>
@@ -822,7 +874,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           closeLabel={t.close}
         />
       ) : null}
-      {!hasPermission && !(mode === "sidepanel" && (!pageUrl || isPdfSurface(pdfContext))) ? (
+      {!hasPermission && !(mode === "sidepanel" && isPdfSurface(pdfContext)) ? (
         <Empty
           title={t.permission}
           text={t.permissionText}
@@ -836,7 +888,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           }
         />
       ) : null}
-      {mode === "sidepanel" && (hasPermission || !pageUrl) ? (
+      {mode === "sidepanel" && (hasPermission || isPdfSurface(pdfContext)) ? (
         <>
           {pageUrl ? <PageHeader
             title={pageUrl ? tab.title || new URL(pageUrl).host : t.unknownPage}
@@ -847,7 +899,29 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             disabled={!pageUrl || paused}
           /> : null}
           <div className="sidepanel-content">
-          {pdfContext?.currentReader ? <PdfSidebar tabId={tab.id} language={language} /> : !pageUrl ? (
+          {pageUrl && !paused ? <SelectionToolbarSwitch
+            enabled={selectionToolbarEnabled}
+            saving={selectionToolbarSaving}
+            onToggle={() => void toggleSelectionToolbar()}
+            t={t}
+          /> : null}
+          {pageUrl && !paused ? <WebSelection
+            tabId={tab.id}
+            pageUrl={pageUrl}
+            language={language}
+            defaultColor={settings.defaultColor}
+            connectionKey={selectionConnectionVersion}
+            onError={setError}
+            onSaved={(annotation, startEditing) => {
+              setRecords((current) => current.some((record) => record.id === annotation.id)
+                ? current.map((record) => record.id === annotation.id ? annotation : record)
+                : [annotation, ...current]);
+              setSelectedId(annotation.id);
+              if (startEditing) startEdit(annotation);
+              void loadRecords();
+            }}
+          /> : null}
+          {pdfContext?.currentReader ? <PdfSidebar tabId={tab.id} language={language} /> : !pageUrl && isPdfSurface(pdfContext) ? (
             <section className="pdf-handoff">
               <span className="pdf-handoff-icon" aria-hidden="true"><Icon name="pdf" /></span>
               <h2>{pdfContext?.currentReader ? t.pdfReading : pdfContext ? t.currentPdfTitle : t.pdfWelcomeTitle}</h2>
@@ -921,6 +995,16 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               ) : null}
               <small>{t.pdfLocalNote}</small>
             </section>
+          ) : !pageUrl ? (
+            <Empty
+              title={t.unknownPage}
+              text={t.pageUnavailableText}
+              action={<div className="unavailable-actions">
+                <button className="quiet" onClick={() => void refreshContext()}>{t.refresh}</button>
+                <button className="quiet" onClick={openLibrary}>{t.openLibrary}</button>
+                <button className="quiet" onClick={openLocalPdf}>{t.chooseLocalPdf}</button>
+              </div>}
+            />
           ) : paused ? (
             <section className="notice-card warning">
               <strong>{t.paused}</strong>
@@ -995,18 +1079,22 @@ export function ManagementApp({ mode }: { mode: Mode }) {
                 <summary ref={moreTrigger} aria-label={t.moreActions} title={t.moreActions}>
                   <Icon name="more" />
                 </summary>
-                <button
-                  className="danger"
-                  onClick={() =>
-                    saveSettings({
-                      disabledOrigins: origin
-                        ? [...settingsRef.current.disabledOrigins, origin]
-                        : settingsRef.current.disabledOrigins,
-                    })
-                  }
-                >
-                  {t.pause}
-                </button>
+                <div className="sidepanel-more-actions">
+                  <button className="quiet" onClick={openLibrary}>{t.openLibrary}</button>
+                  <button className="quiet" onClick={openLocalPdf}>{t.chooseLocalPdf}</button>
+                  <button
+                    className="danger"
+                    onClick={() =>
+                      saveSettings({
+                        disabledOrigins: origin
+                          ? [...settingsRef.current.disabledOrigins, origin]
+                          : settingsRef.current.disabledOrigins,
+                      })
+                    }
+                  >
+                    {t.pause}
+                  </button>
+                </div>
               </details>
             </footer>
           ) : null}
@@ -1113,6 +1201,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           busyImport={busyImport}
           importBackup={importBackup}
           presetsLoading={presetsLoading}
+          selectionToolbarEnabled={selectionToolbarEnabled}
+          selectionToolbarSaving={selectionToolbarSaving}
+          toggleSelectionToolbar={() => void toggleSelectionToolbar()}
           onPresets={() => {
             if (presetsLoading) return;
             presetTrigger.current = document.activeElement as HTMLElement;

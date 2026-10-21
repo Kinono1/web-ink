@@ -781,18 +781,20 @@ test("sidepanel PDF handoff opens the current source and renders it automaticall
   });
 });
 
-test("sidepanel offers a manual PDF entry when the current page is inaccessible", async () => {
+test("sidepanel keeps unknown context separate from PDF and offers a manual local file", async () => {
   await page.goto(`chrome-extension://${id}/sidepanel.html`);
   const tabId = await page.evaluate(async () => (await chrome.tabs.query({ active: true, currentWindow: true }))[0]!.id!);
   expect(await rpc({ type: "pdf.context.get", tabId })).toMatchObject({ kind: "unavailable", candidates: [] });
-  await expect(page.locator(".pdf-handoff")).toContainText("选择本地文件，或粘贴 PDF 链接");
+  await expect(page.locator(".pdf-handoff")).toHaveCount(0);
+  await expect(page.getByText("请刷新此标签页；如果仍无法读取，请检查网页访问权限。", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "选择本地 PDF", exact: true })).toBeVisible();
   const before = context.pages().length;
   const newPage = context.waitForEvent("page");
-  await page.locator(".pdf-open-current").click();
+  await page.getByRole("button", { name: "选择本地 PDF", exact: true }).click();
   const reader = await newPage;
   expect(context.pages().length).toBe(before + 1);
-  await expect(reader.getByLabel("公开 PDF 网址")).toHaveValue("");
+  await expect(reader).toHaveURL(`chrome-extension://${id}/pdf.html?open=local`);
+  await expect(reader.getByLabel("公开 PDF 网址")).toHaveCount(0);
   await reader.getByLabel("选择本地 PDF", { exact: true }).setInputFiles({ name: "local.pdf", mimeType: "application/pdf", buffer: fixturePdf() });
   await expect(reader.locator(".pdf-page[data-ready=true]")).toBeVisible();
 });

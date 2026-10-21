@@ -60,7 +60,7 @@ it("opens the shared preset editor from Settings without changing the annotation
   expect(host.querySelector('[role="dialog"]')).toBeTruthy();
   expect(set).not.toHaveBeenCalled();
 });
-type TabUpdatedListener = (tabId: number, changeInfo: { url?: string }) => void;
+type TabUpdatedListener = (tabId: number, changeInfo: { url?: string; status?: string }) => void;
 type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void;
 
 afterEach(async () => {
@@ -126,6 +126,177 @@ async function mount(mode: "sidepanel" | "library") {
 }
 
 describe("management UI", () => {
+  it("persists the webpage selection toolbar preference and accepts live storage updates", async () => {
+    const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void>();
+    const stored: Record<string, unknown> = { "ui.selectionToolbarEnabled": true };
+    let rejectWrites = false;
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome, { storage: {
+      local: {
+        get: async (key: string) => ({ [key]: stored[key] }),
+        set: async (values: Record<string, unknown>) => {
+          if (rejectWrites) throw Error("Preference storage denied");
+          Object.assign(stored, values);
+        },
+      },
+      onChanged: {
+        addListener: (listener: (next: Record<string, chrome.storage.StorageChange>, areaName: string) => void) => changes.add(listener),
+        removeListener: (listener: (next: Record<string, chrome.storage.StorageChange>, areaName: string) => void) => changes.delete(listener),
+      },
+    } });
+
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="选中文字时显示工具条"]')!;
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    await act(async () => control.click());
+    expect(stored["ui.selectionToolbarEnabled"]).toBe(false);
+    expect(control.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      for (const listener of changes)
+        listener({ "ui.selectionToolbarEnabled": { newValue: true } as chrome.storage.StorageChange }, "local");
+    });
+    expect(control.getAttribute("aria-checked")).toBe("true");
+
+    rejectWrites = true;
+    await act(async () => {
+      control.click();
+      await Promise.resolve();
+    });
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Preference storage denied");
+  });
+
+  it("keeps a newer storage change when the initial toolbar preference read resolves late", async () => {
+    const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void>();
+    let finishRead: ((value: Record<string, unknown>) => void) | undefined;
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome, { storage: {
+      local: {
+        get: () => new Promise<Record<string, unknown>>((resolve) => { finishRead = resolve; }),
+        set: async () => {},
+      },
+      onChanged: {
+        addListener: (listener: (next: Record<string, chrome.storage.StorageChange>, areaName: string) => void) => changes.add(listener),
+        removeListener: (listener: (next: Record<string, chrome.storage.StorageChange>, areaName: string) => void) => changes.delete(listener),
+      },
+    } });
+
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="选中文字时显示工具条"]')!;
+    await act(async () => {
+      for (const listener of changes)
+        listener({ "ui.selectionToolbarEnabled": { newValue: false } as chrome.storage.StorageChange }, "local");
+      finishRead!({ "ui.selectionToolbarEnabled": true });
+      await Promise.resolve();
+    });
+    expect(control.getAttribute("aria-checked")).toBe("false");
+
+    await act(async () => {
+      for (const listener of changes)
+        listener({ "ui.selectionToolbarEnabled": { oldValue: false } as chrome.storage.StorageChange }, "local");
+    });
+    expect(control.getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("does not present a PDF welcome screen when the active tab URL is unavailable", async () => {
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [], reason: "context-unavailable" } };
+      return { ok: true, data: true };
+    }, { id: 7, url: undefined, title: "Unknown tab" });
+
+    const host = await mount("sidepanel");
+    expect(host.textContent).toContain("无法读取当前页面");
+    expect(host.textContent).not.toContain("在 Web Ink 中读 PDF");
+    expect(host.textContent).toContain("打开资料库");
+    expect(host.textContent).toContain("选择本地 PDF");
+  });
+
+  it("offers webpage access when an unknown tab has not been authorized", async () => {
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [], reason: "context-unavailable" } };
+      return { ok: true, data: true };
+    }, { id: 7, url: undefined, title: "Unknown tab" }, undefined, {
+      contains: async () => false,
+      request: async () => true,
+    });
+
+    const host = await mount("sidepanel");
+    expect([...host.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent === "启用网页访问")).toBe(true);
+  });
+
+  it("ignores completion updates from a background tab", async () => {
+    let updated: TabUpdatedListener | undefined;
+    const sent = installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    }, undefined, (listener) => { updated = listener; });
+
+    await mount("sidepanel");
+    const before = sent.mock.calls.filter(([message]) => message.type === "pdf.context.get").length;
+    await act(async () => {
+      updated!(8, { status: "complete" });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+    });
+    expect(sent.mock.calls.filter(([message]) => message.type === "pdf.context.get")).toHaveLength(before);
+  });
+
+  it("opens and focuses the note editor after a sidepanel selection is saved", async () => {
+    const listeners = new Set<(message: unknown) => void>();
+    const posted: Array<{ requestId: string }> = [];
+    let saved = false;
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: saved ? [record] : [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome.tabs, { connect: () => ({
+      onMessage: { addListener: (listener: (message: unknown) => void) => listeners.add(listener), removeListener: (listener: (message: unknown) => void) => listeners.delete(listener) },
+      onDisconnect: { addListener: () => {}, removeListener: () => {} },
+      postMessage: (message: { requestId: string }) => posted.push(message),
+      disconnect: () => {},
+    }) });
+
+    const host = await mount("sidepanel");
+    const selected = { type: "selection" as const, pageUrl: record.pageUrl, status: "ready" as const, token: "selection", text: record.target.exact };
+    await act(async () => { for (const listener of listeners) listener(selected); });
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="添加笔记"]')!.click());
+    await act(async () => {
+      saved = true;
+      for (const listener of listeners)
+        listener({ type: "saved", requestId: posted[0]!.requestId, annotation: record });
+    });
+
+    const editor = host.querySelector<HTMLTextAreaElement>("textarea")!;
+    expect(editor).toBeTruthy();
+    expect(document.activeElement).toBe(editor);
+  });
+
   it("disables Focus for an unresolved linked annotation and shows its validated original link", async () => {
     const linked: Annotation = {
       ...record,
