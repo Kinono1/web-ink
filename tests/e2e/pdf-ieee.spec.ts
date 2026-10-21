@@ -382,7 +382,7 @@ test("IEEE content menu delegates the site-session grant to the background and o
   const pen = ieee.locator(".web-ink-palette-toggle");
   await expect(pen).toBeEnabled();
   await pen.click();
-  const action = ieee.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true });
+  const action = ieee.getByRole("menuitem", { name: "标注当前 PDF", exact: true });
   await expect(action).toBeVisible();
   await action.click();
   await expect(ieee).toHaveURL(new RegExp(`^chrome-extension://${extensionId}/pdf\\.html\\?`));

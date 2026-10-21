@@ -87,7 +87,7 @@ it('renders an IEEE wrapper action without the content-script permissions API', 
   const root = f.host.shadowRoot!;
   await vi.waitFor(() => expect(root.querySelector('[data-action="open-ieee"]')).not.toBeNull());
   expect(root.querySelector<HTMLButtonElement>('[data-action="open-ieee"]')!.textContent)
-    .toBe('用 Web Ink 标注当前 PDF');
+    .toBe('标注当前 PDF');
 });
 
 it('renders explicit IEEE candidate choices when the wrapper observed several sources', async () => {

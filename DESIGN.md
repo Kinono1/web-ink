@@ -210,6 +210,12 @@ PR/main/installation acceptance remain pending.
 
 The draggable pen opens a compact, document-aware menu and closes on its second click, outside input, Escape, drag, or document replacement. PDF sources lead directly to the same-tab reader; multiple embedded sources are explicit choices. Normal webpages expose their annotation mode in the first action. Local PDF, current notes, and library remain fixed destinations. The menu does not show annotation records, download a PDF on expansion, or load the annotation engine. It uses the shared surface, type, focus, and theme tokens and stays inside the viewport.
 
+The launcher menu is 240px wide when space permits, with 14px system text,
+38px minimum rows and 16px icons. Every action shares a left-aligned icon and
+text column. The current-PDF action uses a short label; a separator places the
+local-file action after the document and library actions. Narrow windows and
+long source names wrap text without clipping it or shrinking the hit target.
+
 ### Focus reading and annotation presets
 
 Focus is optional and scoped to the current reader session. It hides the 52px
