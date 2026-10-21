@@ -256,7 +256,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
     };
     if (menuContext?.publisher === "ieee") {
-      const label = zh ? "用 Web Ink 标注当前 PDF" : "Annotate current PDF in Web Ink";
+      const label = zh ? "标注当前 PDF" : "Annotate this PDF";
       const ieeeCandidates = menuContext.candidates.filter(isIeeeCandidate);
       const publicCandidates = menuContext.candidates.filter(candidate => !isIeeeCandidate(candidate));
       if (!ieeeCandidates.length) {
@@ -290,19 +290,19 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
           label: menuContext.candidates.length === 1
-            ? zh ? "用 Web Ink 标注当前 PDF" : "Annotate current PDF in Web Ink"
+            ? zh ? "标注当前 PDF" : "Annotate this PDF"
             : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
     } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
       items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
         label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
-          : enabled ? "Disable annotations on this page" : "Enable annotations on this page" });
+          : enabled ? "Disable page annotations" : "Enable page annotations" });
     }
     items.push(
-      { action: "sidebar", icon: "note", label: zh ? "查看本篇标注" : "Page annotations" },
+      { action: "sidebar", icon: "note", label: zh ? "本篇标注" : "Page annotations" },
       { action: "library", icon: "library", label: zh ? "资料库" : "Library" },
-      { action: "local-pdf", icon: "pdf", label: zh ? "选择电脑上的 PDF…" : "Choose a local PDF…" },
+      { action: "local-pdf", icon: "pdf", label: zh ? "打开本地 PDF…" : "Open local PDF…" },
     );
     if (opening && menuContext?.publisher === 'ieee') {
       if (items[0]) items[0].label = pdfPreparationLabel(preparationPhase, language);

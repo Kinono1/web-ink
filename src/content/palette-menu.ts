@@ -30,13 +30,15 @@ export function createPaletteMenu(
   const style = document.createElement('style');
   style.textContent = `
     .web-ink-palette-menu[hidden] { display:none!important; }
-    .web-ink-palette-menu { position:fixed; width:260px; padding:6px; border-radius:12px; background:var(--ink-surface-solid); color:var(--ink-text); box-shadow:0 0 0 1px var(--ink-separator),var(--ink-shadow); pointer-events:auto; overflow:auto; }
-    .web-ink-palette-menu button { display:flex; align-items:center; gap:10px; width:100%; min-height:36px; padding:8px 10px; border:0; border-radius:8px; text-align:left; background:transparent; color:var(--ink-text); font:inherit; line-height:20px; overflow-wrap:anywhere; }
+    .web-ink-palette-menu { position:fixed; box-sizing:border-box; width:240px; padding:6px; border-radius:12px; background:var(--ink-surface-solid); color:var(--ink-text); font:400 var(--ink-size-body)/20px var(--ink-font); box-shadow:0 0 0 1px var(--ink-separator),0 4px 16px color-mix(in srgb,var(--ink-text) 10%,transparent); pointer-events:auto; overflow:auto; }
+    .web-ink-palette-menu button { display:flex; align-items:center; justify-content:flex-start; gap:8px; width:100%; min-height:38px; padding:9px 10px; border:0; border-radius:8px; text-align:left; background:transparent; color:var(--ink-text); font:inherit; overflow-wrap:anywhere; }
+    .web-ink-palette-menu button span { min-width:0; }
     .web-ink-palette-menu button:hover { background:var(--ink-fill); }
     .web-ink-palette-menu button[data-primary=true] { font-weight:600; }
     .web-ink-palette-menu button:disabled { opacity:.5; cursor:default; }
     .web-ink-palette-menu button:focus-visible { outline:2px solid var(--ink-accent); outline-offset:-2px; }
-    .web-ink-palette-menu svg { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .web-ink-palette-menu svg { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .web-ink-palette-menu [role=separator] { height:1px; margin:4px 10px; background:var(--ink-separator); }
     .web-ink-palette-menu p { margin:6px 10px; font-size:12px; line-height:18px; color:var(--ink-secondary); overflow-wrap:anywhere; }
     .web-ink-palette-menu [role=alert] { color:var(--ink-danger); }
   `;
@@ -53,13 +55,13 @@ export function createPaletteMenu(
   let disposed = false;
   let pendingFocus: PaletteMenuItem | undefined;
   const position = () => {
-    const width = Math.min(260, Math.max(0, innerWidth - 24));
+    const width = Math.min(240, Math.max(0, innerWidth - 24));
     const left = Number.parseFloat(anchor.style.left) || 0;
     const top = Number.parseFloat(anchor.style.top) || 0;
     panel.style.width = `${width}px`;
     panel.style.maxWidth = `${Math.max(0, innerWidth - 24)}px`;
     panel.style.maxHeight = `${Math.max(0, innerHeight - 24)}px`;
-    const height = Math.min(panel.offsetHeight || state.items.length * 36 + 16, Math.max(0, innerHeight - 24));
+    const height = Math.min(panel.offsetHeight || state.items.length * 38 + 12, Math.max(0, innerHeight - 24));
     panel.style.left = `${Math.max(12, Math.min(left + 40 - width, innerWidth - width - 12))}px`;
     const preferredTop = top - height - 8 >= 12 ? top - height - 8 : top + 48;
     panel.style.top = `${Math.max(12, Math.min(preferredTop, innerHeight - height - 12))}px`;
@@ -135,6 +137,11 @@ export function createPaletteMenu(
     panel.setAttribute('aria-busy', String(Boolean(state.pending || state.loading)));
     panel.replaceChildren();
     for (const item of state.items) {
+      if (item.action === 'local-pdf' && panel.childElementCount) {
+        const separator = document.createElement('div');
+        separator.setAttribute('role', 'separator');
+        panel.append(separator);
+      }
       const button = document.createElement('button'); button.type = 'button';
       button.setAttribute('role', 'menuitem'); button.dataset.action = item.action;
       button.dataset.primary = String(Boolean(item.primary));

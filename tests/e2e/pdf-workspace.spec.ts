@@ -196,17 +196,58 @@ test.afterEach(async ({}, info) => {
   if (folder) await rm(folder, { recursive: true, force: true });
 });
 
+test("floating menu keeps one text column and readable actions across languages, themes and narrow windows", async () => {
+  const { original } = await publicPdfOriginal();
+  const pen = original.locator('.web-ink-palette-toggle');
+  await expect(pen).toBeEnabled();
+  for (const [language, theme] of [['en', 'light'], ['zh-CN', 'dark']] as const) {
+    const settings = await rpc<Settings>(control, { type: 'settings.get' });
+    await rpc(control, { type: 'settings.put', settings: { ...settings, language, theme } });
+    for (const width of [1280, 320, 200]) {
+      await original.setViewportSize({ width, height: 500 });
+      await pen.click();
+      const menu = original.locator('.web-ink-palette-menu');
+      await expect(menu.getByRole('menuitem')).toHaveCount(4);
+      const layout = await menu.evaluate(panel => {
+        const box = panel.getBoundingClientRect();
+        return {
+          left: box.left, right: box.right, width: box.width,
+          overflow: panel.scrollWidth > panel.clientWidth,
+          rows: [...panel.querySelectorAll('button[role=menuitem]')].map(button => {
+            const row = button.getBoundingClientRect();
+            const icon = button.querySelector('svg')!.getBoundingClientRect();
+            const label = button.querySelector('span')!.getBoundingClientRect();
+            return { iconLeft: icon.left, textLeft: label.left, height: row.height, textHeight: label.height };
+          }),
+        };
+      });
+      expect(layout.width).toBeLessThanOrEqual(240);
+      expect(layout.left).toBeGreaterThanOrEqual(12);
+      expect(layout.right).toBeLessThanOrEqual(width - 12);
+      expect(layout.overflow).toBe(false);
+      for (const row of layout.rows) {
+        expect(row.iconLeft).toBeCloseTo(layout.left + 16, 0);
+        expect(row.textLeft).toBeCloseTo(layout.rows[0]!.textLeft, 0);
+        expect(row.height).toBeGreaterThanOrEqual(36);
+        if (width >= 320) expect(row.textHeight).toBeLessThanOrEqual(20);
+      }
+      await original.keyboard.press('Escape');
+      await expect(menu).toBeHidden();
+    }
+  }
+});
+
 test("floating pen directly opens the current PDF without enabling webpage annotations", async () => {
   const { original, tabId } = await publicPdfOriginal();
   const count = context.pages().length;
   const pen = original.locator('.web-ink-palette-toggle');
   await expect(pen).toBeEnabled();
   await pen.click();
-  await expect(original.getByRole('menuitem', { name: '用 Web Ink 标注当前 PDF', exact: true })).toBeVisible();
+  await expect(original.getByRole('menuitem', { name: '标注当前 PDF', exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute('aria-pressed', 'false');
   await pen.click(); await expect(original.locator('.web-ink-palette-menu')).toBeHidden();
   await pen.click();
-  await original.getByRole('menuitem', { name: '用 Web Ink 标注当前 PDF', exact: true }).click();
+  await original.getByRole('menuitem', { name: '标注当前 PDF', exact: true }).click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator('.pdf-page[data-ready=true]').first()).toBeVisible();
   expect(context.pages()).toHaveLength(count);
@@ -226,7 +267,7 @@ test("local PDF menu action opens a separate file-only reader and leaves the sou
   const pen = original.locator(".web-ink-palette-toggle");
   await expect(pen).toBeEnabled();
   await pen.click();
-  const localAction = original.getByRole("menuitem", { name: "选择电脑上的 PDF…", exact: true });
+  const localAction = original.getByRole("menuitem", { name: "打开本地 PDF…", exact: true });
   await expect(localAction).toBeVisible();
 
   const readerOpened = context.waitForEvent("page");
@@ -337,7 +378,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   const menu = original.locator(".web-ink-palette-menu");
   await pen.click();
   await expect(menu).toBeVisible();
-  await expect(original.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true })).toBeVisible();
+  await expect(original.getByRole("menuitem", { name: "标注当前 PDF", exact: true })).toBeVisible();
   await expect(pen).toHaveAttribute("aria-pressed", "false");
   expect(await focusTrace()).toEqual(focusEvidence);
 
@@ -345,7 +386,7 @@ test("floating PDF menu survives a Scholar-like iframe reclaiming focus and keep
   await expect(menu).toBeHidden();
   await pen.click();
   await expect(menu).toBeVisible();
-  const openPdf = original.getByRole("menuitem", { name: "用 Web Ink 标注当前 PDF", exact: true });
+  const openPdf = original.getByRole("menuitem", { name: "标注当前 PDF", exact: true });
   await openPdf.click();
   await expect(original).toHaveURL(new RegExp(`chrome-extension://${id}/pdf.html`));
   await expect(original.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
