@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { textLinkScope, textLinkUrl } from "../src/core/text-link";
 import {
   captureText,
   resolveText,
@@ -62,6 +63,218 @@ describe("real selection boundaries and large restore batches", () => {
 });
 
 describe("TextAnchorSession lifecycle", () => {
+  it("does not accept a prefix-colliding SVG link as the original video", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<svg><a href="https://www.bilibili.com/video/BV12EnJ6WEr9extra?trackid=new"><text>Title</text></a></svg>';
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("keeps Bilibili fragments exact instead of treating them as tracking", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old#first">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    expect(textLinkUrl(target, document.URL)).toContain("#first");
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=new#second";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("never expands a query-only Bilibili link to an empty prefix", () => {
+    const rootSelector = 'a[href="?trackid=old"]';
+    const scope = textLinkScope({ rootSelector }, "https://www.bilibili.com/video/BV12EnJ6WEr9");
+    expect(scope?.selector).toBe(rootSelector);
+    expect(scope?.url).toBe("https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old");
+  });
+
+  it("uses the Bilibili video identity when its observed trackid changes", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old">西安马拉松</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.querySelector("a")!.setAttribute("href", "https://www.bilibili.com/video/BV12EnJ6WEr9/?trackid=new");
+    expect(resolveText(target).range?.toString()).toBe("西安马拉松");
+    expect(textLinkUrl(target, document.URL)).toBe("https://www.bilibili.com/video/BV12EnJ6WEr9");
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9extra?trackid=new";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("recovers a previously saved exact Bilibili link without rewriting the record", () => {
+    const target: TextTarget = { exact: "西安马拉松", prefix: "", suffix: "", start: 0, end: 5,
+      rootSelector: 'a[href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old"]' };
+    const before = structuredClone(target);
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=new">西安马拉松</a>';
+    expect(resolveText(target).range?.toString()).toBe("西安马拉松");
+    expect(target).toEqual(before);
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9?p=2&trackid=new";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it.each(["https://changed.test/", "ftp://changed.test/"])("recaptures instead of saving a linked snapshot after the base changes to %s", (baseUrl) => {
+    document.body.innerHTML = '<main><a href="/video/one">Title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    const base = document.createElement("base");
+    try {
+      session.capture(range);
+      base.href = baseUrl;
+      document.head.append(base);
+      const saved = session.captureSelected(range);
+      expect(saved).toEqual(captureText(range));
+      expect(textLinkUrl(saved, document.URL)).toBeUndefined();
+    } finally {
+      base.remove();
+      session.dispose();
+    }
+  });
+
+  it("invalidates a linked capture when its ancestor becomes editable", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      document.querySelector("main")!.setAttribute("contenteditable", "true");
+      expect(session.resolve(target).status).toBe("unresolved");
+      expect(() => session.captureSelected(range)).toThrow("selection cannot be represented");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("refuses a relative linked scope when the document base changes its destination", () => {
+    document.body.innerHTML = '<a href="/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    const base = document.createElement("base");
+    try {
+      const target = session.capture(range);
+      base.href = "https://changed.test/";
+      document.head.append(base);
+      expect(session.resolve(target).status).toBe("unresolved");
+      base.remove();
+      expect(session.resolve(target).range?.toString()).toBe("Title");
+    } finally {
+      base.remove();
+      session.dispose();
+    }
+  });
+
+  it("does not interpret noncanonical JSON escapes as a linked destination", () => {
+    const rootSelector = 'a[href="https://example.test/\\u0061"]';
+    expect(textLinkUrl({ rootSelector }, "https://example.test/feed")).toBeUndefined();
+  });
+
+  it("uses a linked content identity instead of a recycled DOM id", () => {
+    document.body.innerHTML = '<a id="slot-one" href="https://example.test/video/one"><span id="title-one">Title</span></a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("span")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a id="slot-two" href="https://example.test/video/one"><span id="title-two">Title</span></a>';
+    expect(resolveText(target).range?.toString()).toBe("Title");
+  });
+
+  it("queries a shared linked scope only once per unchanged restore batch", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      const query = vi.spyOn(document, "querySelectorAll");
+      for (let i = 0; i < 20; i++) expect(session.resolve(target).status).toBe("located");
+      expect(query.mock.calls.filter(([selector]) => selector === target.rootSelector)).toHaveLength(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("preserves a quoted relative link through selector lookup and URL reconstruction", () => {
+    document.body.innerHTML = '<a>Title</a>';
+    const link = document.querySelector("a")!;
+    link.setAttribute("href", '/video/one?label="quoted"');
+    const range = document.createRange();
+    range.selectNodeContents(link);
+    const target = captureText(range);
+    expect(resolveText(target).range?.toString()).toBe("Title");
+    expect(textLinkUrl(target, "https://example.test/feed")).toBe("https://example.test/video/one?label=%22quoted%22");
+  });
+
+  it("never turns unsafe or arbitrary imported selectors into navigation links", () => {
+    for (const href of ['javascript:alert(1)', 'data:text/html,hello', 'https://name:secret@example.test/', 'https://example.test/\npath']) {
+      expect(textLinkUrl({ rootSelector: `a[href=${JSON.stringify(href)}]` } as TextTarget, "https://example.test/feed")).toBeUndefined();
+    }
+    expect(textLinkUrl({ rootSelector: 'body, a[href="https://example.test/video/one"]' } as TextTarget, "https://example.test/feed")).toBeUndefined();
+  });
+
+  it("restores a linked recommendation after neighbouring cards change", () => {
+    document.body.innerHTML = '<main><p>Previous recommendation</p><a href="https://example.test/video/one">A saved recommendation</a><p>Next recommendation</p></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      document.querySelector("main")!.innerHTML = '<p>New preceding recommendation</p><a href="https://example.test/video/one">A saved recommendation</a><p>New following recommendation</p>';
+      expect(session.resolve(target).range?.toString()).toBe("A saved recommendation");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("does not move a linked title to a different video with identical text", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Same title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.querySelector("a")!.href = "https://example.test/video/two";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("keeps missing recommendations unresolved and restores only their original link when it returns", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">A saved recommendation</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a href="https://example.test/video/two">A saved recommendation</a>';
+    expect(resolveText(target).status).toBe("unresolved");
+    document.body.insertAdjacentHTML("beforeend", '<a href="https://example.test/video/one"><span>A saved recommendation</span></a>');
+    const result = resolveText(target);
+    expect(result.status).toBe("located");
+    expect(result.range?.startContainer.parentElement?.closest("a")?.href).toBe("https://example.test/video/one");
+  });
+
+  it("ignores empty thumbnail links but rejects duplicate matching titles", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a href="https://example.test/video/one"><img alt="Thumbnail"></a><a href="https://example.test/video/one">Title</a>';
+    expect(resolveText(target).range?.toString()).toBe("Title");
+    document.body.insertAdjacentHTML("beforeend", '<a href="https://example.test/video/one">Title</a>');
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("does not rebuild a linked reading index for unrelated feed mutations", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Title</a><p id="other">Views: 1</p></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    let builds = 0;
+    const session = new TextAnchorSession(document, { onIndexBuild: () => builds++ });
+    try {
+      const target = session.capture(range);
+      document.querySelector("#other")!.textContent = "Views: 2";
+      expect(session.resolve(target).range?.toString()).toBe("Title");
+      expect(builds).toBe(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("shares the mouseup reading with save capture when the DOM and boundaries are unchanged", () => {
     document.body.innerHTML =
       '<main id="story"><p id="target">before chosen after</p></main>';

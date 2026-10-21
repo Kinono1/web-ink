@@ -126,6 +126,83 @@ async function mount(mode: "sidepanel" | "library") {
 }
 
 describe("management UI", () => {
+  it("disables Focus for an unresolved linked annotation and shows its validated original link", async () => {
+    const linked: Annotation = {
+      ...record,
+      note: "Keep this note",
+      target: {
+        ...record.target,
+        rootSelector: 'a[href="https://content.example.test/original-story"]',
+      },
+    };
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [linked] } };
+      if (message.type === "page.state.get") {
+        return {
+          ok: true,
+          data: {
+            pageUrl: linked.pageUrl,
+            states: [{ id: linked.id, status: "unresolved", reason: "Original location is unavailable." }],
+          },
+        };
+      }
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      if (message.type === "pdf.context.get") {
+        return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [], reason: "not-pdf" } };
+      }
+      return { ok: true, data: true };
+    });
+
+    const host = await mount("sidepanel");
+    await act(async () => {
+      (host.querySelector(".annotation-row") as HTMLButtonElement).click();
+    });
+
+    const focus = [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")]
+      .find((button) => button.textContent === "定位");
+    expect(focus?.disabled).toBe(true);
+    const original = [...host.querySelectorAll<HTMLAnchorElement>(".detail-actions a")]
+      .find((anchor) => anchor.textContent === "打开原内容");
+    expect(original?.href).toBe("https://content.example.test/original-story");
+    expect(original?.getAttribute("target")).toBe("_blank");
+    expect(original?.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(host.textContent).toContain("当前页面未能确认原标注位置。摘录和笔记仍已保留。");
+    expect(host.textContent).toContain("Keep this note");
+  });
+
+  it("does not infer an original-content link from legacy or unsafe text targets", async () => {
+    const legacy: Annotation = {
+      ...record,
+      target: { ...record.target, rootSelector: "body" },
+    };
+    const unsafe: Annotation = {
+      ...record,
+      id: "unsafe-link",
+      target: { ...record.target, rootSelector: 'a[href="javascript:alert(1)"]' },
+    };
+    installChrome((message) => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [legacy, unsafe] } };
+      return { ok: true, data: true };
+    });
+
+    const host = await mount("library");
+    await act(async () => {
+      (host.querySelector(".annotation-row") as HTMLButtonElement).click();
+    });
+    expect([...host.querySelectorAll<HTMLAnchorElement>(".detail-actions a")]
+      .some((anchor) => anchor.textContent === "打开原内容")).toBe(false);
+
+    await act(async () => {
+      (host.querySelectorAll<HTMLButtonElement>(".annotation-row")[1]!).click();
+    });
+    expect([...host.querySelectorAll<HTMLAnchorElement>(".detail-actions a")]
+      .some((anchor) => anchor.textContent === "打开原内容")).toBe(false);
+    expect([...host.querySelectorAll<HTMLAnchorElement>(".detail-actions a")]
+      .some((anchor) => anchor.href.startsWith("javascript:"))).toBe(false);
+  });
+
   it("Open PDF uses a learned DOI for a legacy IEEE record and carries its recovery target", async () => {
     const hash = "a".repeat(64);
     const pdf: Annotation = { ...record, id: "legacy-ieee", kind: "pdf-text", pageUrl: `urn:web-ink:pdf:${hash}`,

@@ -13,6 +13,7 @@ import {
   type TextAnnotation,
 } from "../core/model";
 import { TextAnchorSession } from "../core/text-anchor";
+import { textLinkScope, textLinkUrl } from "../core/text-link";
 import { captureImage, resolveImage } from "../core/image-anchor";
 import { clientToImage } from "../core/geometry";
 import { pageKey } from "../core/url";
@@ -1315,27 +1316,65 @@ export function startEngine(
   );
   const resizeObserver = new ResizeObserver(schedulePaint);
   const mutationObserver = new MutationObserver((mutations) => {
-    const relevant = mutations.filter(
-      (m) =>
-        !view.host.contains(m.target) &&
-        m.target !== highlightStyle &&
-        !(m.target instanceof Element && m.target.closest("[data-web-ink]")),
-    );
+    const relevant = mutations.filter((m) => {
+      if (
+        view.host.contains(m.target) ||
+        m.target === highlightStyle ||
+        (m.target instanceof Element && m.target.closest("[data-web-ink]"))
+      )
+        return false;
+      // Head updates are ignored except for a base change affecting linked
+      // records. Inserting styles or metadata must not trigger text rescans.
+      if (document.head?.contains(m.target)) {
+        const baseChanged = m.target instanceof HTMLBaseElement ||
+          [...m.addedNodes, ...m.removedNodes].some(node =>
+            node instanceof Element &&
+            (node.tagName === "BASE" || node.querySelector("base[href]")),
+          );
+        return baseChanged && annotations.some(record =>
+          record.kind === "text" && textLinkUrl(record.target, record.pageUrl),
+        );
+      }
+      return true;
+    });
     if (
-      relevant.some(
-        (m) =>
+      relevant.some((m) => {
+        if (
           m.type !== "attributes" ||
           m.attributeName === "src" ||
           m.attributeName === "srcset" ||
           m.attributeName === "contenteditable" ||
-          m.attributeName === "id",
-      )
+          m.attributeName === "id" ||
+          m.target instanceof HTMLBaseElement
+        )
+          return true;
+        if (m.attributeName !== "href" || !(m.target instanceof HTMLAnchorElement))
+          return false;
+        const link = m.target;
+        // A recycled recommendation can change destination without changing its
+        // title. Only affected linked annotations need another restore pass.
+        return annotations.some((record) => {
+          if (record.kind !== "text") return false;
+          const scope = textLinkScope(record.target, record.pageUrl);
+          if (!scope) return false;
+          const range = textRanges.get(record.id);
+          return link.matches(scope.selector) ||
+            Boolean(range && link.contains(range.startContainer));
+        });
+      })
     ) {
       queueRefresh();
     }
     if (relevant.length) schedulePaint();
   });
   function observeReadingPage() {
+    if (document.head)
+      mutationObserver.observe(document.head, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ["href"],
+      });
     mutationObserver.observe(document.body, {
       childList: true,
       subtree: true,
@@ -1348,6 +1387,7 @@ export function startEngine(
         "style",
         "contenteditable",
         "id",
+        "href",
       ],
     });
   }
