@@ -189,6 +189,89 @@ async function expectSidepanelFitsViewport(height: number) {
   expect(dock!.y + dock!.height).toBeLessThanOrEqual(height);
 }
 
+test("sidepanel captures a webpage selection with automatic toolbars off and restores the saved note", async () => {
+  await enable();
+  const page = await article(false);
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  await openSidepanel(page);
+  const selection = manager.getByRole("region", { name: "当前选区", exact: true });
+  await page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(selection).toContainText("Precise highlights survive a return visit.");
+  await expect(page.locator(".bar.selection")).not.toBeVisible();
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+  await selection.getByRole("button", { name: "添加笔记", exact: true }).click();
+  const editor = manager.getByRole("textbox", { name: "笔记", exact: true });
+  await expect(editor).toBeFocused();
+  await editor.fill("手动侧栏标注，不自动弹出工具条");
+  await manager.getByRole("button", { name: "保存", exact: true }).click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" }))[0]?.note).toBe("手动侧栏标注，不自动弹出工具条");
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBeGreaterThan(0);
+  expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].target.exact).toBe("Precise highlights survive a return visit.");
+  await page.locator("#selection").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(selection).toContainText("这是一段可标记的中文。");
+  await manager.setViewportSize({ width: 320, height: 640 });
+  await expectSidepanelFitsViewport(640);
+});
+
+test("selection toolbar preference hides only automatic actions and follows live changes", async () => {
+  await enable();
+  const page = await article();
+  await openSidepanel(page);
+  const control = manager.getByRole("switch", { name: "选中文字时显示工具条", exact: true });
+  await expect(control).toHaveAttribute("aria-checked", "true");
+  await control.click();
+  await expect(control).toHaveAttribute("aria-checked", "false");
+  const select = async () => page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await select();
+  await expect(manager.getByRole("region", { name: "当前选区", exact: true })).toContainText("Precise highlights");
+  await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
+  await expect(control).toHaveAttribute("aria-checked", "true");
+  await select();
+  await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+});
+
+test("manual sidebar annotation clears changed selected text and ignores editor selections", async () => {
+  await enable();
+  const page = await article(false);
+  await openSidepanel(page);
+  const selection = manager.getByRole("region", { name: "当前选区", exact: true });
+  await page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(selection).toContainText("Precise highlights");
+  await expect(selection.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeEnabled();
+  await page.locator("#selection strong").evaluate(element => { element.textContent = "Different replacement text"; });
+  await expect(selection.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  await expect(selection).not.toContainText("Precise highlights");
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+  await page.evaluate(() => {
+    const editor = document.createElement("div"); editor.contentEditable = "true"; editor.textContent = "Private draft";
+    document.body.append(editor); editor.focus();
+    const range = document.createRange(); range.selectNodeContents(editor);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    editor.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(selection).not.toContainText("Private draft");
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+});
+
 test("production permission is optional, onboarding is reachable, and pages are untouched before grant", async () => {
   const manifest = JSON.parse(
     await readFile(path.join(extensionPath, "manifest.json"), "utf8"),

@@ -29,6 +29,7 @@ import {
   readAnnotationPresets,
   type AnnotationPreset,
 } from "../core/annotation-presets";
+import { readSelectionToolbarEnabled, SELECTION_TOOLBAR_KEY } from "../core/selection-toolbar";
 
 export interface ContentEngine {
   stop: () => void;
@@ -38,6 +39,7 @@ export interface ContentEngine {
   ) => void;
   snapshot: () => { pageUrl: string; states: AnchorState[]; enabled: boolean };
   canStop: () => boolean;
+  annotateSelection: (range: Range, color: string, isCurrent: () => boolean) => Promise<TextAnnotation>;
 }
 
 /** Heavy DOM work lives in engine.js. The runtime bootstrap owns the host and palette. */
@@ -64,6 +66,9 @@ export function startEngine(
   let renderFrame = 0;
   let refreshDepth = 0;
   let selectedRange: Range | undefined;
+  let selectionToolbarEnabled = true;
+  let selectionPaletteAutomatic = false;
+  let selectionToolbarReadGeneration = 0;
   let actionRecords: Array<TextAnnotation | ImageAnnotation> = [];
   const removedRecords: Array<TextAnnotation | ImageAnnotation> = [];
   let rebinding: Annotation | undefined;
@@ -165,6 +170,7 @@ export function startEngine(
   };
   const hideSelection = () => {
     selectedRange = undefined;
+    selectionPaletteAutomatic = false;
     actionRecords = [];
     view.selection.style.display = "none";
   };
@@ -231,6 +237,7 @@ export function startEngine(
   }
 
   function showPalette(range: Range) {
+    selectionPaletteAutomatic = !rebinding;
     actionRecords = [];
     selectedRange = range.cloneRange();
     const rect = range.getBoundingClientRect();
@@ -351,6 +358,7 @@ export function startEngine(
     rect: { left: number; bottom: number },
   ) {
     selectedRange = undefined;
+    selectionPaletteAutomatic = false;
     actionRecords = records;
     view.selection.replaceChildren();
     for (const [index, record] of records.entries()) {
@@ -561,6 +569,30 @@ export function startEngine(
       await commit(record);
     } catch (error) {
       fail(error);
+    }
+  }
+
+  async function annotateSelection(range: Range, color: string, isCurrent: () => boolean): Promise<TextAnnotation> {
+    if (!/^#[0-9a-f]{6}$/i.test(color)) throw Error("Choose a six-digit HEX annotation color.");
+    if (!modeReady) await refresh();
+    if (!isCurrent() || disposed || pageKey(location.href) !== currentUrl)
+      throw Error("The page or selection changed. Select the text again.");
+    if (!enabled()) throw Error("Webpage annotations are paused or unavailable.");
+    if (pendingSave || unsaved || rebinding || mode !== "idle") throw Error("Finish the current annotation before saving this selection.");
+    const target = textSession.captureSelected(range);
+    if (!isCurrent()) throw Error("The selection changed. Select the text again.");
+    const record: TextAnnotation = { ...baseRecord(color), kind: "text", target };
+    pendingSave = true;
+    try {
+      // Sidebar callers need the durable result or the original storage error.
+      // The palette's commit() keeps its existing local-draft retry behavior.
+      const stored = await request<TextAnnotation>({ type: "annotations.put", annotation: record, expectedRevision: 0 });
+      if (disposed || !isCurrent() || stored.pageUrl !== currentUrl)
+        throw Error("The annotation was saved, but the page or selection changed. Check the library before retrying.");
+      applyAnnotationDelta(stored, undefined, stored.pageUrl);
+      return stored;
+    } finally {
+      pendingSave = false;
     }
   }
 
@@ -785,6 +817,7 @@ export function startEngine(
     if (disposed) return;
     const token = ++generation;
     const presetReadToken = ++presetReadGeneration;
+    const toolbarReadToken = ++selectionToolbarReadGeneration;
     refreshDepth++;
     let requestedUrl = currentUrl;
     try {
@@ -815,9 +848,10 @@ export function startEngine(
         hideSelection();
       }
       requestedUrl = currentUrl;
-      const [newSettings, pageMode] = await Promise.all([
+      const [newSettings, pageMode, autoToolbar] = await Promise.all([
         request<Settings>({ type: "settings.get" }),
         request<PageMode>({ type: "page.mode.get", pageUrl: requestedUrl }),
+        readSelectionToolbarEnabled(),
       ]);
       const newPresets = await readAnnotationPresets(newSettings.language);
       if (token !== generation || disposed) return;
@@ -831,6 +865,10 @@ export function startEngine(
       if (settings.defaultColor !== newSettings.defaultColor || mode === "idle")
         currentColor = newSettings.defaultColor;
       settings = newSettings;
+      if (toolbarReadToken === selectionToolbarReadGeneration) {
+        selectionToolbarEnabled = autoToolbar;
+        if (!autoToolbar && selectionPaletteAutomatic) hideSelection();
+      }
       if (presetReadToken === presetReadGeneration)
         annotationPresets = newPresets;
       view.applyPreferences(settings);
@@ -1151,6 +1189,10 @@ export function startEngine(
         return;
       }
       const range = selection.getRangeAt(0);
+      if (!selectionToolbarEnabled && !rebinding) {
+        hideSelection();
+        return;
+      }
       try {
         textSession.capture(range);
         showPalette(range);
@@ -1263,7 +1305,13 @@ export function startEngine(
     changes: { [key: string]: chrome.storage.StorageChange },
     areaName: string,
   ) => {
-    if (!changes["ui.annotationPresets"] || areaName !== "local" || disposed)
+    if (areaName !== "local" || disposed) return;
+    if (changes[SELECTION_TOOLBAR_KEY]) {
+      selectionToolbarReadGeneration++;
+      selectionToolbarEnabled = changes[SELECTION_TOOLBAR_KEY]!.newValue !== false;
+      if (!selectionToolbarEnabled && selectionPaletteAutomatic) hideSelection();
+    }
+    if (!changes["ui.annotationPresets"])
       return;
     const token = generation;
     const presetReadToken = ++presetReadGeneration;
@@ -1623,5 +1671,6 @@ export function startEngine(
     dispatch,
     snapshot: () => ({ pageUrl: currentUrl, states, enabled: enabled() }),
     canStop,
+    annotateSelection,
   };
 }

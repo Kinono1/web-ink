@@ -7,6 +7,7 @@ import {
   type RuntimeHealth,
   type Settings,
   type PdfTabContext,
+  type TextAnnotation,
 } from "../core/model";
 import { pageKey } from "../core/url";
 import { createPaletteToggle } from "./palette-toggle";
@@ -15,6 +16,7 @@ import { getPdfContext } from "../pdf/context";
 import { readPalettePosition } from "./palette-position";
 import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
+import { createWebSelection } from "./web-selection";
 
 export interface EngineBridge {
   generation: string;
@@ -27,6 +29,7 @@ export interface EngineBridge {
   ) => void;
   snapshot: () => { pageUrl: string; states: unknown[]; enabled: boolean };
   canStop: (generation?: string) => boolean;
+  annotateSelection?: (range: Range, color: string, generation: string, isCurrent: () => boolean) => Promise<TextAnnotation>;
 }
 export interface ContentBootstrap {
   health: RuntimeHealth;
@@ -86,6 +89,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   let disposed = false;
   let enabled = false;
   let blocked = false;
+  let accessReady = false;
+  let permissionRevoked = false;
   let permissionEpoch = 0;
   let busy = true;
   let language: Settings["language"] = DEFAULT_SETTINGS.language;
@@ -153,7 +158,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return;
       language = settings.language;
       view.applyPreferences(settings);
-      blocked = settings.disabledOrigins.includes(location.origin);
+      blocked = permissionRevoked || settings.disabledOrigins.includes(location.origin);
+      accessReady = true;
       enabled = mode.enabled;
       if (enabled && !blocked) await ensureEngine();
       else stopEngine();
@@ -165,11 +171,13 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       }
       // Keep page annotation off until a later permission/mode refresh.
       enabled = false;
+      accessReady = false;
       stopEngine();
     } finally {
       if (!disposed && epoch === permissionEpoch && pageKey(location.href) === url) {
         if (showBusy) busy = false;
         updateToggle();
+        selectionSession.refresh();
       }
     }
   };
@@ -222,6 +230,29 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     if (!enabled || blocked || !(await ensureEngine())) return;
     window.__webInkEngine?.dispatch(action, id, health.generation);
   };
+  const selectionSession = createWebSelection({
+    host: view.host,
+    availability: () => blocked ? "paused" : !disposed && accessReady ? "ready" : "unsupported",
+    save: async (range, color, isCurrent) => {
+      const assertCurrent = () => {
+        if (!isCurrent()) throw Error("The page or selection changed. Select the text again.");
+      };
+      assertCurrent();
+      // Recheck site policy and permission before this explicit operation enables
+      // a page. A sidepanel connection alone never starts the heavy engine.
+      await refreshMode(false);
+      if (blocked || !accessReady) throw Error("Webpage annotations are paused or unavailable. Check site access and try again.");
+      assertCurrent();
+      if (!enabled && !await setEnabled(true)) throw Error("Could not enable webpage annotations. Check site access and try again.");
+      assertCurrent();
+      if (!await ensureEngine()) throw Error("The webpage annotation engine is unavailable.");
+      assertCurrent();
+      const bridge = window.__webInkEngine;
+      if (bridge?.generation !== health.generation || !bridge.annotateSelection)
+        throw Error("The webpage annotation engine changed. Reload this page.");
+      return bridge.annotateSelection(range, color, health.generation, isCurrent);
+    },
+  });
   const positionWriter = createPalettePositionWriter(
     position => chrome.storage.local.set({ [PALETTE_POSITION_KEY]: position }),
   );
@@ -397,10 +428,13 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       menu.close();
       permissionEpoch++;
       blocked = true;
+      permissionRevoked = true;
+      accessReady = false;
       enabled = false;
       busy = false;
       stopEngine(true);
       updateToggle();
+      selectionSession.refresh();
       return false;
     }
     if (
@@ -409,7 +443,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       (message.type === "page.mode.changed" &&
         (!message.pageUrl || message.pageUrl === pageKey(location.href)))
     ) {
-      if (message.type === "permissions.restored") permissionEpoch++;
+      if (message.type === "permissions.restored") { permissionEpoch++; permissionRevoked = false; }
       // Appearance updates must not briefly disable and cancel an active drag.
       // Pausing an origin still cancels once its actual blocked state is read.
       void refreshMode(message.type !== "settings.changed");
@@ -437,7 +471,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   };
   const route = () => {
     if (disposed) return;
-    if (pageKey(location.href) !== currentUrl) { menu.close(); void refreshMode(); }
+    if (pageKey(location.href) !== currentUrl) { selectionSession.refresh(); menu.close(); void refreshMode(); }
   };
   const bootstrap: ContentBootstrap = {
     health,
@@ -446,6 +480,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      selectionSession.dispose();
       try {
         chrome.runtime.onMessage.removeListener(onMessage);
       } catch {

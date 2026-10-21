@@ -101,6 +101,92 @@
 .sidepanel-content > * {
   flex-shrink: 0;
 }
+.sidepanel .selection-toolbar-setting {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 8px;
+}
+.sidepanel .selection-toolbar-setting .page-switch {
+  white-space: nowrap;
+}
+.sidepanel .web-selection {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--ink-radius);
+  background: var(--item-fill);
+}
+.sidepanel .web-selection-copy {
+  min-width: 0;
+}
+.sidepanel .web-selection-copy strong {
+  display: block;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  font-weight: 500;
+}
+.sidepanel .web-selection-copy p {
+  display: -webkit-box;
+  margin-top: 2px;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  color: var(--ink-secondary);
+  font-size: var(--ink-size-meta);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.sidepanel .web-selection-excerpt {
+  color: var(--ink-text) !important;
+  font-family: var(--ink-font-excerpt, var(--ink-font));
+  font-size: var(--ink-size-body) !important;
+}
+.sidepanel .web-selection-actions,
+.sidepanel .web-selection-colors {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.sidepanel .web-selection-actions {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.sidepanel .web-selection-color {
+  position: relative;
+  width: var(--ink-control-min-height);
+  min-width: var(--ink-control-min-height);
+  min-height: var(--ink-control-min-height);
+  height: var(--ink-control-min-height);
+  padding: 0;
+  border-radius: 999px;
+  background: transparent;
+}
+.sidepanel .web-selection-color::before {
+  content: "";
+  width: 22px;
+  height: 22px;
+  border: 1px solid color-mix(in srgb, var(--ink-text) 16%, transparent);
+  border-radius: 999px;
+  background: var(--selection-color);
+}
+.sidepanel .web-selection-color:hover {
+  background: var(--ink-fill-hover);
+}
+.sidepanel .web-selection-color:hover::before {
+  filter: brightness(0.94);
+}
+.sidepanel .web-selection-note {
+  flex: none;
+  padding: 2px 8px;
+  color: var(--ink-secondary);
+}
+.sidepanel .web-selection-error {
+  color: var(--ink-danger);
+  font-size: var(--ink-size-meta);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
 .sidepanel .notice-card {
   align-items: center;
   margin: 0 8px;
@@ -278,10 +364,32 @@
 .sidepanel .dock-draw {
   padding: 4px 10px 4px 8px;
 }
-.sidepanel .menu > button {
+.sidepanel .menu > .sidepanel-more-actions {
   top: auto;
   bottom: calc(100% + 6px);
   max-width: calc(100vw - 48px);
+}
+.sidepanel-more-actions {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  display: grid;
+  min-width: max-content;
+  padding: 4px;
+  border: 1px solid var(--ink-separator);
+  border-radius: var(--ink-radius);
+  background: var(--ink-surface-solid);
+  box-shadow: var(--ink-elevation-float, 0 4px 14px rgb(0 0 0 / 14%));
+}
+.sidepanel-more-actions > button {
+  justify-content: flex-start;
+  white-space: nowrap;
+}
+.sidepanel .unavailable-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
 }
 
 @media (max-width: 340px) {

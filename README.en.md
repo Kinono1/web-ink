@@ -10,7 +10,7 @@
 
 1. Download `web-ink-<version>-chrome.zip` from Releases and extract it into a permanent folder.
 2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select the folder containing `manifest.json`.
-3. Open a webpage, click Web Ink in Chrome's toolbar, grant page access when prompted, and enable the bottom-right page switch before highlighting text.
+3. Open a webpage, click Web Ink in Chrome's toolbar, and grant page access when prompted. Select text and choose a color or add a note in the side panel. To use the floating selection toolbar, enable page annotations from the pen menu.
 
 Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a preview. Check **Library → Settings & data** for the installed version and build identity; source, development builds, and public archives may differ. Consult the release notes for verified coverage.
 
@@ -25,6 +25,7 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 ## Read, annotate, return
 
 - Select webpage text and choose a color. Click a saved mark to add a note or remove it; removal can be undone.
+- Turn off **Show toolbar on text selection** in the side panel or **Settings & data** to stop the webpage selection toolbar from appearing automatically. Manual side-panel annotation and saved records remain available. Paused sites or missing page permission must be resumed or authorized first.
 - Use editable color/tag presets for selected text. PDF **More → Focus reading** hides the reader bar while keeping pages, annotations and exit available.
 - Use the side panel's image tools for rectangles, ellipses, arrows, and freehand drawing.
 - For a PDF in the current tab, click the floating pen and choose **Open current PDF**. If the pen is unavailable, open Web Ink from Chrome's toolbar and choose **Start annotating in this tab** in the existing side panel. With the IEEE PDF already open, choose **Open using IEEE sign-in** from the floating-pen menu or side panel; grant Chrome's IEEE site access if requested. On a page containing only paper information or a download link, first open the PDF on IEEE. The Web Ink reader opens in the same tab and keeps **Return to original reader**. Saved PDF marks and notes appear in the existing Web Ink side panel; the reader has no separate Notes button. If a source cannot be read, download it and choose the file locally.

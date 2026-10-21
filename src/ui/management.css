@@ -227,6 +227,23 @@ button:disabled {
 .page-switch.on > span::after {
   transform: translateX(12px);
 }
+.selection-toolbar-setting {
+  display: grid;
+  gap: 4px;
+}
+.selection-toolbar-setting.described {
+  align-items: start;
+  padding-top: 4px;
+}
+.selection-toolbar-setting.described > strong {
+  font-weight: 500;
+}
+.selection-toolbar-setting .page-switch {
+  justify-self: start;
+}
+.selection-toolbar-setting .hint {
+  margin: 0;
+}
 .menu {
   position: relative;
 }

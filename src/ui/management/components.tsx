@@ -81,6 +81,38 @@ export function PageHeader({
     </section>
   );
 }
+export function SelectionToolbarSwitch({
+  enabled,
+  saving = false,
+  onToggle,
+  t,
+  describe = false,
+}: {
+  enabled: boolean;
+  saving?: boolean;
+  onToggle: () => void;
+  t: (typeof COPY)[Language];
+  describe?: boolean;
+}) {
+  return (
+    <div className={describe ? "selection-toolbar-setting described" : "selection-toolbar-setting"}>
+      {describe ? <strong>{t.webpageSelectionToolbar}</strong> : null}
+      <button
+        className={enabled ? "page-switch on" : "page-switch"}
+        type="button"
+        role="switch"
+        aria-label={t.selectionToolbar}
+        aria-checked={enabled}
+        disabled={saving}
+        onClick={onToggle}
+      >
+        <span aria-hidden="true" />
+        {t.selectionToolbar}
+      </button>
+      {describe ? <p className="hint">{t.selectionToolbarDescription}</p> : null}
+    </div>
+  );
+}
 export function FilterPopover({
   language,
   t,
@@ -714,6 +746,7 @@ export function Editor({
       <label>
         {t.note}
         <textarea
+          autoFocus
           value={draft.note}
           onChange={(event) => onDraft({ note: event.target.value })}
           maxLength={10_000}
@@ -814,6 +847,9 @@ export function SettingsView({
   importBackup,
   onPresets,
   presetsLoading = false,
+  selectionToolbarEnabled,
+  selectionToolbarSaving = false,
+  toggleSelectionToolbar,
 }: {
   settings: Settings;
   t: (typeof COPY)[Language];
@@ -829,6 +865,9 @@ export function SettingsView({
   importBackup: () => void;
   onPresets?: () => void;
   presetsLoading?: boolean;
+  selectionToolbarEnabled: boolean;
+  selectionToolbarSaving?: boolean;
+  toggleSelectionToolbar: () => void;
 }) {
   return (
     <section className="settings-view">
@@ -891,6 +930,13 @@ export function SettingsView({
             label={t.customColor}
           />
         </label>
+        <SelectionToolbarSwitch
+          enabled={selectionToolbarEnabled}
+          saving={selectionToolbarSaving}
+          onToggle={toggleSelectionToolbar}
+          t={t}
+          describe
+        />
         {onPresets && <button className="quiet" disabled={presetsLoading} onClick={onPresets}>
           {language === "zh-CN" ? "标注预设…" : "Annotation presets…"}</button>}
       </section>
