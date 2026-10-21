@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { textLinkUrl } from "../src/core/text-link";
+import { textLinkScope, textLinkUrl } from "../src/core/text-link";
 import {
   captureText,
   resolveText,
@@ -63,6 +63,55 @@ describe("real selection boundaries and large restore batches", () => {
 });
 
 describe("TextAnchorSession lifecycle", () => {
+  it("does not accept a prefix-colliding SVG link as the original video", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<svg><a href="https://www.bilibili.com/video/BV12EnJ6WEr9extra?trackid=new"><text>Title</text></a></svg>';
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("keeps Bilibili fragments exact instead of treating them as tracking", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old#first">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    expect(textLinkUrl(target, document.URL)).toContain("#first");
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=new#second";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("never expands a query-only Bilibili link to an empty prefix", () => {
+    const rootSelector = 'a[href="?trackid=old"]';
+    const scope = textLinkScope({ rootSelector }, "https://www.bilibili.com/video/BV12EnJ6WEr9");
+    expect(scope?.selector).toBe(rootSelector);
+    expect(scope?.url).toBe("https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old");
+  });
+
+  it("uses the Bilibili video identity when its observed trackid changes", () => {
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old">西安马拉松</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.querySelector("a")!.setAttribute("href", "https://www.bilibili.com/video/BV12EnJ6WEr9/?trackid=new");
+    expect(resolveText(target).range?.toString()).toBe("西安马拉松");
+    expect(textLinkUrl(target, document.URL)).toBe("https://www.bilibili.com/video/BV12EnJ6WEr9");
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9extra?trackid=new";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("recovers a previously saved exact Bilibili link without rewriting the record", () => {
+    const target: TextTarget = { exact: "西安马拉松", prefix: "", suffix: "", start: 0, end: 5,
+      rootSelector: 'a[href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=old"]' };
+    const before = structuredClone(target);
+    document.body.innerHTML = '<a href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=new">西安马拉松</a>';
+    expect(resolveText(target).range?.toString()).toBe("西安马拉松");
+    expect(target).toEqual(before);
+    document.querySelector("a")!.href = "https://www.bilibili.com/video/BV12EnJ6WEr9?p=2&trackid=new";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
   it.each(["https://changed.test/", "ftp://changed.test/"])("recaptures instead of saving a linked snapshot after the base changes to %s", (baseUrl) => {
     document.body.innerHTML = '<main><a href="/video/one">Title</a></main>';
     const range = document.createRange();

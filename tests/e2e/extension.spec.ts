@@ -367,6 +367,29 @@ test("linked feed titles survive refresh without binding to reused recommendatio
   expect(backup.annotations).toEqual([saved]);
 });
 
+test("Bilibili tracking changes preserve the video anchor across a real reload", async () => {
+  await enable();
+  const page = await context.newPage();
+  let trackid = "old-visit";
+  await page.route("**/tracked-feed", (route) => route.fulfill({
+    contentType: "text/html; charset=utf-8",
+    body: `<!doctype html><html><body><main><a id="target" href="https://www.bilibili.com/video/BV12EnJ6WEr9?trackid=${trackid}"><span>西安马拉松</span></a></main></body></html>`,
+  }));
+  await page.goto("http://127.0.0.1:4173/tracked-feed");
+  await expect(page.locator("web-ink-ui")).toHaveCount(1);
+  await setPageMode(page, true);
+  await selectAndMark(page, "#target span");
+  const saved = await rpc<any[]>(manager, { type: "annotations.list" });
+  trackid = "new-visit";
+  await page.reload();
+  await expect.poll(() => page.evaluate(() => [...CSS.highlights.values()].flatMap(h => [...h]).length)).toBe(1);
+  expect(await page.evaluate(() => [...CSS.highlights.values()].flatMap(h => [...h]).every(r => (r as Range).startContainer.parentElement?.closest("a")?.href.endsWith("trackid=new-visit")))).toBe(true);
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual(saved);
+  await page.locator("#target").evaluate(link => link.setAttribute("href", "https://www.bilibili.com/video/BV12EnJ6WEr9extra?trackid=new-visit"));
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual(saved);
+});
+
 test("changed source is unresolved, backup remains complete, and stale writes fail", async () => {
   await enable();
   const page = await article();

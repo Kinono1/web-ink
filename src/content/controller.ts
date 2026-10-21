@@ -13,7 +13,7 @@ import {
   type TextAnnotation,
 } from "../core/model";
 import { TextAnchorSession } from "../core/text-anchor";
-import { textLinkUrl } from "../core/text-link";
+import { textLinkScope, textLinkUrl } from "../core/text-link";
 import { captureImage, resolveImage } from "../core/image-anchor";
 import { clientToImage } from "../core/geometry";
 import { pageKey } from "../core/url";
@@ -1354,10 +1354,11 @@ export function startEngine(
         // A recycled recommendation can change destination without changing its
         // title. Only affected linked annotations need another restore pass.
         return annotations.some((record) => {
-          if (record.kind !== "text" || !textLinkUrl(record.target, record.pageUrl))
-            return false;
+          if (record.kind !== "text") return false;
+          const scope = textLinkScope(record.target, record.pageUrl);
+          if (!scope) return false;
           const range = textRanges.get(record.id);
-          return link.matches(record.target.rootSelector) ||
+          return link.matches(scope.selector) ||
             Boolean(range && link.contains(range.startContainer));
         });
       })

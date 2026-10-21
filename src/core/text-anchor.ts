@@ -1,5 +1,5 @@
 import type { AnchorStatus, TextTarget } from "./model";
-import { textLinkSelector, textLinkUrl } from "./text-link";
+import { textLinkScope, textLinkSelector, textLinkUrl } from "./text-link";
 
 const CONTEXT_LENGTH = 64;
 const BLOCK_TAGS = new Set([
@@ -249,24 +249,32 @@ export class TextAnchorSession {
     status: AnchorStatus;
     reason?: string;
   } {
-    const originalLink = textLinkUrl(target, this.doc.URL);
-    if (originalLink) {
-      if (textLinkUrl(target, this.doc.baseURI) !== originalLink)
+    const scope = textLinkScope(target, this.doc.URL);
+    if (scope) {
+      if (textLinkUrl(target, this.doc.baseURI) !== scope.url)
         return {
           status: "unresolved",
           reason: "The original link destination cannot be confirmed with the current document base.",
         };
       const matches: Range[] = [];
-      let roots = this.linkedRoots.get(target.rootSelector);
+      let roots = this.linkedRoots.get(scope.selector);
       if (!roots) {
         try {
-          roots = Array.from(this.doc.querySelectorAll(target.rootSelector));
+          roots = Array.from(this.doc.querySelectorAll(scope.selector));
         } catch {
           return { status: "unresolved", reason: "Reading root is unavailable." };
         }
-        this.linkedRoots.set(target.rootSelector, roots);
+        this.linkedRoots.set(scope.selector, roots);
       }
       for (const root of roots) {
+        if (
+          !(root instanceof HTMLAnchorElement) ||
+          textLinkUrl(
+            { rootSelector: `a[href=${JSON.stringify(root.getAttribute("href"))}]` },
+            this.doc.baseURI,
+          ) !== scope.url
+        )
+          continue;
         const result = this.resolveInRoot(target, root);
         if (
           result.status === "unresolved" &&
@@ -460,7 +468,7 @@ function readingRoot(range: Range, doc: Document): Element {
   const start = elementFor(range.startContainer);
   const end = elementFor(range.endContainer);
   const link = start.closest<HTMLAnchorElement>("a[href]");
-  if (link && link.contains(end) && textLinkSelector(link)) return link;
+  if (link instanceof HTMLAnchorElement && link.contains(end) && textLinkSelector(link)) return link;
   for (
     let current: Element | null = start;
     current && current !== doc.body;
