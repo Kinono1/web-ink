@@ -38,25 +38,39 @@ function annotation(): TextAnnotation {
 }
 
 function installChrome() {
-  const ports: Array<{ messages: unknown[]; listeners: Set<Listener>; disconnect: ReturnType<typeof vi.fn> }> = [];
+  const ports: Array<{
+    messages: unknown[];
+    listeners: Set<Listener>;
+    disconnectListeners: Set<() => void>;
+    disconnect: ReturnType<typeof vi.fn>;
+  }> = [];
   vi.stubGlobal("chrome", {
     tabs: {
       connect: vi.fn(() => {
-        const port = { messages: [] as unknown[], listeners: new Set<Listener>(), disconnect: vi.fn() };
+        const port = {
+          messages: [] as unknown[],
+          listeners: new Set<Listener>(),
+          disconnectListeners: new Set<() => void>(),
+          disconnect: vi.fn(),
+        };
         ports.push(port);
         return {
           onMessage: { addListener: (listener: Listener) => port.listeners.add(listener), removeListener: (listener: Listener) => port.listeners.delete(listener) },
-          onDisconnect: { addListener: () => {}, removeListener: () => {} },
+          onDisconnect: { addListener: (listener: () => void) => port.disconnectListeners.add(listener), removeListener: (listener: () => void) => port.disconnectListeners.delete(listener) },
           postMessage: (message: unknown) => port.messages.push(message),
           disconnect: port.disconnect,
         } as unknown as chrome.runtime.Port;
       }),
     },
+    runtime: { lastError: undefined },
   });
   return {
     ports,
     send(index: number, message: unknown) {
       for (const listener of ports[index]?.listeners ?? []) listener(message);
+    },
+    disconnect(index: number) {
+      for (const listener of ports[index]?.disconnectListeners ?? []) listener();
     },
   };
 }
@@ -67,6 +81,7 @@ afterEach(async () => {
   await act(async () => root?.unmount());
   root = undefined;
   document.body.replaceChildren();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -147,5 +162,50 @@ describe("WebSelection", () => {
     const request = ports[0]?.messages[0] as { requestId: string };
     await act(async () => send(0, { type: "saved", requestId: request.requestId, annotation: annotation() }));
     expect(onSaved).not.toHaveBeenCalled();
+  });
+
+  it("reconnects once after a refresh-time missing receiver and stops when the new port reports selection", async () => {
+    vi.useFakeTimers();
+    const { ports, disconnect, send } = installChrome();
+    const host = await mount();
+
+    await act(async () => send(0, selection("Stale selection before reload")));
+    expect(host.querySelector('[aria-label="高亮 #facd5a"]')).not.toBeNull();
+    await act(async () => disconnect(0));
+    expect(host.querySelector('[aria-label="高亮 #facd5a"]')).toBeNull();
+    expect(ports).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    expect(ports).toHaveLength(2);
+
+    await act(async () => send(1, selection("New selection after reload")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(ports).toHaveLength(2);
+    expect(host.textContent).toContain("New selection after reload");
+  });
+
+  it("limits reconnect attempts and cancels a pending retry on unmount", async () => {
+    vi.useFakeTimers();
+    const { ports, disconnect } = installChrome();
+    await mount();
+
+    await act(async () => disconnect(0));
+    await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+    await act(async () => disconnect(1));
+    await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+    await act(async () => disconnect(2));
+    await act(async () => { await vi.advanceTimersByTimeAsync(800); });
+    expect(ports).toHaveLength(4);
+
+    await act(async () => disconnect(3));
+    expect(vi.getTimerCount()).toBe(0);
+
+    await act(async () => root?.unmount());
+    root = undefined;
+    await mount();
+    await act(async () => disconnect(4));
+    expect(vi.getTimerCount()).toBe(1);
+    await act(async () => root?.unmount());
+    root = undefined;
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

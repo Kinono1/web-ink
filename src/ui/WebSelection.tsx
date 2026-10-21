@@ -50,19 +50,29 @@ export function WebSelection({
     let active = true;
     const pending = new Map<string, boolean>();
     pendingRef.current = pending;
-    let port: chrome.runtime.Port;
-    try {
-      port = chrome.tabs.connect(tabId, { name: SELECTION_PORT_NAME, frameId: 0 });
-      portRef.current = port;
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      setError(message);
-      return;
-    }
+    let retryAttempt = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let port: chrome.runtime.Port | undefined;
+    let detachPort: (() => void) | undefined;
+    const clearRetry = () => {
+      if (retryTimer === undefined) return;
+      clearTimeout(retryTimer);
+      retryTimer = undefined;
+    };
+    const retry = () => {
+      if (!active || retryTimer !== undefined || retryAttempt >= 3) return;
+      const delay = [100, 300, 800][retryAttempt++];
+      retryTimer = setTimeout(() => {
+        retryTimer = undefined;
+        connect();
+      }, delay);
+    };
     const receive = (message: WebSelectionReply) => {
       if (!active) return;
       if (message.type === "selection") {
         if (message.pageUrl === pageUrl) {
+          clearRetry();
+          setError(undefined);
           setSelection(message);
         }
         return;
@@ -79,24 +89,45 @@ export function WebSelection({
       setError(message.error);
       onErrorRef.current(message.error);
     };
-    const disconnected = () => {
+    const connect = () => {
       if (!active) return;
-      // Reading lastError consumes Chrome's expected no-receiver disconnect warning.
-      void chrome.runtime.lastError;
-      pending.clear();
-      setLocalPending(0);
-      const message = "Selection connection closed. Refresh the page and try again.";
-      setError(message);
+      try {
+        const nextPort = chrome.tabs.connect(tabId, { name: SELECTION_PORT_NAME, frameId: 0 });
+        port = nextPort;
+        portRef.current = nextPort;
+        const disconnected = () => {
+          if (!active || portRef.current !== nextPort) return;
+          // Reading lastError consumes Chrome's expected no-receiver disconnect warning.
+          void chrome.runtime.lastError;
+          detachPort?.();
+          detachPort = undefined;
+          port = undefined;
+          portRef.current = undefined;
+          pending.clear();
+          setLocalPending(0);
+          setSelection({ type: "selection", pageUrl, status: "empty" });
+          setError("Selection connection closed. Refresh the page and try again.");
+          retry();
+        };
+        detachPort = () => {
+          nextPort.onMessage.removeListener(receive);
+          nextPort.onDisconnect.removeListener(disconnected);
+        };
+        nextPort.onMessage.addListener(receive);
+        nextPort.onDisconnect.addListener(disconnected);
+      } catch {
+        setError("Selection connection closed. Refresh the page and try again.");
+        retry();
+      }
     };
-    port.onMessage.addListener(receive);
-    port.onDisconnect.addListener(disconnected);
+    connect();
     return () => {
       active = false;
-      port.onMessage.removeListener(receive);
-      port.onDisconnect.removeListener(disconnected);
+      clearRetry();
+      detachPort?.();
       if (portRef.current === port) portRef.current = undefined;
       if (pendingRef.current === pending) pendingRef.current = new Map();
-      try { port.disconnect(); } catch { /* Chrome may have already closed the port. */ }
+      try { port?.disconnect(); } catch { /* Chrome may have already closed the port. */ }
     };
   }, [connectionKey, pageUrl, tabId]);
 
