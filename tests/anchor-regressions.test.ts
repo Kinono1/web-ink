@@ -63,7 +63,7 @@ describe("real selection boundaries and large restore batches", () => {
 });
 
 describe("TextAnchorSession lifecycle", () => {
-  it("recaptures instead of saving a linked snapshot after the base changes", () => {
+  it.each(["https://changed.test/", "ftp://changed.test/"])("recaptures instead of saving a linked snapshot after the base changes to %s", (baseUrl) => {
     document.body.innerHTML = '<main><a href="/video/one">Title</a></main>';
     const range = document.createRange();
     range.selectNodeContents(document.querySelector("a")!);
@@ -71,7 +71,7 @@ describe("TextAnchorSession lifecycle", () => {
     const base = document.createElement("base");
     try {
       session.capture(range);
-      base.href = "https://changed.test/";
+      base.href = baseUrl;
       document.head.append(base);
       const saved = session.captureSelected(range);
       expect(saved).toEqual(captureText(range));

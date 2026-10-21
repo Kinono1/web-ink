@@ -151,7 +151,7 @@ export class TextAnchorSession {
     if (
       snapshot &&
       snapshot.root.isConnected &&
-      (textLinkUrl(snapshot.target, this.doc.baseURI)
+      (textLinkUrl(snapshot.target, this.doc.URL)
         ? snapshot.root instanceof HTMLAnchorElement &&
           textLinkSelector(snapshot.root) === snapshot.selector
         : rootFromTarget(snapshot.target, this.doc) === snapshot.root) &&
