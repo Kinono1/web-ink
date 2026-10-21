@@ -13,6 +13,7 @@ import {
   type TextAnnotation,
 } from "../core/model";
 import { TextAnchorSession } from "../core/text-anchor";
+import { textLinkUrl } from "../core/text-link";
 import { captureImage, resolveImage } from "../core/image-anchor";
 import { clientToImage } from "../core/geometry";
 import { pageKey } from "../core/url";
@@ -1322,14 +1323,28 @@ export function startEngine(
         !(m.target instanceof Element && m.target.closest("[data-web-ink]")),
     );
     if (
-      relevant.some(
-        (m) =>
+      relevant.some((m) => {
+        if (
           m.type !== "attributes" ||
           m.attributeName === "src" ||
           m.attributeName === "srcset" ||
           m.attributeName === "contenteditable" ||
-          m.attributeName === "id",
-      )
+          m.attributeName === "id"
+        )
+          return true;
+        if (m.attributeName !== "href" || !(m.target instanceof HTMLAnchorElement))
+          return false;
+        const link = m.target;
+        // A recycled recommendation can change destination without changing its
+        // title. Only affected linked annotations need another restore pass.
+        return annotations.some((record) => {
+          if (record.kind !== "text" || !textLinkUrl(record.target, record.pageUrl))
+            return false;
+          const range = textRanges.get(record.id);
+          return link.matches(record.target.rootSelector) ||
+            Boolean(range && link.contains(range.startContainer));
+        });
+      })
     ) {
       queueRefresh();
     }
@@ -1348,6 +1363,7 @@ export function startEngine(
         "style",
         "contenteditable",
         "id",
+        "href",
       ],
     });
   }

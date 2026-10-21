@@ -322,6 +322,42 @@ test("image drawing stores normalized points and follows responsive image size",
   await page.screenshot({ path: "test-results/image-annotations.png" });
 });
 
+test("linked feed titles survive refresh without binding to reused recommendation slots", async () => {
+  await enable();
+  const page = await context.newPage();
+  let reordered = false;
+  await page.route("**/feed", (route) => route.fulfill({
+    contentType: "text/html; charset=utf-8",
+    body: `<!doctype html><html><body><main><p>${reordered ? "New neighbours" : "Original neighbours"}</p><a href="/video/original"><img alt="Thumbnail"></a><h3><a id="target" href="/video/original"><span>烧烤大王 · 店长日记</span></a></h3><p>Other recommendations</p></main></body></html>`,
+  }));
+  await page.goto("http://127.0.0.1:4173/feed");
+  await expect(page.locator("web-ink-ui")).toHaveCount(1);
+  await setPageMode(page, true);
+  await selectAndMark(page, "#target span");
+  const [record] = await rpc<any[]>(manager, { type: "annotations.list" });
+  const saved = await rpc<any>(manager, {
+    type: "annotations.put", annotation: { ...record, note: "Keep my original note" }, expectedRevision: record.revision,
+  });
+  const tabId = await manager.evaluate(async () => (await chrome.tabs.query({})).find(t => t.url === "http://127.0.0.1:4173/feed")!.id!);
+  const state = async () => (await rpc<any>(manager, { type: "page.state.get", tabId })).states.find((s: any) => s.id === record.id)?.status;
+  await expect.poll(state).toBe("located");
+
+  // Attribute-only recycling must remove the old highlight, even if text stays identical.
+  await page.locator("#target").evaluate(link => link.setAttribute("href", "/video/different"));
+  await expect.poll(state).toBe("unresolved");
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
+
+  reordered = true;
+  await page.reload();
+  await expect.poll(state).toBe("located");
+  expect(await page.evaluate(() => [...CSS.highlights.values()].flatMap(h => [...h]).every(r => (r as Range).startContainer.parentElement?.closest("a")?.getAttribute("href") === "/video/original"))).toBe(true);
+
+  await page.locator("#target").evaluate(link => link.outerHTML = '<a href="/video/different">烧烤大王 · 店长日记</a>');
+  await expect.poll(state).toBe("unresolved");
+  const backup = await rpc<any>(manager, { type: "backup.export" });
+  expect(backup.annotations).toEqual([saved]);
+});
+
 test("changed source is unresolved, backup remains complete, and stale writes fail", async () => {
   await enable();
   const page = await article();

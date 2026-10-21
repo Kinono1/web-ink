@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { textLinkUrl } from "../src/core/text-link";
 import {
   captureText,
   resolveText,
@@ -62,6 +63,111 @@ describe("real selection boundaries and large restore batches", () => {
 });
 
 describe("TextAnchorSession lifecycle", () => {
+  it("uses a linked content identity instead of a recycled DOM id", () => {
+    document.body.innerHTML = '<a id="slot-one" href="https://example.test/video/one"><span id="title-one">Title</span></a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("span")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a id="slot-two" href="https://example.test/video/one"><span id="title-two">Title</span></a>';
+    expect(resolveText(target).range?.toString()).toBe("Title");
+  });
+
+  it("queries a shared linked scope only once per unchanged restore batch", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      const query = vi.spyOn(document, "querySelectorAll");
+      for (let i = 0; i < 20; i++) expect(session.resolve(target).status).toBe("located");
+      expect(query.mock.calls.filter(([selector]) => selector === target.rootSelector)).toHaveLength(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("preserves a quoted relative link through selector lookup and URL reconstruction", () => {
+    document.body.innerHTML = '<a>Title</a>';
+    const link = document.querySelector("a")!;
+    link.setAttribute("href", '/video/one?label="quoted"');
+    const range = document.createRange();
+    range.selectNodeContents(link);
+    const target = captureText(range);
+    expect(resolveText(target).range?.toString()).toBe("Title");
+    expect(textLinkUrl(target, "https://example.test/feed")).toBe("https://example.test/video/one?label=%22quoted%22");
+  });
+
+  it("never turns unsafe or arbitrary imported selectors into navigation links", () => {
+    for (const href of ['javascript:alert(1)', 'data:text/html,hello', 'https://name:secret@example.test/', 'https://example.test/\npath']) {
+      expect(textLinkUrl({ rootSelector: `a[href=${JSON.stringify(href)}]` } as TextTarget, "https://example.test/feed")).toBeUndefined();
+    }
+    expect(textLinkUrl({ rootSelector: 'body, a[href="https://example.test/video/one"]' } as TextTarget, "https://example.test/feed")).toBeUndefined();
+  });
+
+  it("restores a linked recommendation after neighbouring cards change", () => {
+    document.body.innerHTML = '<main><p>Previous recommendation</p><a href="https://example.test/video/one">A saved recommendation</a><p>Next recommendation</p></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const session = new TextAnchorSession(document);
+    try {
+      const target = session.capture(range);
+      document.querySelector("main")!.innerHTML = '<p>New preceding recommendation</p><a href="https://example.test/video/one">A saved recommendation</a><p>New following recommendation</p>';
+      expect(session.resolve(target).range?.toString()).toBe("A saved recommendation");
+    } finally {
+      session.dispose();
+    }
+  });
+
+  it("does not move a linked title to a different video with identical text", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Same title</a></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.querySelector("a")!.href = "https://example.test/video/two";
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("keeps missing recommendations unresolved and restores only their original link when it returns", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">A saved recommendation</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a href="https://example.test/video/two">A saved recommendation</a>';
+    expect(resolveText(target).status).toBe("unresolved");
+    document.body.insertAdjacentHTML("beforeend", '<a href="https://example.test/video/one"><span>A saved recommendation</span></a>');
+    const result = resolveText(target);
+    expect(result.status).toBe("located");
+    expect(result.range?.startContainer.parentElement?.closest("a")?.href).toBe("https://example.test/video/one");
+  });
+
+  it("ignores empty thumbnail links but rejects duplicate matching titles", () => {
+    document.body.innerHTML = '<a href="https://example.test/video/one">Title</a>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    const target = captureText(range);
+    document.body.innerHTML = '<a href="https://example.test/video/one"><img alt="Thumbnail"></a><a href="https://example.test/video/one">Title</a>';
+    expect(resolveText(target).range?.toString()).toBe("Title");
+    document.body.insertAdjacentHTML("beforeend", '<a href="https://example.test/video/one">Title</a>');
+    expect(resolveText(target).status).toBe("unresolved");
+  });
+
+  it("does not rebuild a linked reading index for unrelated feed mutations", () => {
+    document.body.innerHTML = '<main><a href="https://example.test/video/one">Title</a><p id="other">Views: 1</p></main>';
+    const range = document.createRange();
+    range.selectNodeContents(document.querySelector("a")!);
+    let builds = 0;
+    const session = new TextAnchorSession(document, { onIndexBuild: () => builds++ });
+    try {
+      const target = session.capture(range);
+      document.querySelector("#other")!.textContent = "Views: 2";
+      expect(session.resolve(target).range?.toString()).toBe("Title");
+      expect(builds).toBe(1);
+    } finally {
+      session.dispose();
+    }
+  });
+
   it("shares the mouseup reading with save capture when the DOM and boundaries are unchanged", () => {
     document.body.innerHTML =
       '<main id="story"><p id="target">before chosen after</p></main>';

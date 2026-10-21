@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { COLORS, type Annotation, type AnchorState, type Language, type Settings, type ImportPreview } from "../../core/model";
+import { textLinkUrl } from "../../core/text-link";
 import type { FilterKind, Draft } from "./types";
 import { COPY } from "./copy";
 import { statusClass, isPdf, kindFamily, localDate, shortDate, excerptText, sourceName, Icon } from "./helpers";
@@ -598,6 +599,8 @@ function DetailActions({
   onOpenPdf,
 }: DetailProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const originalContentUrl =
+    record.kind === "text" ? textLinkUrl(record.target, record.pageUrl) : undefined;
   useEffect(() => {
     setConfirmDelete(false);
   }, [record.id]);
@@ -609,7 +612,11 @@ function DetailActions({
           {t.openPdf}
         </button>
       ) : compact ? (
-        <button className="quiet" onClick={onFocus}>
+        <button
+          className="quiet"
+          onClick={onFocus}
+          disabled={state?.status === "unresolved"}
+        >
           <Icon name="focus" />
           {t.focus}
         </button>
@@ -619,6 +626,16 @@ function DetailActions({
           {t.source}
         </a>
       )}
+      {originalContentUrl ? (
+        <a
+          className="quiet"
+          href={originalContentUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {t.openOriginalContent}
+        </a>
+      ) : null}
       {state?.status === "unresolved" && compact ? (
         <button className="quiet" onClick={onRebind}>
           {t.rebind}

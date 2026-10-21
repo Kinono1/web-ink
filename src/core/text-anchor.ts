@@ -1,4 +1,5 @@
 import type { AnchorStatus, TextTarget } from "./model";
+import { textLinkSelector, textLinkUrl } from "./text-link";
 
 const CONTEXT_LENGTH = 64;
 const BLOCK_TAGS = new Set([
@@ -88,6 +89,7 @@ export interface TextAnchorSessionOptions {
  */
 export class TextAnchorSession {
   private readonly readings = new Map<Element, CachedReading>();
+  private readonly linkedRoots = new Map<string, Element[]>();
   // Versions must never keep a replaced article/main root alive. A WeakMap has
   // no enumeration API; whole-session invalidation replaces it instead of clear().
   private rootVersions = new WeakMap<Element, number>();
@@ -110,7 +112,7 @@ export class TextAnchorSession {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ["class", "style", "contenteditable", "id"],
+      attributeFilter: ["class", "style", "contenteditable", "id", "href"],
     });
   }
 
@@ -127,8 +129,7 @@ export class TextAnchorSession {
       throw new Error("The text anchor session has been disposed.");
     this.flush();
     const target = this.captureFresh(range);
-    const root = rootFromTarget(target, this.doc);
-    if (!root) throw new Error("The selection reading root is unavailable.");
+    const root = readingRoot(range, this.doc);
     this.snapshot = {
       target,
       root,
@@ -150,7 +151,9 @@ export class TextAnchorSession {
     if (
       snapshot &&
       snapshot.root.isConnected &&
-      rootFromTarget(snapshot.target, this.doc) === snapshot.root &&
+      (textLinkUrl(snapshot.target, this.doc.baseURI)
+        ? snapshot.root.matches(snapshot.selector)
+        : rootFromTarget(snapshot.target, this.doc) === snapshot.root) &&
       snapshot.selector === snapshot.target.rootSelector &&
       snapshot.version === this.versionFor(snapshot.root) &&
       snapshot.epoch === this.epoch &&
@@ -179,6 +182,7 @@ export class TextAnchorSession {
   /** Explicit invalidation remains useful for callers that replace an entire root. */
   invalidate(root?: Element): void {
     if (this.disposed) return;
+    this.linkedRoots.clear();
     if (!root) {
       this.epoch++;
       this.readings.clear();
@@ -194,6 +198,7 @@ export class TextAnchorSession {
     this.disposed = true;
     this.observer.disconnect();
     this.readings.clear();
+    this.linkedRoots.clear();
     this.rootVersions = new WeakMap<Element, number>();
     this.snapshot = undefined;
   }
@@ -222,7 +227,11 @@ export class TextAnchorSession {
     if (!exact || rangeForOffsets(reading, root, start, end) === undefined) {
       throw new Error("The selection has no stable readable text anchor.");
     }
-    const container = stableContainer(range, root);
+    // Link identity and local text already delimit a recommendation. Its DOM
+    // slot IDs can change during rendering and must not become durable identity.
+    const container = root instanceof HTMLAnchorElement
+      ? undefined
+      : stableContainer(range, root);
     return {
       exact,
       prefix: reading.text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
@@ -239,10 +248,49 @@ export class TextAnchorSession {
     status: AnchorStatus;
     reason?: string;
   } {
+    if (textLinkUrl(target, this.doc.baseURI)) {
+      const matches: Range[] = [];
+      let roots = this.linkedRoots.get(target.rootSelector);
+      if (!roots) {
+        try {
+          roots = Array.from(this.doc.querySelectorAll(target.rootSelector));
+        } catch {
+          return { status: "unresolved", reason: "Reading root is unavailable." };
+        }
+        this.linkedRoots.set(target.rootSelector, roots);
+      }
+      for (const root of roots) {
+        const result = this.resolveInRoot(target, root);
+        if (
+          result.status === "unresolved" &&
+          result.reason === "Exact text is ambiguous in the original scope."
+        )
+          return result;
+        if (result.range) matches.push(result.range);
+        if (matches.length > 1)
+          return {
+            status: "unresolved",
+            reason: "Exact text is ambiguous in the original scope.",
+          };
+      }
+      return matches.length === 1
+        ? { range: matches[0], status: "located" }
+        : {
+            status: "unresolved",
+            reason: "The original linked text is not currently present.",
+          };
+    }
     const root = rootFromTarget(target, this.doc);
     if (!root)
       return { status: "unresolved", reason: "Reading root is unavailable." };
+    return this.resolveInRoot(target, root);
+  }
 
+  private resolveInRoot(target: TextTarget, root: Element): {
+    range?: Range;
+    status: AnchorStatus;
+    reason?: string;
+  } {
     let container: Element | undefined;
     if (target.containerId) {
       container = this.doc.getElementById(target.containerId) ?? undefined;
@@ -318,6 +366,8 @@ export class TextAnchorSession {
     const affected = new Set<Element>();
     for (const mutation of mutations) {
       if (extensionUiMutation(mutation)) continue;
+      if (mutation.type === "childList" || mutation.attributeName === "href")
+        this.linkedRoots.clear();
       // class/style are geometry-only changes. They must not force an expensive
       // text rebuild, but the content controller still repaints image overlays.
       if (
@@ -327,8 +377,16 @@ export class TextAnchorSession {
       )
         continue;
       for (const root of this.readings.keys())
-        if (mutationTouchesRoot(mutation, root)) affected.add(root);
-      if (this.snapshot && mutationTouchesRoot(mutation, this.snapshot.root))
+        if (
+          (mutation.attributeName !== "href" || root instanceof HTMLAnchorElement) &&
+          mutationTouchesRoot(mutation, root)
+        )
+          affected.add(root);
+      if (
+        this.snapshot &&
+        (mutation.attributeName !== "href" || this.snapshot.root instanceof HTMLAnchorElement) &&
+        mutationTouchesRoot(mutation, this.snapshot.root)
+      )
         affected.add(this.snapshot.root);
     }
     for (const root of affected) this.invalidateRoot(root);
@@ -394,6 +452,8 @@ export function createTextResolver(doc: Document = document): TextResolver {
 function readingRoot(range: Range, doc: Document): Element {
   const start = elementFor(range.startContainer);
   const end = elementFor(range.endContainer);
+  const link = start.closest<HTMLAnchorElement>("a[href]");
+  if (link && link.contains(end) && textLinkSelector(link)) return link;
   for (
     let current: Element | null = start;
     current && current !== doc.body;
@@ -663,6 +723,10 @@ function contextMatches(text: string, target: TextTarget): number[] {
 
 function selectorForRoot(root: Element): string {
   if (root === root.ownerDocument!.body) return "body";
+  if (root instanceof HTMLAnchorElement) {
+    const selector = textLinkSelector(root);
+    if (selector) return selector;
+  }
   if (root.id) return `${root.tagName.toLowerCase()}#${escapeCss(root.id)}`;
   const parts: string[] = [];
   for (
