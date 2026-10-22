@@ -1594,8 +1594,10 @@ test("sidepanel empty state keeps the compact dock visible in a narrow viewport"
   ).toBeVisible();
   await expect(manager.getByText("选中网页文字，开始第一条标注。", { exact: true })).toBeVisible();
   await expect(
-    manager.getByRole("button", { name: "图片绘制", exact: true }),
+    manager.getByRole("button", { name: "图片绘制 · 待开发", exact: true }),
   ).toBeVisible();
+  await expect(manager.getByRole("button", { name: "图片绘制 · 待开发", exact: true })).toBeDisabled();
+  await expect(manager.locator(".dock-draw")).toHaveCSS("cursor", "not-allowed");
   await manager.setViewportSize({ width: 320, height: 640 });
   await expectSidepanelFitsViewport(640);
   await manager.setViewportSize({ width: 390, height: 844 });

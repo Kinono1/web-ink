@@ -1,6 +1,6 @@
 # Web Ink
 
-Web Ink is a local-first Chrome annotation tool for webpage text, image drawings, and PDF text and area annotations. Data stays in the browser profile; there is no account, cloud sync, or telemetry.
+Web Ink is a local-first Chrome annotation tool for webpage text and PDF text and area annotations. The image-drawing entry remains visible as “Coming soon” and is disabled. Data stays in the browser profile; there is no account, cloud sync, or telemetry.
 
 [中文](../README.md) · [Privacy](../PRIVACY.md) · [Third-party notices](../THIRD_PARTY_NOTICES.md) · [Release process](RELEASING.md)
 
@@ -28,7 +28,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text, image drawings
 - Each canonical URL keeps its own switch. Turning it off hides tools and marks without deleting records. A paused site takes precedence over a page switch.
 - When enabled, the webpage engine is injected on demand. Text restore verifies exact text, context, root, and stable container. An ambiguous target remains unresolved rather than being guessed onto similar text.
 - The text toolbar starts with recent/current/common colors; More reveals remaining colors and custom input.
-- Image selection shows only a hint. Shape, color, undo, redo, and done controls appear after an image is selected. Drawing is rejected for non-identity CSS transforms on an image or ancestor.
+- The image-drawing entry is disabled and labeled “Coming soon”. Existing image annotations, notes, and exported data are preserved.
 - The side panel, library and reader share one theme with system/light/dark, reduced-motion, and reduced-transparency preferences. Drag the floating switch to save a local position; other already-open pages do not move.
 
 Ordinary webpage annotation requires Chrome 120 or later. Iframes, page-owned Shadow DOM, browser-internal pages, file URLs, and canvas content are outside this webpage scope.
