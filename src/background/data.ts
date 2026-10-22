@@ -8,6 +8,7 @@ import type {
 } from "../core/model";
 import { DEFAULT_SETTINGS } from "../core/model";
 import { pageKey } from "../core/url";
+import { readSelectionToolbarEnabled } from "../core/selection-toolbar";
 import { parseBackup, serializeBackup } from "../core/backup";
 import {
   MAX_REVISION,
@@ -277,8 +278,14 @@ async function listAnnotations(pageUrl?: string): Promise<Annotation[]> {
 
 async function getPageMode(pageUrl: string): Promise<PageMode> {
   const page = await getDatabase().pages.get(pageUrl);
+  if (pageUrl.startsWith("urn:web-ink:pdf:"))
+    return { enabled: page?.enabled === true };
+  const settings = await readSettings();
+  if (settings.disabledOrigins.includes(new URL(pageUrl).origin))
+    return { enabled: false };
+  if (typeof page?.enabled === "boolean") return { enabled: page.enabled };
   // Reads are deliberately side-effect free: an unopened page stays absent from pages.
-  return { enabled: page?.enabled === true };
+  return { enabled: await readSelectionToolbarEnabled() };
 }
 
 async function putPageMode(

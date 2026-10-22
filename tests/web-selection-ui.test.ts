@@ -102,6 +102,66 @@ async function mount(props: Partial<React.ComponentProps<typeof WebSelection>> =
 }
 
 describe("WebSelection", () => {
+  it("offers a custom default color as a sixth swatch and sends it only after a click", async () => {
+    const { ports, send } = installChrome();
+    const host = await mount({ defaultColor: "#abcdef" });
+
+    await act(async () => send(0, selection()));
+    const custom = host.querySelector<HTMLButtonElement>('[aria-label="自定义高亮 #abcdef"]');
+    expect(host.querySelectorAll(".web-selection-color")).toHaveLength(6);
+    expect(custom).not.toBeNull();
+    expect(custom?.style.getPropertyValue("--selection-color")).toBe("#abcdef");
+    expect(ports[0]?.messages).toEqual([]);
+
+    await act(async () => custom!.click());
+    expect(ports[0]?.messages).toEqual([expect.objectContaining({ type: "annotate", token: "selection-token", color: "#abcdef" })]);
+  });
+
+  it("keeps the five palette swatches when the default already matches one", async () => {
+    const { send } = installChrome();
+    const host = await mount({ defaultColor: "#facd5a" });
+
+    await act(async () => send(0, selection()));
+    expect(Array.from(host.querySelectorAll<HTMLButtonElement>(".web-selection-color"), (button) => button.getAttribute("aria-label"))).toEqual([
+      "高亮 #facd5a",
+      "高亮 #7cc868",
+      "高亮 #69b0f1",
+      "高亮 #fb5c89",
+      "高亮 #c885da",
+    ]);
+  });
+
+  it("updates the default color for Add note without saving until it is clicked", async () => {
+    const { ports, send } = installChrome();
+    const onSaved = vi.fn();
+    const onError = vi.fn();
+    const host = await mount({ onSaved, onError });
+    await act(async () => send(0, selection()));
+
+    await act(async () => root!.render(createElement(WebSelection, {
+      tabId: 7,
+      pageUrl: "https://example.test/article",
+      language: "zh-CN",
+      defaultColor: "#abcdef",
+      onSaved,
+      onError,
+    })));
+
+    expect(host.querySelector('[aria-label="自定义高亮 #abcdef"]')).not.toBeNull();
+    expect(ports[0]?.messages).toEqual([]);
+
+    await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="添加笔记"]')!.click());
+    expect(ports[0]?.messages).toEqual([expect.objectContaining({ type: "annotate", color: "#abcdef" })]);
+  });
+
+  it("keeps save controls unavailable when a selection reply has no token", async () => {
+    const { send } = installChrome();
+    const host = await mount();
+
+    await act(async () => send(0, { ...selection(), token: undefined }));
+    expect(host.querySelector(".web-selection-actions")).toBeNull();
+  });
+
   it("keeps a manual selection visible and only sends an annotation after a color is chosen", async () => {
     const { ports, send } = installChrome();
     const host = await mount();

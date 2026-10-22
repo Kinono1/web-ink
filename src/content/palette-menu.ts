@@ -58,12 +58,17 @@ export function createPaletteMenu(
     const width = Math.min(240, Math.max(0, innerWidth - 24));
     const left = Number.parseFloat(anchor.style.left) || 0;
     const top = Number.parseFloat(anchor.style.top) || 0;
+    const rect = anchor.getBoundingClientRect();
+    const configuredSize = Number.parseFloat(anchor.style.getPropertyValue('--web-ink-palette-size'));
+    const fallbackSize = Number.isFinite(configuredSize) && configuredSize > 0 ? configuredSize : 40;
+    const anchorWidth = rect.width || fallbackSize;
+    const anchorHeight = rect.height || fallbackSize;
     panel.style.width = `${width}px`;
     panel.style.maxWidth = `${Math.max(0, innerWidth - 24)}px`;
     panel.style.maxHeight = `${Math.max(0, innerHeight - 24)}px`;
     const height = Math.min(panel.offsetHeight || state.items.length * 38 + 12, Math.max(0, innerHeight - 24));
-    panel.style.left = `${Math.max(12, Math.min(left + 40 - width, innerWidth - width - 12))}px`;
-    const preferredTop = top - height - 8 >= 12 ? top - height - 8 : top + 48;
+    panel.style.left = `${Math.max(12, Math.min(left + anchorWidth - width, innerWidth - width - 12))}px`;
+    const preferredTop = top - height - 8 >= 12 ? top - height - 8 : top + anchorHeight + 8;
     panel.style.top = `${Math.max(12, Math.min(preferredTop, innerHeight - height - 12))}px`;
   };
   const close = (restoreFocus = false) => {

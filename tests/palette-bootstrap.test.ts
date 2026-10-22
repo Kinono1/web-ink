@@ -12,10 +12,13 @@ function fixture(
   get: () => Promise<Record<string, unknown>>,
   pdfContext?: () => Promise<unknown>,
   openPdf?: () => Promise<unknown>,
+  pageMode?: () => Promise<{ enabled: boolean }>,
+  putMode?: () => Promise<{ enabled: boolean }>,
 ) {
   let settings = { ...DEFAULT_SETTINGS };
   let listener: ((message: { type: string }) => void) | undefined;
   let reads = 0;
+  const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, area: string) => void>();
   const stored: Record<string, unknown> = {};
   const messages: Array<Record<string, unknown>> = [];
   vi.stubGlobal('innerWidth', 1200); vi.stubGlobal('innerHeight', 900);
@@ -23,6 +26,8 @@ function fixture(
     runtime: {
       sendMessage: async (message: Record<string, unknown>) => {
         messages.push(message);
+        if (message.type === 'page.mode.put' && putMode) return { ok: true, data: await putMode() };
+        if (message.type === 'page.mode.get' && pageMode) return { ok: true, data: await pageMode() };
         if (message.type === 'settings.get') return { ok: true, data: settings };
         if (message.type === 'pdf.context.get' && pdfContext)
           return { ok: true, data: await pdfContext() };
@@ -35,7 +40,7 @@ function fixture(
     storage: { local: {
       get: () => { reads++; return get(); },
       set: async (value: object) => { Object.assign(stored, value); },
-    } },
+    }, onChanged: { addListener: (fn: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void) => changes.add(fn), removeListener: (fn: (changes: Record<string, chrome.storage.StorageChange>, area: string) => void) => changes.delete(fn) } },
   });
   dispose = startBootstrap({ generation: 'palette-test', version: '0.3.2', commit: 'test', dirty: true });
   const host = document.querySelector('web-ink-ui') as HTMLElement;
@@ -43,7 +48,7 @@ function fixture(
   button.setPointerCapture = () => {};
   button.hasPointerCapture = () => false;
   const point = () => ({ left: Number.parseFloat(button.style.left), top: Number.parseFloat(button.style.top) });
-  return { host, button, point, stored, messages, reads: () => reads, settings: () => { settings = { ...settings, theme: 'dark' }; listener?.({ type: 'settings.changed' }); } };
+  return { host, button, point, stored, messages, notifyMode: () => listener?.({ type: "page.mode.changed" }), change: (key: string, value: unknown) => { for (const fn of changes) fn({ [key]: { newValue: value } }, "local"); }, reads: () => reads, settings: () => { settings = { ...settings, theme: 'dark' }; listener?.({ type: 'settings.changed' }); } };
 }
 
 it('restores the local preference once and does not re-read it for theme updates', async () => {
@@ -175,4 +180,62 @@ it('keeps the local PDF action manual on an IEEE wrapper', async () => {
     type: 'pdf.openCurrent',
     accessMode: 'site-session',
   }));
+});
+
+it('restores pencil size with position and applies live size without rewriting position', async () => {
+  const f = fixture(async () => ({ 'ui.palettePosition': { x: .5, y: .5 }, 'ui.paletteSize': 64 }));
+  await vi.waitFor(() => expect(f.button.style.getPropertyValue('--web-ink-palette-size')).toBe('64px'));
+  expect(f.point()).toEqual({ left: 568, top: 418 });
+  f.change('ui.paletteSize', 52);
+  expect(f.point()).toEqual({ left: 574, top: 424 });
+  expect(f.stored).toEqual({});
+  expect(f.reads()).toBe(1);
+});
+
+it('refreshes effective page mode on automatic-reminder changes without writing a page', async () => {
+  let enabled = false;
+  const f = fixture(async () => ({}), undefined, undefined, async () => ({ enabled }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  expect(window.__webInkBootstrap?.isEnabled()).toBe(false);
+  enabled = true;
+  f.change('ui.selectionToolbarEnabled', true);
+  await vi.waitFor(() => expect(window.__webInkBootstrap?.isEnabled()).toBe(true));
+  enabled = false;
+  f.change('ui.selectionToolbarEnabled', false);
+  await vi.waitFor(() => expect(window.__webInkBootstrap?.isEnabled()).toBe(false));
+  expect(f.messages.some(message => message.type === 'page.mode.put')).toBe(false);
+});
+
+it('does not let an older automatic-mode read override a newer manual-mode choice', async () => {
+  let calls = 0;
+  let finish!: (value: { enabled: boolean }) => void;
+  const f = fixture(async () => ({}), undefined, undefined, async () => {
+    if (++calls === 2) return new Promise(resolve => { finish = resolve; });
+    return { enabled: false };
+  });
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.change('ui.selectionToolbarEnabled', true);
+  await vi.waitFor(() => expect(calls).toBe(2));
+  f.change('ui.selectionToolbarEnabled', false);
+  await vi.waitFor(() => expect(calls).toBe(3));
+  finish({ enabled: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(window.__webInkBootstrap?.isEnabled()).toBe(false);
+});
+
+it('ignores an old enable reply after a newer explicit disable has been read', async () => {
+  let finish!: (value: { enabled: boolean }) => void;
+  const f = fixture(async () => ({}), async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }), undefined,
+    async () => ({ enabled: false }), () => new Promise(resolve => { finish = resolve; }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.button.click();
+  await vi.waitFor(() => expect(f.host.shadowRoot!.querySelector('[data-action="toggle"]')).not.toBeNull());
+  f.host.shadowRoot!.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  await vi.waitFor(() => expect(finish).toBeDefined());
+  f.notifyMode();
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  expect(window.__webInkBootstrap?.isEnabled()).toBe(false);
+  finish({ enabled: true });
+  await new Promise(resolve => setTimeout(resolve, 0));
+  expect(window.__webInkBootstrap?.isEnabled()).toBe(false);
 });

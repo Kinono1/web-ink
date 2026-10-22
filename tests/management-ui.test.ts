@@ -60,6 +60,7 @@ it("opens the shared preset editor from Settings without changing the annotation
   expect(host.querySelector('[role="dialog"]')).toBeTruthy();
   expect(set).not.toHaveBeenCalled();
 });
+type StorageListener = (changes: Record<string, chrome.storage.StorageChange>, area: string) => void;
 type TabUpdatedListener = (tabId: number, changeInfo: { url?: string; status?: string }) => void;
 type TabActivatedListener = (activeInfo: { tabId: number; windowId: number }) => void;
 
@@ -125,6 +126,141 @@ async function mount(mode: "sidepanel" | "library") {
   return host;
 }
 
+for (const timing of ["refresh while pending", "refresh after failure", "navigate while pending"]) {
+  it(`scopes PDF action errors correctly: ${timing}`, async () => {
+    const tab = { id: 7, windowId: 1, url: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", title: "IEEE" };
+    let updated: TabUpdatedListener | undefined;
+    let finish!: (response: unknown) => void;
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, url: tab.url,
+        publisher: tab.url.includes("ieee.org") ? "ieee" : undefined,
+        kind: tab.url.includes("ieee.org") ? "wrapper" : "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "pdf.openCurrent") return new Promise(resolve => { finish = resolve; });
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    }, tab, listener => { updated = listener; });
+    const host = await mount("sidepanel");
+    await act(async () => host.querySelector<HTMLButtonElement>(".pdf-open-current")!.click());
+    if (timing === "navigate while pending") tab.url = "https://example.test/new-page";
+    if (timing !== "refresh after failure") await act(async () => updated!(7, { status: "complete", ...(timing === "navigate while pending" ? { url: tab.url } : {}) }));
+    await act(async () => finish({ ok: false, code: "IEEE_REDIRECT", error: "The PDF read was refused" }));
+    if (timing === "refresh after failure") {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
+      await act(async () => updated!(7, { status: "complete" }));
+    }
+    if (timing === "navigate while pending") expect(host.querySelector('[role="alert"]')).toBeNull();
+    else expect(host.querySelector('[role="alert"]')?.textContent).toContain("The PDF read was refused");
+  });
+}
+
+describe("sidebar context errors", () => {
+  for (const code of ["PAGE_CHANGED", "CONTEXT_UNAVAILABLE"]) {
+    it(`does not retain ${code} on a newly readable webpage`, async () => {
+      let fail = true;
+      let updated: TabUpdatedListener | undefined;
+      const tab = { id: 7, url: "https://example.test/first", title: "First" };
+      installChrome((message) => {
+        if (message.type === "pdf.context.get") return fail
+          ? { ok: false, code, error: "The tab or document changed. Try again on the current page." }
+          : { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+        if (message.type === "settings.get") return { ok: true, data: settings };
+        if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+        if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+        if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+        return { ok: true, data: true };
+      }, tab, listener => { updated = listener; });
+      const host = await mount("sidepanel");
+      if (code === "PAGE_CHANGED") expect(host.querySelector('[role="alert"]')).toBeNull();
+      else expect(host.querySelector('[role="alert"]')).not.toBeNull();
+      fail = false;
+      tab.url = "https://example.test/second";
+      tab.title = "Second";
+      await act(async () => { updated!(7, { url: tab.url, status: "complete" }); });
+      expect(host.textContent).toContain("Second");
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+    });
+  }
+
+  it("keeps an explicit action failure when a passive context refresh succeeds", async () => {
+    let updated: TabUpdatedListener | undefined;
+    installChrome(message => {
+      if (message.type === "page.action") return { ok: false, error: "Explicit action failed" };
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      return { ok: true, data: true };
+    }, undefined, listener => { updated = listener; });
+    const host = await mount("sidepanel");
+    const draw = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "图片绘制")!;
+    await act(async () => draw.click());
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Explicit action failed");
+    await act(async () => { updated!(7, { status: "complete" }); });
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("Explicit action failed");
+  });
+});
+
+it("updates the pencil size from Settings without changing annotation settings", async () => {
+  const changes = new Set<StorageListener>();
+  const stored: Record<string, unknown> = { "ui.paletteSize": 48 };
+  installChrome(message => {
+    if (message.type === "storage.stats") return { ok: false, error: "Unavailable in this fixture" };
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+    return { ok: true, data: {} };
+  });
+  Object.assign(chrome, { storage: {
+    local: { get: async () => ({ ...stored }), set: async (patch: Record<string, unknown>) => { Object.assign(stored, patch); } },
+    onChanged: { addListener: (fn: StorageListener) => changes.add(fn), removeListener: (fn: StorageListener) => changes.delete(fn) },
+  } });
+  const host = await mount("library");
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "设置与数据")!.click());
+  const slider = host.querySelector<HTMLInputElement>('input[aria-label="铅笔大小"]');
+  expect(slider).not.toBeNull();
+  expect(slider!.value).toBe("48");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "64");
+    slider!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(stored["ui.paletteSize"]).toBe(64);
+  expect(host.querySelector<HTMLElement>('[aria-label="铅笔大小预览"]')!.style.width).toBe("64px");
+  expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settings.put" }));
+});
+
+it("rolls back a failed pencil-size write to the latest external value", async () => {
+  const changes = new Set<StorageListener>();
+  let stored = 48;
+  let fail!: (cause: Error) => void;
+  installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+    return { ok: false, error: "Unavailable in this fixture" };
+  });
+  Object.assign(chrome, { storage: {
+    local: { get: async () => ({ "ui.paletteSize": stored }), set: () => new Promise<void>((_, reject) => { fail = reject; }) },
+    onChanged: { addListener: (fn: StorageListener) => changes.add(fn), removeListener: (fn: StorageListener) => changes.delete(fn) },
+  } });
+  const host = await mount("library");
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "设置与数据")!.click());
+  const slider = host.querySelector<HTMLInputElement>('input[aria-label="铅笔大小"]')!;
+  expect(slider.value).toBe("48");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, "64");
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => {
+    stored = 56;
+    for (const fn of changes) fn({ "ui.paletteSize": { newValue: 56 } }, "local");
+    fail(Error("Size write failed"));
+  });
+  expect(slider.value).toBe("56");
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain("Size write failed");
+});
+
 describe("management UI", () => {
   it("persists the webpage selection toolbar preference and accepts live storage updates", async () => {
     const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void>();
@@ -153,7 +289,7 @@ describe("management UI", () => {
     } });
 
     const host = await mount("sidepanel");
-    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="选中文字时显示工具条"]')!;
+    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="自动显示标注工具"]')!;
     expect(control.getAttribute("aria-checked")).toBe("true");
     await act(async () => control.click());
     expect(stored["ui.selectionToolbarEnabled"]).toBe(false);
@@ -197,7 +333,7 @@ describe("management UI", () => {
     } });
 
     const host = await mount("sidepanel");
-    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="选中文字时显示工具条"]')!;
+    const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="自动显示标注工具"]')!;
     await act(async () => {
       for (const listener of changes)
         listener({ "ui.selectionToolbarEnabled": { newValue: false } as chrome.storage.StorageChange }, "local");
@@ -210,7 +346,7 @@ describe("management UI", () => {
       for (const listener of changes)
         listener({ "ui.selectionToolbarEnabled": { oldValue: false } as chrome.storage.StorageChange }, "local");
     });
-    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(control.getAttribute("aria-checked")).toBe("false");
   });
 
   it("does not present a PDF welcome screen when the active tab URL is unavailable", async () => {

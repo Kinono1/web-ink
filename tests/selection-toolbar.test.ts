@@ -6,21 +6,24 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
-it.each([undefined, null, "false", 0, {}, true, false])(
-  "defaults invalid automatic-toolbar preferences to enabled: %j",
-  async (value) => {
+it.each([
+  [undefined, false], [null, false], ["false", false], ["true", false],
+  [0, false], [1, false], [{}, false], [[], false], [true, true], [false, false],
+])(
+  "preserves valid automatic-reminder preferences and defaults invalid values off: %j",
+  async (value, expected) => {
     vi.stubGlobal("chrome", { storage: { local: {
       get: async () => ({ "ui.selectionToolbarEnabled": value }),
     } } });
-    expect(await readSelectionToolbarEnabled()).toBe(value !== false);
+    expect(await readSelectionToolbarEnabled()).toBe(expected);
   },
 );
 
-it("keeps the default when local storage is unavailable", async () => {
+it("keeps automatic reminders off when local storage is unavailable", async () => {
   vi.stubGlobal("chrome", { storage: { local: {
     get: async () => { throw Error("storage unavailable"); },
   } } });
-  expect(await readSelectionToolbarEnabled()).toBe(true);
+  expect(await readSelectionToolbarEnabled()).toBe(false);
 });
 
 it("changes only the automatic-toolbar preference and reports failed writes", async () => {

@@ -136,6 +136,10 @@ export function WebSelection({
     : undefined;
   const ready = selected?.status === "ready" ? selected as ReadySelection : undefined;
   const saving = localPending > 0 || selection?.status === "saving";
+  const customColor = /^#[0-9a-f]{6}$/i.test(defaultColor) && !COLORS.includes(defaultColor.toLowerCase() as typeof COLORS[number])
+    ? defaultColor
+    : undefined;
+  const colors = customColor ? [...COLORS, customColor] : COLORS;
   const send = (color: string, startEditing: boolean) => {
     if (!ready || saving || tabId === undefined || !pageUrl) return;
     const requestId = crypto.randomUUID();
@@ -167,16 +171,21 @@ export function WebSelection({
       </div>
       {selected ? <div className="web-selection-actions">
         <div className="web-selection-colors" aria-label={language === "zh-CN" ? "高亮颜色" : "Highlight colors"}>
-          {COLORS.map((color) => <button
-            key={color}
-            type="button"
-            className="web-selection-color"
-            aria-label={language === "zh-CN" ? `高亮 ${color}` : `Highlight ${color}`}
-            title={language === "zh-CN" ? `高亮 ${color}` : `Highlight ${color}`}
-            style={{ "--selection-color": color } as CSSProperties}
-            disabled={saving || !ready}
-            onClick={() => send(color, false)}
-          />)}
+          {colors.map((color) => {
+            const label = color === customColor
+              ? (language === "zh-CN" ? `自定义高亮 ${color}` : `Custom highlight ${color}`)
+              : (language === "zh-CN" ? `高亮 ${color}` : `Highlight ${color}`);
+            return <button
+              key={color}
+              type="button"
+              className="web-selection-color"
+              aria-label={label}
+              title={label}
+              style={{ "--selection-color": color } as CSSProperties}
+              disabled={saving || !ready}
+              onClick={() => send(color, false)}
+            />;
+          })}
         </div>
         <button type="button" className="quiet web-selection-note" disabled={saving || !ready} aria-label={language === "zh-CN" ? "添加笔记" : "Add note"} onClick={() => send(defaultColorRef.current, true)}>
           {saving ? (language === "zh-CN" ? "正在保存…" : "Saving…") : (language === "zh-CN" ? "添加笔记" : "Add note")}

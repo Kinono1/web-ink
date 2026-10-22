@@ -350,6 +350,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await fixture.close();
       await manager.goto(`chrome-extension://${expectedId}/library.html`);
     }
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
     const settings = await rpc<Settings>(manager, { type: "settings.get" });
     await rpc(manager, {
       type: "settings.put",
@@ -368,6 +369,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     const disabled = await context.newPage();
     observePageErrors(disabled, "disabled-fixture");
     await disabled.goto("http://127.0.0.1:4173/article?reload=disabled");
+    await rpc(manager, { type: "page.mode.put", pageUrl: disabled.url(), enabled: false });
     await expect(enabled.locator(".web-ink-palette-toggle")).toBeEnabled();
     await setPageMode(enabled, true);
     await expect(enabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");

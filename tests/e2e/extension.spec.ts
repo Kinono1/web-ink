@@ -104,6 +104,7 @@ async function setPageMode(page: Page, enabled: boolean) {
   await selectPageMode(page, enabled);
 }
 async function article(activate = true) {
+  if (activate) await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
   const page = await context.newPage();
   await page.goto("http://127.0.0.1:4173/article");
   await expect(page.locator("web-ink-ui")).toHaveCount(1);
@@ -115,15 +116,19 @@ async function article(activate = true) {
   return page;
 }
 async function selectAndMark(page: Page, selector = "#selection strong") {
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
   await page.locator(selector).scrollIntoViewIfNeeded();
-  await page.locator(selector).evaluate((element) => {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const selection = window.getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
+  await expect(async () => {
+    await page.locator(selector).evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+  }).toPass({ timeout: 10_000 });
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(
@@ -133,6 +138,23 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     .toBe(1);
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
+test("automatic reminders are opt-in for new pages and respect a manual page override", async () => {
+  await enable();
+  const first = await article(false);
+  const toggle = first.locator(".web-ink-palette-toggle");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await setPageMode(first, false);
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  const next = await context.newPage();
+  await next.goto("http://127.0.0.1:4173/article?reminder=next");
+  await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+});
+
 test("web preset shortcut captures live text and keeps ordinary copy inert", async () => {
   await enable();
   const page = await article();
@@ -226,7 +248,7 @@ test("selection toolbar preference hides only automatic actions and follows live
   await enable();
   const page = await article();
   await openSidepanel(page);
-  const control = manager.getByRole("switch", { name: "选中文字时显示工具条", exact: true });
+  const control = manager.getByRole("switch", { name: "自动显示标注工具", exact: true });
   await expect(control).toHaveAttribute("aria-checked", "true");
   await control.click();
   await expect(control).toHaveAttribute("aria-checked", "false");
@@ -243,6 +265,43 @@ test("selection toolbar preference hides only automatic actions and follows live
   await select();
   await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
   expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+});
+
+test("Settings resizes the draggable pen and adds a custom sidebar color without replacing the five colors", async () => {
+  await enable();
+  const page = await article(false);
+  await manager.goto(`chrome-extension://${extensionId}/library.html`);
+  await manager.getByRole("button", { name: "设置与数据", exact: true }).click();
+  const size = manager.getByRole("slider", { name: "铅笔大小", exact: true });
+  await size.fill("64");
+  const pen = page.locator(".web-ink-palette-toggle");
+  await expect.poll(async () => (await pen.boundingBox())?.width).toBe(64);
+  const before = (await pen.boundingBox())!;
+  await page.mouse.move(before.x + 32, before.y + 32);
+  await page.mouse.down();
+  await page.mouse.move(before.x - 80, before.y - 80, { steps: 4 });
+  await page.mouse.up();
+  await expect.poll(async () => (await pen.boundingBox())!.x).toBeLessThan(before.x - 60);
+  const moved = (await pen.boundingBox())!;
+  await expect.poll(async () => manager.evaluate(async () => (await chrome.storage.local.get("ui.palettePosition"))["ui.palettePosition"])).toBeTruthy();
+  await manager.getByLabel("自定义", { exact: true }).fill("#eab618");
+  await expect.poll(async () => (await rpc<any>(manager, { type: "settings.get" })).defaultColor).toBe("#eab618");
+  await page.reload();
+  await expect.poll(async () => (await pen.boundingBox())?.width).toBe(64);
+  await expect.poll(async () => Math.abs((await pen.boundingBox())!.x - moved.x)).toBeLessThan(1);
+  await openSidepanel(page);
+  await page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  const selection = manager.getByRole("region", { name: "当前选区", exact: true });
+  await expect(selection.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+  await expect(selection.getByRole("button", { name: "高亮 #c885da", exact: true })).toBeVisible();
+  await selection.getByRole("button", { name: "自定义高亮 #eab618", exact: true }).click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" }))[0]?.color).toBe("#eab618");
+  await manager.setViewportSize({ width: 320, height: 640 });
+  await expectSidepanelFitsViewport(640);
 });
 
 test("manual sidebar annotation clears changed selected text and ignores editor selections", async () => {
@@ -751,7 +810,7 @@ test("SPA URL changes and streaming updates do not trigger cross-page errors", a
   await expect(page.locator(".toast.error")).not.toBeVisible();
   await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute(
     "aria-pressed",
-    "false",
+    "true",
   );
   await setPageMode(page, true);
   await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute(
