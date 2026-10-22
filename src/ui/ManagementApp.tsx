@@ -1099,10 +1099,10 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             <footer className="sidepanel-dock" aria-label={t.pageAnnotations}>
               <button
                 className="quiet dock-draw"
-                onClick={() => void pageAction("draw")}
+                disabled
               >
                 <Icon name="draw" />
-                {t.drawImage}
+                {t.drawImage} · {t.comingSoon}
               </button>
               <details
                 ref={moreMenu}

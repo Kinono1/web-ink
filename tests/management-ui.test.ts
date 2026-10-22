@@ -189,19 +189,40 @@ describe("sidebar context errors", () => {
     installChrome(message => {
       if (message.type === "page.action") return { ok: false, error: "Explicit action failed" };
       if (message.type === "settings.get") return { ok: true, data: settings };
-      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
       if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
       if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
       if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
       return { ok: true, data: true };
     }, undefined, listener => { updated = listener; });
     const host = await mount("sidepanel");
-    const draw = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "图片绘制")!;
-    await act(async () => draw.click());
+    await act(async () => host.querySelector<HTMLButtonElement>(".annotation-row")!.click());
+    const focus = [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === "定位")!;
+    await act(async () => focus.click());
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Explicit action failed");
     await act(async () => { updated!(7, { status: "complete" }); });
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Explicit action failed");
   });
+});
+
+it.each([
+  ["zh-CN", "图片绘制 · 待开发"],
+  ["en", "Draw image · Coming soon"],
+] as const)("keeps image drawing visible but unavailable in %s", async (language, label) => {
+  const send = installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: { ...settings, language } };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+    if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+    if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+    if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+    return { ok: true, data: true };
+  });
+  const host = await mount("sidepanel");
+  const button = host.querySelector<HTMLButtonElement>(".dock-draw")!;
+  expect(button.textContent).toBe(label);
+  expect(button.disabled).toBe(true);
+  await act(async () => button.click());
+  expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.action", action: "draw" }));
 });
 
 it("updates the pencil size from Settings without changing annotation settings", async () => {
@@ -726,7 +747,7 @@ describe("management UI", () => {
     const host = await mount("library");
     expect(host.querySelector(".annotation-browser")).toBeNull();
     expect(host.textContent).toContain("还没有保存的标注");
-    expect(host.textContent).toContain("当前页面");
+    expect(host.textContent).toContain("选中文字开始标注");
   });
 
   it("uses the observed current-tab context and sends only a selected source to the background", async () => {
