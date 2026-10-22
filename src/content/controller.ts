@@ -623,8 +623,8 @@ export function startEngine(
       const hint = document.createElement("span");
       hint.className = "hint";
       hint.textContent = label(
-        "点击网页中的图片开始绘制",
-        "Click an image to start drawing",
+        "点击网页中的图片以重新绑定",
+        "Click an image to rebind this annotation",
       );
       view.drawing.append(hint, button(label("完成", "Done"), exitDrawing));
       view.drawing.style.display = "flex";
@@ -709,12 +709,8 @@ export function startEngine(
       }
       return;
     }
-    selectedImage = image;
-    mode = "drawing";
-    view.svg.style.pointerEvents = "auto";
-    view.svg.style.cursor = "crosshair";
-    drawingToolbar();
-    schedulePaint();
+    // A completed save can clear a newer rebind; never fall back to drawing.
+    exitDrawing();
   }
   function startDrawing() {
     if (!enabled()) {
@@ -728,8 +724,8 @@ export function startEngine(
     drawingToolbar();
     toast(
       label(
-        "点击网页中的图片，然后圈画。Esc 退出。",
-        "Click an image, then draw. Esc to exit.",
+        "点击网页中的图片以重新绑定。Esc 退出。",
+        "Click an image to rebind this annotation. Esc to exit.",
       ),
     );
   }
@@ -1539,12 +1535,15 @@ export function startEngine(
       return;
     }
     if (action === "draw") {
-      rebinding = undefined;
-      void withPageEnabled(startDrawing);
+      // Drawing is unavailable; image selection remains available for rebind only.
       return;
     }
     const record = annotations.find((item) => item.id === id);
     if (!record || (record.kind !== "text" && record.kind !== "image")) return;
+    if (pendingSave) {
+      toast(label("正在保存，请稍后再重新定位。", "Saving. Wait before rebinding."), true);
+      return;
+    }
     rebinding = record;
     if (record.kind === "image") startDrawing();
     else {

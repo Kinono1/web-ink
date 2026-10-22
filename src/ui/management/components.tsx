@@ -246,7 +246,6 @@ type BrowserProps = {
   onDelete: (record: Annotation) => Promise<boolean>;
   onFocus: (record: Annotation) => void;
   onRebind: (record: Annotation) => void;
-  onDraw: (record: Annotation) => void;
   onOpenPdf: (record?: Annotation) => void;
 };
 export function AnnotationBrowser({
@@ -270,7 +269,6 @@ export function AnnotationBrowser({
   onDelete,
   onFocus,
   onRebind,
-  onDraw,
   onOpenPdf,
 }: BrowserProps) {
   const selected = records.find((record) => record.id === selectedId);
@@ -294,7 +292,6 @@ export function AnnotationBrowser({
     onDelete: () => onDelete(record),
     onFocus: () => onFocus(record),
     onRebind: () => onRebind(record),
-    onDraw: () => onDraw(record),
     onOpenPdf: () => onOpenPdf(record),
     tagSuggestions: [...new Set(records.flatMap((item) => item.tags))].sort(),
   });
@@ -365,7 +362,6 @@ type DetailProps = {
   onDelete: () => Promise<boolean>;
   onFocus: () => void;
   onRebind: () => void;
-  onDraw: () => void;
   onOpenPdf: () => void;
   tagSuggestions: string[];
 };
@@ -630,7 +626,6 @@ function DetailActions({
   onDelete,
   onFocus,
   onRebind,
-  onDraw,
   onOpenPdf,
 }: DetailProps) {
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -674,12 +669,6 @@ function DetailActions({
       {state?.status === "unresolved" && compact ? (
         <button className="quiet" onClick={onRebind}>
           {t.rebind}
-        </button>
-      ) : null}
-      {record.kind === "image" && compact ? (
-        <button className="quiet" onClick={onDraw}>
-          <Icon name="draw" />
-          {t.draw}
         </button>
       ) : null}
       <button className="quiet" onClick={onEdit}>

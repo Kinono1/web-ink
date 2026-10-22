@@ -336,6 +336,108 @@ describe('engine bridge ownership', () => {
   });
 });
 
+describe('unavailable image drawing', () => {
+  it.each([undefined, 'saved-image'])('ignores legacy engine draw actions (%s) without enabling the page', async id => {
+    const view = createView();
+    const engine = startEngine(view); disposers.push(engine.stop);
+    await vi.waitFor(() => expect(messages.some(message => message.type === 'page.mode.get')).toBe(true));
+    engine.dispatch('draw', id);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(view.drawing.childElementCount).toBe(0);
+    expect(engine.snapshot().enabled).toBe(false);
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+  });
+
+  it('ignores legacy draw actions on an enabled engine', async () => {
+    modeEnabled = true;
+    const view = createView();
+    const engine = startEngine(view); disposers.push(engine.stop);
+    await vi.waitFor(() => expect(engine.snapshot().enabled).toBe(true));
+    engine.dispatch('draw');
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(view.drawing.childElementCount).toBe(0);
+    expect(messages.filter(message => message.type === 'annotations.put')).toHaveLength(0);
+  });
+
+  it.each([false, true])('does not forward a stale draw message or enable a page (enabled: %s)', async enabled => {
+    modeEnabled = enabled;
+    const owner = bootstrap();
+    await idle();
+    const dispatch = vi.fn();
+    window.__webInkEngine = {
+      generation: HEALTH.generation, start: () => {}, stop: () => {}, canStop: () => true,
+      dispatch, snapshot: () => ({ pageUrl: location.href, states: [], enabled }),
+    };
+    const respond = vi.fn();
+    for (const listener of listeners)
+      listener({ type: 'page.action.execute', action: 'draw' } as { type: string }, {}, respond);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(dispatch).not.toHaveBeenCalled();
+    expect(owner.isEnabled()).toBe(enabled);
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+  });
+});
+
+it.each(['success', 'failure'] as const)('blocks rebind during a save and allows retry after %s', async outcome => {
+  modeEnabled = true;
+  document.body.innerHTML = '<img id="diagram" src="https://example.test/diagram.png">';
+  const image = document.querySelector<HTMLImageElement>('#diagram')!;
+  Object.defineProperties(image, {
+    naturalWidth: { configurable: true, value: 600 },
+    naturalHeight: { configurable: true, value: 320 },
+    getBoundingClientRect: { configurable: true, value: () => ({ x: 0, y: 0, left: 0, top: 0, right: 600, bottom: 320, width: 600, height: 320 }) },
+  });
+  const saved = {
+    id: 'existing-image', kind: 'image' as const, pageUrl: location.href, pageTitle: 'Saved', color: '#facd5a',
+    note: 'Keep note', tags: ['kept-tag'], createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', revision: 1,
+    target: { src: image.src, sourceCandidates: [], alt: '', naturalWidth: 600, naturalHeight: 320, selector: 'img#diagram', occurrence: 0, context: '' },
+    shape: { kind: 'rectangle' as const, points: [{ x: .1, y: .1 }, { x: .6, y: .6 }], width: .004 },
+  };
+  annotationRecords = [saved];
+  let finishSave!: (succeed: boolean) => void;
+  const writes: Array<{ annotation: Annotation; expectedRevision: number }> = [];
+  const send = chrome.runtime.sendMessage;
+  chrome.runtime.sendMessage = ((message: { type: string; annotation?: Annotation; expectedRevision?: number }) => {
+    if (message.type === 'annotations.put') {
+      messages.push(message);
+      writes.push({ annotation: message.annotation!, expectedRevision: message.expectedRevision! });
+      return new Promise<unknown>((resolve, reject) => {
+        finishSave = succeed => succeed
+          ? resolve({ ok: true, data: { ...message.annotation, revision: message.expectedRevision! + 1 } })
+          : reject(Error('Simulated save failure'));
+      });
+    }
+    return send(message);
+  }) as typeof send;
+  const view = createView();
+  const engine = startEngine(view); disposers.push(engine.stop);
+  await vi.waitFor(() => expect(engine.snapshot().states).toHaveLength(1));
+  engine.dispatch('rebind', saved.id);
+  image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+  expect(writes).toHaveLength(1);
+  engine.dispatch('rebind', saved.id);
+  expect(view.toast.textContent).toContain('正在保存，请稍后再重新定位');
+  expect(view.drawing.style.display).toBe('none');
+  image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+  expect(writes).toHaveLength(1);
+  finishSave(outcome === 'success');
+  await vi.waitFor(() => expect(view.toast.textContent).toContain(outcome === 'success' ? '已保存到本机' : '保存失败'));
+  image.src = 'https://example.test/rebound-diagram.png';
+  engine.dispatch('rebind', saved.id);
+  expect(view.drawing.textContent).toContain('重新绑定');
+  image.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+  expect(writes).toHaveLength(2);
+  expect(writes[1]!.expectedRevision).toBe(outcome === 'success' ? 2 : 1);
+  expect(writes[1]!.annotation).toMatchObject({
+    id: saved.id, note: saved.note, tags: saved.tags, createdAt: saved.createdAt, shape: saved.shape,
+    target: { src: image.src },
+  });
+  finishSave(true);
+  await vi.waitFor(() => expect(view.toast.textContent).toContain('已保存到本机'));
+  expect(view.drawing.querySelector('[aria-label="Rectangle"], [aria-label="方框"]')).toBeNull();
+  expect(view.svg.style.pointerEvents).toBe('none');
+});
+
 describe('content annotation presets', () => {
   function selectLiveText(host: HTMLElement) {
     const node = host.firstChild!;
