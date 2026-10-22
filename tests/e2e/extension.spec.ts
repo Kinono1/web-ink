@@ -8,6 +8,7 @@ import {
 import { mkdtemp, rm, cp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { ImageAnnotation, ShapeKind } from "../../src/core/model";
 
 const extensionPath = path.resolve(process.env.WEB_INK_BUILD || ".build-output/chrome-mv3");
 const origins = ["http://*/*", "https://*/*"];
@@ -113,6 +114,31 @@ async function article(activate = true) {
   if (activate) await expect(toggle).toHaveAttribute("aria-pressed", "true");
   return page;
 }
+// Saved/imported fixtures exercise image compatibility without enabling unfinished drawing.
+async function importImageMarks(page: Page, kinds: ShapeKind[] = ["rectangle"]) {
+  const target = await page.locator("#diagram").evaluate(element => {
+    const image = element as HTMLImageElement;
+    return {
+      src: image.currentSrc || image.src,
+      sourceCandidates: [image.currentSrc || image.src],
+      alt: image.alt, naturalWidth: image.naturalWidth, naturalHeight: image.naturalHeight,
+      selector: "img#diagram", occurrence: 0, context: "",
+    };
+  });
+  const annotations: ImageAnnotation[] = kinds.map((kind, index) => ({
+    id: `imported-image-${index}`, kind: "image", pageUrl: page.url(), pageTitle: "Reading fixture",
+    color: "#facd5a", note: `Saved ${kind} note`, tags: ["image-fixture"],
+    createdAt: "2026-10-01T00:00:00.000Z", updatedAt: "2026-10-01T00:00:00.000Z", revision: 1,
+    target,
+    shape: { kind, points: [{ x: .2, y: .25 }, { x: .6, y: .65 }], width: .004 },
+  }));
+  await rpc(manager, {
+    type: "backup.import", overwrite: false,
+    backup: { format: "web-ink", schemaVersion: 2, exportedAt: "2026-10-01T00:00:00.000Z", annotations },
+  });
+  return (await rpc<ImageAnnotation[]>(manager, { type: "annotations.list" })).filter(record => record.kind === "image");
+}
+
 async function selectAndMark(page: Page, selector = "#selection strong") {
   await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
   await page.locator(selector).scrollIntoViewIfNeeded();
@@ -458,42 +484,22 @@ test("real text marking, reload and browser restart keep records", async () => {
   });
 });
 
-test("image drawing stores normalized points and follows responsive image size", async () => {
+test("imported image marks follow responsive image size and survive reload", async () => {
   await enable();
   const page = await article();
-  const tabs = await manager.evaluate(() => chrome.tabs.query({}));
-  const tab = tabs.find((t) => t.url === "http://127.0.0.1:4173/article")!;
   await page.locator("#diagram").scrollIntoViewIfNeeded();
-  await rpc(manager, { type: "page.action", tabId: tab.id, action: "draw" });
-  await page.locator("#diagram").click();
-  const box = await page.locator("#diagram").boundingBox();
-  await page.mouse.move(box!.x + 150, box!.y + 90);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + 310, box!.y + 200, { steps: 6 });
-  await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-    )
-    .toBe(1);
-  const [record] = await rpc<any[]>(manager, { type: "annotations.list" });
-  expect(record.kind).toBe("image");
-  expect(record.shape.kind).toBe("rectangle");
-  expect(record.shape.points[0].x).toBeGreaterThan(0);
-  expect(record.shape.points[1].x).toBeLessThan(1);
-  await page.getByRole("button", { name: "完成", exact: true }).click();
-  const shape = page.locator(`g[data-annotation-id="${record.id}"] > rect`);
+  const [record] = await importImageMarks(page);
+  const shape = page.locator(`g[data-annotation-id="${record!.id}"] > rect`);
+  await expect(shape).toBeVisible();
   const firstWidth = Number(await shape.getAttribute("width"));
   await page.locator("#diagram").evaluate((img) => {
     (img as HTMLElement).style.width = "300px";
     (img as HTMLElement).style.height = "160px";
   });
-  await expect
-    .poll(async () => Number(await shape.getAttribute("width")))
-    .toBeCloseTo(firstWidth / 2, 1);
+  await expect.poll(async () => Number(await shape.getAttribute("width"))).toBeCloseTo(firstWidth / 2, 1);
   await page.reload();
   await expect(shape).toHaveCount(1);
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual([record]);
   await page.screenshot({ path: "test-results/image-annotations.png" });
 });
 
@@ -613,59 +619,52 @@ test("changed source is unresolved, backup remains complete, and stale writes fa
   );
 });
 
-test("all four image tools persist and session undo/redo preserves the drawing", async () => {
+test("image drawing stays unavailable while imported shapes, notes, export and rebind remain usable", async () => {
   await enable();
   const page = await article();
-  const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(
-    (t) => t.url === "http://127.0.0.1:4173/article",
-  )!;
   await page.locator("#diagram").scrollIntoViewIfNeeded();
-  await rpc(manager, { type: "page.action", tabId: tab.id, action: "draw" });
-  await page.locator("#diagram").click();
-  // Icon-only tools must paint their glyphs; an unsized SVG collapses to 0×0.
-  for (const name of ["方框", "椭圆", "箭头", "画笔", "撤销", "重做", "换图片", "完成"])
-    await expect(
-      page.getByRole("button", { name, exact: true }).locator("svg"),
-    ).toBeVisible();
-  const box = (await page.locator("#diagram").boundingBox())!;
-  for (const [index, name] of ["方框", "椭圆", "箭头", "画笔"].entries()) {
-    await page.getByRole("button", { name, exact: true }).click();
-    await page.mouse.move(box.x + 100 + index * 12, box.y + 100);
-    await page.mouse.down();
-    await page.mouse.move(box.x + 280 + index * 12, box.y + 180, { steps: 12 });
-    await page.mouse.up();
-    await expect
-      .poll(
-        async () =>
-          (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-      )
-      .toBe(index + 1);
-    await expect(page.locator(".toast")).toContainText("已保存到本机");
-  }
-  expect(
-    (await rpc<any[]>(manager, { type: "annotations.list" })).map(
-      (a) => a.shape.kind,
-    ),
-  ).toEqual(["rectangle", "ellipse", "arrow", "pen"]);
-  await page.getByRole("button", { name: "撤销", exact: true }).click();
-  await expect
-    .poll(
-      async () =>
-        (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-    )
-    .toBe(3);
-  await page.getByRole("button", { name: "重做", exact: true }).click();
-  await expect
-    .poll(
-      async () =>
-        (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-    )
-    .toBe(4);
-  await page.getByRole("button", { name: "完成", exact: true }).click();
+  const saved = await importImageMarks(page, ["rectangle", "ellipse", "arrow", "pen"]);
+  await expect(page.locator("g[data-annotation-id]")).toHaveCount(4);
   await page.reload();
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(4);
-  await page.locator("#diagram").scrollIntoViewIfNeeded();
-  await page.screenshot({ path: "test-results/four-image-tools.png" });
+  const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(t => t.url === page.url())!;
+  await expect(rpc(manager, { type: "page.action", tabId: tab.id, action: "draw", id: saved[0]!.id })).rejects.toThrow("Invalid page action");
+  await page.locator("#diagram").click();
+  await expect(page.locator(".drawing")).not.toBeVisible();
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual(saved);
+
+  await openSidepanel(page);
+  await manager.locator(".annotation-row").first().click();
+  const detail = manager.locator(".annotation-detail");
+  await expect(detail.getByRole("button", { name: "绘制", exact: true })).toHaveCount(0);
+  await expect(manager.locator(".dock-draw")).toBeDisabled();
+  await detail.getByRole("button", { name: "笔记", exact: true }).click();
+  await detail.getByRole("textbox", { name: "笔记", exact: true }).fill("Updated image note");
+  await detail.getByRole("button", { name: "保存", exact: true }).click();
+  await expect(detail.locator(".note")).toHaveText("Updated image note");
+  const edited = (await rpc<ImageAnnotation[]>(manager, { type: "annotations.list" })).find(r => r.note === "Updated image note")!;
+  expect(edited.shape).toEqual(saved.find(r => r.id === edited.id)!.shape);
+  const backup = await rpc<any>(manager, { type: "backup.export" });
+  expect(backup.annotations).toHaveLength(4);
+  expect(backup.annotations.find((r: ImageAnnotation) => r.id === edited.id)).toEqual(edited);
+
+  await page.locator("#diagram").evaluate(element => {
+    const image = element as HTMLImageElement;
+    image.id = "replacement-diagram";
+    image.src += "?rebound=1";
+  });
+  await expect(detail.getByRole("button", { name: "重新定位", exact: true })).toBeVisible();
+  await detail.getByRole("button", { name: "重新定位", exact: true }).click();
+  await expect(page.locator(".drawing")).toContainText("重新绑定");
+  for (const name of ["方框", "椭圆", "箭头", "画笔", "撤销", "重做", "换图片"])
+    await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
+  await page.locator("#replacement-diagram").click();
+  await expect(page.locator(".drawing")).not.toBeVisible();
+  await expect.poll(async () => (await rpc<ImageAnnotation[]>(manager, { type: "annotations.list" })).find(r => r.id === edited.id)?.target.src).toContain("?rebound=1");
+  const rebound = (await rpc<ImageAnnotation[]>(manager, { type: "annotations.list" })).find(r => r.id === edited.id)!;
+  expect(rebound).toMatchObject({ id: edited.id, note: edited.note, tags: edited.tags, createdAt: edited.createdAt, shape: edited.shape });
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(4);
+  await page.screenshot({ path: "test-results/imported-image-rebind.png" });
 });
 
 test("site pause/resume and manual rebind retain the original record", async () => {
@@ -1185,27 +1184,8 @@ test("metadata changes preserve text ranges and scrolling reuses image SVG nodes
       ),
     )
     .toBe(true);
-  const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(
-    (t) => t.url === "http://127.0.0.1:4173/article",
-  )!;
-  await rpc(manager, { type: "page.action", tabId: tab.id, action: "draw" });
-  await page.locator("#diagram").click();
-  const box = await page.locator("#diagram").boundingBox();
-  await page.mouse.move(box!.x + 100, box!.y + 80);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + 230, box!.y + 180, { steps: 3 });
-  await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-    )
-    .toBe(2);
-  await page.getByRole("button", { name: "完成", exact: true }).click();
-  const [drawing] = (
-    await rpc<any[]>(manager, { type: "annotations.list" })
-  ).filter((r) => r.kind === "image");
-  const group = page.locator(`g[data-annotation-id="${drawing.id}"]`);
+  const [drawing] = await importImageMarks(page);
+  const group = page.locator(`g[data-annotation-id="${drawing!.id}"]`);
   await group.evaluate((element) => {
     (window as any).__savedGroup = element;
     (window as any).__savedShape = element.querySelector(":scope > rect");
@@ -1354,28 +1334,13 @@ test("existing image marks can be removed directly after reload", async () => {
     pageErrors.push(error.message);
     console.error("Image marking page error:", error.message);
   });
-  const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(
-    (t) => t.url === "http://127.0.0.1:4173/article",
-  )!;
   await page.locator("#diagram").scrollIntoViewIfNeeded();
-  await rpc(manager, { type: "page.action", tabId: tab.id, action: "draw" });
-  await page.locator("#diagram").click();
-  const box = await page.locator("#diagram").boundingBox();
-  await page.mouse.move(box!.x + 100, box!.y + 80);
-  await page.mouse.down();
-  await page.mouse.move(box!.x + 240, box!.y + 180, { steps: 4 });
-  await page.mouse.up();
-  await expect
-    .poll(
-      async () =>
-        (await rpc<any[]>(manager, { type: "annotations.list" })).length,
-    )
-    .toBe(1);
-  await page.getByRole("button", { name: "完成", exact: true }).click();
+  await importImageMarks(page);
   await page.reload();
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(1);
   const toggle = page.locator(".web-ink-palette-toggle");
   await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await setPageMode(page, false);
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(0);
   expect((await rpc<any[]>(manager, { type: "annotations.list" })).length).toBe(

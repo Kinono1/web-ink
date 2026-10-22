@@ -65,6 +65,17 @@ function health(sender: chrome.runtime.MessageSender = { id: 'web-ink-id', url: 
 }
 
 describe('background runtime lifecycle', () => {
+  it('rejects legacy drawing requests before messaging a tab', async () => {
+    await wakeWorker();
+    const send = vi.spyOn(chrome.tabs, 'sendMessage');
+    const response = await new Promise(resolve => {
+      onMessage({ type: 'page.action', tabId: 7, action: 'draw', id: 'saved-image' },
+        { id: 'web-ink-id', url: 'chrome-extension://web-ink-id/sidepanel.html' }, resolve);
+    });
+    expect(response).toMatchObject({ ok: false });
+    expect(send).not.toHaveBeenCalledWith(7, expect.objectContaining({ action: 'draw' }));
+  });
+
   it('serves health before annotation data work and stores one UUID for concurrent requests', async () => {
     await wakeWorker();
     const [first, second] = await Promise.all([health(), health()]);

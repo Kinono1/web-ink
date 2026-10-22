@@ -480,7 +480,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
     }
   };
   const pageAction = async (
-    action: "focus" | "rebind" | "draw",
+    action: "focus" | "rebind",
     id?: string,
   ) => {
     if (tab.id === undefined) {
@@ -1076,7 +1076,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
               onDelete={removeRecord}
               onFocus={(record) => void pageAction("focus", record.id)}
               onRebind={(record) => void pageAction("rebind", record.id)}
-              onDraw={(record) => void pageAction("draw", record.id)}
               onOpenPdf={openPdf}
             />
           ) : null}
@@ -1196,7 +1195,6 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             onDelete={removeRecord}
             onFocus={() => undefined}
             onRebind={() => undefined}
-            onDraw={() => undefined}
             onOpenPdf={openPdf}
           /> : null}
           {!records.length && !loading ? (

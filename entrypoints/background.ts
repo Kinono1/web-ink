@@ -293,7 +293,7 @@ export default defineBackground(() => {
           const msg = raw as Extract<Request, { type: "page.action" }>;
           if (
             !Number.isInteger(msg.tabId) ||
-            !["focus", "rebind", "draw", "refresh"].includes(msg.action)
+            !["focus", "rebind", "refresh"].includes(msg.action)
           )
             throw new Error("Invalid page action");
           await chrome.tabs.sendMessage(msg.tabId, {

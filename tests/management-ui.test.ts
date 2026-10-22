@@ -225,6 +225,39 @@ it.each([
   expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.action", action: "draw" }));
 });
 
+it.each([
+  ["zh-CN", "located", "绘制", "定位", "笔记"],
+  ["en", "located", "Draw", "Focus", "Note"],
+  ["zh-CN", "unresolved", "绘制", "重新定位", "笔记"],
+  ["en", "unresolved", "Draw", "Rebind", "Note"],
+] as const)("keeps saved image details usable without a drawing entry in %s (%s)", async (language, status, drawLabel, actionLabel, noteLabel) => {
+  const image: Annotation = {
+    ...record, id: "saved-image", kind: "image", note: "Keep my image note",
+    target: { src: "https://example.test/image.png", sourceCandidates: [], alt: "Saved diagram", naturalWidth: 600, naturalHeight: 320, selector: "img#diagram", occurrence: 0, context: "" },
+    shape: { kind: "rectangle", points: [{ x: .1, y: .2 }, { x: .6, y: .7 }], width: .004 },
+  };
+  const send = installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: { ...settings, language } };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [image] } };
+    if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+    if (message.type === "page.state.get") return { ok: true, data: { states: [{ id: image.id, status }] } };
+    if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+    return { ok: true, data: true };
+  });
+  const host = await mount("sidepanel");
+  await act(async () => host.querySelector<HTMLButtonElement>(".annotation-row")!.click());
+  const buttons = () => [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")];
+  expect(buttons().find(button => button.textContent === drawLabel)).toBeUndefined();
+  expect(host.textContent).toContain("Keep my image note");
+  expect(host.textContent).toContain("Saved diagram");
+  await act(async () => buttons().find(button => button.textContent === actionLabel)!.click());
+  expect(send).toHaveBeenCalledWith({ type: "page.action", tabId: 7, action: status === "located" ? "focus" : "rebind", id: image.id });
+  await act(async () => buttons().find(button => button.textContent === noteLabel)!.click());
+  expect(host.querySelector("textarea")?.value).toBe(image.note);
+  expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.action", action: "draw" }));
+  expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "annotations.delete" }));
+});
+
 it("updates the pencil size from Settings without changing annotation settings", async () => {
   const changes = new Set<StorageListener>();
   const stored: Record<string, unknown> = { "ui.paletteSize": 48 };

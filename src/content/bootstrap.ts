@@ -229,14 +229,15 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     action: "focus" | "rebind" | "draw" | "refresh",
     id?: string,
   ) => {
-    if (disposed) return;
+    // Ignore stale drawing messages before they can enable a page or load an engine.
+    if (disposed || action === "draw") return;
     if (pageKey(location.href) !== currentUrl) {
       stopEngine();
       await refreshMode();
     }
     // Direct user operations may deliberately turn the page on. Rebind only acts
     // on an already-restored record and therefore does not silently enable a page.
-    if ((action === "focus" || action === "draw") && !enabled && !blocked)
+    if (action === "focus" && !enabled && !blocked)
       await setEnabled(true);
     if (!enabled || blocked || !(await ensureEngine())) return;
     window.__webInkEngine?.dispatch(action, id, health.generation);
