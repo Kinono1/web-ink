@@ -239,3 +239,30 @@ it('ignores an old enable reply after a newer explicit disable has been read', a
   await new Promise(resolve => setTimeout(resolve, 0));
   expect(window.__webInkBootstrap?.isEnabled()).toBe(false);
 });
+
+
+it('exposes manual page controls only while automatic reminders are off', async () => {
+  const f = fixture(async () => ({ 'ui.selectionToolbarEnabled': true }),
+    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.button.click();
+  const root = f.host.shadowRoot!;
+  await vi.waitFor(() => expect(root.querySelector('[data-action="sidebar"]')).not.toBeNull());
+  await vi.waitFor(() => expect(root.querySelector('[role="menu"]')?.getAttribute("aria-busy")).toBe("false"));
+  expect(root.querySelector('[data-action="toggle"]')).toBeNull();
+  f.change('ui.selectionToolbarEnabled', false);
+  await vi.waitFor(() => expect(root.querySelector('[data-action="toggle"]')).not.toBeNull());
+  f.change('ui.selectionToolbarEnabled', true);
+  await vi.waitFor(() => expect(root.querySelector('[data-action="toggle"]')).toBeNull());
+});
+
+it('keeps a live reminder choice when initial appearance storage resolves late', async () => {
+  let finish!: (value: Record<string, unknown>) => void;
+  const f = fixture(() => new Promise(resolve => { finish = resolve; }),
+    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.change('ui.selectionToolbarEnabled', false);
+  finish({ 'ui.selectionToolbarEnabled': true });
+  f.button.click();
+  await vi.waitFor(() => expect(f.host.shadowRoot!.querySelector('[data-action="toggle"]')).not.toBeNull());
+});

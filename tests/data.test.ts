@@ -331,19 +331,27 @@ describe('page mode boundary', () => {
     expect(await db.annotations.get('annotation-1')).toMatchObject({ note: 'A note', revision: 1 });
   });
 
-  it('keeps an explicit page mode independent of the global reminder preference', async () => {
+  it('lets automatic selection override a stored disabled webpage without rewriting its manual mode', async () => {
     await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true });
     const disabled = await db.pages.get(pageUrl);
     local[SELECTION_TOOLBAR_KEY] = true;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: true } });
     expect(await db.pages.get(pageUrl)).toEqual(disabled);
-    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
-    const enabled = await db.pages.get(pageUrl);
     local[SELECTION_TOOLBAR_KEY] = false;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pageUrl)).toEqual(disabled);
+  });
+
+  it('acknowledges the effective automatic mode while preserving the requested manual mode', async () => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: true } });
-    expect(await db.pages.get(pageUrl)).toEqual(enabled);
+    expect((await db.pages.get(pageUrl))?.enabled).toBe(false);
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
   });
 
   it('lets a paused origin override inherited and explicit enabled modes without rewriting either', async () => {

@@ -132,6 +132,7 @@ describe('content runtime generations', () => {
   });
 
   it('recovers from a legacy disposer throwing after marking itself disposed without duplicate mode writes', async () => {
+    chrome.storage.local.get = vi.fn(async () => ({ 'ui.selectionToolbarEnabled': false })) as typeof chrome.storage.local.get;
     const view = createView();
     let disposed = false, stopped = false;
     const legacyButton = document.createElement('button');

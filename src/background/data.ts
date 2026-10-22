@@ -264,6 +264,19 @@ async function writeSettings(settings: Settings): Promise<void> {
   await chrome.storage.local.set({ [SETTINGS_KEY]: settings });
 }
 
+function effectivePageMode(
+  pageUrl: string,
+  manualEnabled: boolean | undefined,
+  settings?: Settings,
+  automatic = false,
+): PageMode {
+  if (pageUrl.startsWith("urn:web-ink:pdf:"))
+    return { enabled: manualEnabled === true };
+  if (settings?.disabledOrigins.includes(new URL(pageUrl).origin))
+    return { enabled: false };
+  return { enabled: automatic || manualEnabled === true };
+}
+
 async function listAnnotations(pageUrl?: string): Promise<Annotation[]> {
   const db = getDatabase();
   const rows =
@@ -277,26 +290,31 @@ async function listAnnotations(pageUrl?: string): Promise<Annotation[]> {
 }
 
 async function getPageMode(pageUrl: string): Promise<PageMode> {
-  const page = await getDatabase().pages.get(pageUrl);
   if (pageUrl.startsWith("urn:web-ink:pdf:"))
-    return { enabled: page?.enabled === true };
-  const settings = await readSettings();
-  if (settings.disabledOrigins.includes(new URL(pageUrl).origin))
-    return { enabled: false };
-  if (typeof page?.enabled === "boolean") return { enabled: page.enabled };
+    return effectivePageMode(
+      pageUrl,
+      (await getDatabase().pages.get(pageUrl))?.enabled,
+    );
+  const [page, settings, automatic] = await Promise.all([
+    getDatabase().pages.get(pageUrl),
+    readSettings(),
+    readSelectionToolbarEnabled(),
+  ]);
   // Reads are deliberately side-effect free: an unopened page stays absent from pages.
-  return { enabled: await readSelectionToolbarEnabled() };
+  return effectivePageMode(pageUrl, page?.enabled, settings, automatic);
 }
 
 async function putPageMode(
   pageUrl: string,
   enabled: boolean,
 ): Promise<Result<PageMode>> {
-  if (enabled) {
-    const settings = await readSettings();
-    if (settings.disabledOrigins.includes(new URL(pageUrl).origin)) {
-      return fail("This site is paused and cannot be enabled.", "FORBIDDEN");
-    }
+  const pdf = pageUrl.startsWith("urn:web-ink:pdf:");
+  // Chrome storage must be read before entering the Dexie transaction.
+  const [settings, automatic] = pdf
+    ? [undefined, false]
+    : await Promise.all([readSettings(), readSelectionToolbarEnabled()]);
+  if (enabled && settings?.disabledOrigins.includes(new URL(pageUrl).origin)) {
+    return fail("This site is paused and cannot be enabled.", "FORBIDDEN");
   }
   const db = getDatabase();
   return db.transaction("rw", db.pages, db.stats, async () => {
@@ -312,7 +330,7 @@ async function putPageMode(
       ...(existing ? { beforePage: existing } : {}),
       afterPage: stored,
     });
-    return ok({ enabled });
+    return ok(effectivePageMode(pageUrl, enabled, settings, automatic));
   });
 }
 

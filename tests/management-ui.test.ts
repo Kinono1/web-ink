@@ -271,7 +271,7 @@ describe("management UI", () => {
       if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
       if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
       if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
-      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: stored["ui.selectionToolbarEnabled"] === true } };
       return { ok: true, data: true };
     });
     Object.assign(chrome, { storage: {
@@ -291,8 +291,10 @@ describe("management UI", () => {
     const host = await mount("sidepanel");
     const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="自动显示标注工具"]')!;
     expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('.page-header [role="switch"]')).toBeNull();
     await act(async () => control.click());
     expect(stored["ui.selectionToolbarEnabled"]).toBe(false);
+    expect(host.querySelector('.page-header [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
     expect(control.getAttribute("aria-checked")).toBe("false");
 
     await act(async () => {
@@ -308,6 +310,57 @@ describe("management UI", () => {
     });
     expect(control.getAttribute("aria-checked")).toBe("true");
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Preference storage denied");
+  });
+
+  it("does not let a late automatic-mode snapshot replace the latest manual mode", async () => {
+    const changes = new Set<StorageListener>();
+    let automatic = true;
+    let holdMode = false;
+    let finish!: (value: unknown) => void;
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return holdMode
+        ? new Promise(resolve => { finish = resolve; })
+        : { ok: true, data: { enabled: automatic } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome, { storage: {
+      local: { get: async () => ({ "ui.selectionToolbarEnabled": automatic }), set: async () => {} },
+      onChanged: { addListener: (fn: StorageListener) => changes.add(fn), removeListener: (fn: StorageListener) => changes.delete(fn) },
+    } });
+    const host = await mount("sidepanel");
+    const change = async (value: boolean) => act(async () => {
+      automatic = value;
+      for (const listener of changes) listener({ "ui.selectionToolbarEnabled": { newValue: value } }, "local");
+    });
+    holdMode = true;
+    await change(false);
+    expect(finish).toBeDefined();
+    holdMode = false;
+    await change(true);
+    await change(false);
+    await act(async () => finish({ ok: true, data: { enabled: true } }));
+    expect(host.querySelector('.page-header [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("keeps a paused website off even when automatic reminders are enabled", async () => {
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: { ...settings, disabledOrigins: ["https://example.test"] } };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome, { storage: { local: { get: async () => ({ "ui.selectionToolbarEnabled": true }) } } });
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('.page-header [role="switch"]');
+    expect(control?.getAttribute("aria-checked")).toBe("false");
+    expect(control?.disabled).toBe(true);
+    expect(host.querySelector('[aria-label="自动显示标注工具"]')).toBeNull();
   });
 
   it("keeps a newer storage change when the initial toolbar preference read resolves late", async () => {

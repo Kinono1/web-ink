@@ -10,7 +10,7 @@
 
 1. Download `web-ink-<version>-chrome.zip` from Releases and extract it into a permanent folder.
 2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select the folder containing `manifest.json`.
-3. Open a webpage, click Web Ink in Chrome's toolbar, and grant page access when prompted. Select text and choose a color or add a note in the side panel. Enable automatic reminders in Settings to show selection tools on new webpages.
+3. Open a webpage, click Web Ink in Chrome's toolbar, and grant page access when prompted. Select text and choose a color or add a note in the side panel. Enable automatic reminders in Settings to show selection tools on current and new webpages.
 
 Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a preview. Check **Library → Settings & data** for the installed version and build identity; source, development builds, and public archives may differ. Consult the release notes for verified coverage.
 
@@ -26,7 +26,7 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 
 - Select webpage text and choose a color. Click a saved mark to add a note or remove it; removal can be undone.
 - Adjust **Pencil size** (40–64px) and **Default highlight color** in **Settings & data**. The Apple five-color palette remains available; a custom color outside that palette adds a separate sidebar swatch without changing saved annotations.
-- **Show annotation tools automatically** defaults to off. Enable it in the side panel or **Settings & data** to show selection tools on new authorized webpages. Paused sites and explicitly disabled pages remain off. When reminders are off, use the pen or side panel manually; saved records remain available.
+- **Show annotation tools automatically** defaults to off. Enable it in the side panel or **Settings & data** to select text directly on current and new authorized webpages. Paused sites remain off. While automatic reminders are on, saved page-off choices do not block annotation. Turning reminders off restores manual page choices; the pen and side panel still work, and saved records remain available.
 - Use editable color/tag presets for selected text. PDF **More → Focus reading** hides the reader bar while keeping pages, annotations and exit available.
 - Use the side panel's image tools for rectangles, ellipses, arrows, and freehand drawing.
 - For a PDF in the current tab, click the floating pen and choose **Open current PDF**. If the pen is unavailable, open Web Ink from Chrome's toolbar and choose **Start annotating in this tab** in the existing side panel. With the IEEE PDF already open, choose **Open using IEEE sign-in** from the floating-pen menu or side panel; grant Chrome's IEEE site access if requested. On a page containing only paper information or a download link, first open the PDF on IEEE. The Web Ink reader opens in the same tab and keeps **Return to original reader**. Saved PDF marks and notes appear in the existing Web Ink side panel; the reader has no separate Notes button. If a source cannot be read, download it and choose the file locally.
