@@ -6,6 +6,7 @@ import { COPY } from "./copy";
 import { statusClass, isPdf, kindFamily, localDate, shortDate, excerptText, sourceName, Icon } from "./helpers";
 import { StoragePanel } from "../StoragePanel";
 import { BuildInfo } from "../BuildInfo";
+import { PencilSettings } from "../PencilSettings";
 import type { IconName } from "../icons";
 export function Alert({
   kind,
@@ -930,6 +931,7 @@ export function SettingsView({
             label={t.customColor}
           />
         </label>
+        <PencilSettings language={language} />
         <SelectionToolbarSwitch
           enabled={selectionToolbarEnabled}
           saving={selectionToolbarSaving}

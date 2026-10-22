@@ -30,13 +30,16 @@ function gestureFixture() {
     captured.delete(id);
     pointer('lostpointercapture', 0, 0, { pointerId: id });
   };
-  button.getBoundingClientRect = () => ({
+  button.getBoundingClientRect = () => {
+    const size = Number.parseFloat(button.style.getPropertyValue('--web-ink-palette-size')) || 40;
+    return ({
     x: Number.parseFloat(button.style.left) || width - 58,
     y: Number.parseFloat(button.style.top) || height - 58,
     left: Number.parseFloat(button.style.left) || width - 58,
     top: Number.parseFloat(button.style.top) || height - 58,
-    right: 0, bottom: 0, width: 40, height: 40, toJSON: () => ({}),
-  });
+    right: 0, bottom: 0, width: size, height: size, toJSON: () => ({}),
+    });
+  };
   function pointer(type: string, x: number, y: number, extra: Record<string, unknown> = {}) {
     const event = new MouseEvent(type, { bubbles: true, cancelable: true, clientX: x, clientY: y, button: 0 });
     Object.defineProperties(event, Object.fromEntries(Object.entries({ pointerId: 1, isPrimary: true, pointerType: 'mouse', ...extra }).map(([key, value]) => [key, { value }])));
@@ -114,6 +117,44 @@ describe('palette dragging', () => {
     expect(f.button.style.left).toBe('140px'); expect(f.button.style.top).toBe('100px');
     expect(f.captured.size).toBe(0); expect(f.saved).not.toHaveBeenCalled();
     f.resize(1200, 900); expect(f.button.style.left).toBe('580px');
+  });
+
+  it('resizes from the stored proportion and cancels an active drag without saving it', () => {
+    const f = gestureFixture();
+    f.control.setPosition({ x: 0.5, y: 0.5 });
+    f.pointer('pointerdown', 600, 450); f.pointer('pointermove', 300, 220);
+    expect(f.button.dataset.dragging).toBe('true'); expect(f.captured.size).toBe(1);
+
+    f.control.setSize(64);
+
+    expect(f.button.style.getPropertyValue('--web-ink-palette-size')).toBe('64px');
+    expect(f.button.style.left).toBe('568px'); expect(f.button.style.top).toBe('418px');
+    expect(f.button.dataset.dragging).toBe('false'); expect(f.captured.size).toBe(0);
+    expect(f.frames.size).toBe(0); expect(f.saved).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured size when layout has not measured the button yet', () => {
+    const f = gestureFixture();
+    f.button.getBoundingClientRect = () => ({
+      x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}),
+    });
+
+    f.control.setSize(64);
+    f.control.setPosition({ x: 0.5, y: 0.5 });
+
+    expect(f.button.style.left).toBe('568px'); expect(f.button.style.top).toBe('418px');
+  });
+
+  it('does not let a late initial size restoration interrupt an active drag', () => {
+    const f = gestureFixture();
+    f.pointer('pointerdown', 1162, 862); f.pointer('pointermove', 300, 220);
+
+    f.control.setSize(64, true);
+
+    expect(f.button.style.getPropertyValue('--web-ink-palette-size')).toBe('40px');
+    expect(f.button.dataset.dragging).toBe('true'); expect(f.captured.size).toBe(1);
+    f.pointer('pointerup', 300, 220);
+    expect(f.saved).toHaveBeenCalledOnce();
   });
 
   it('ignores late restoration and unrelated pointers without losing the active drag state', () => {

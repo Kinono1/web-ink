@@ -1055,3 +1055,11 @@ select {
     white-space: nowrap;
   }
 }
+
+.pencil-size-setting { display: grid; grid-template-columns: minmax(0, 1fr) 72px; gap: 8px 16px; align-items: center; }
+.pencil-size-setting > label { display: grid; gap: 8px; min-width: 0; }
+.pencil-size-setting input { width: 100%; min-height: 36px; accent-color: var(--ink-accent); }
+.pencil-size-setting output { margin-left: 8px; font-variant-numeric: tabular-nums; color: var(--ink-secondary); }
+.pencil-size-preview { display: grid; place-items: center; border-radius: 50%; color: var(--ink-secondary); background: var(--ink-surface-solid); box-shadow: var(--ink-shadow); }
+.pencil-size-preview .icon { width: 50%; height: 50%; }
+.pencil-size-setting > p { grid-column: 1 / -1; margin: 0; }

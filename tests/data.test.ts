@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebInkDatabase, setDatabaseForTesting } from '../src/background/database';
 import { handleDataRequest } from '../src/background/data';
 import type { Annotation, Settings } from '../src/core/model';
+import { SELECTION_TOOLBAR_KEY } from '../src/core/selection-toolbar';
 
 const pageUrl = 'https://example.test/article?topic=ink';
 const otherPageUrl = 'https://other.test/page';
@@ -305,6 +306,87 @@ describe('PDF and cursor query boundary', () => {
 });
 
 describe('page mode boundary', () => {
+  it('inherits enabled reminders for a new webpage without creating a page or stats record', async () => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: true } });
+    expect(await db.pages.count()).toBe(0);
+    expect(await db.stats.count()).toBe(0);
+    expect(local).toEqual({ [SELECTION_TOOLBAR_KEY]: true });
+  });
+
+  it('lets annotation-only page records inherit reminders without updating their metadata', async () => {
+    await handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true });
+    const before = await db.pages.get(pageUrl);
+    const stats = await db.stats.toArray();
+    expect(before).not.toHaveProperty('enabled');
+    local[SELECTION_TOOLBAR_KEY] = true;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: true } });
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pageUrl)).toEqual(before);
+    expect(await db.stats.toArray()).toEqual(stats);
+    expect(await db.annotations.get('annotation-1')).toMatchObject({ note: 'A note', revision: 1 });
+  });
+
+  it('keeps an explicit page mode independent of the global reminder preference', async () => {
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true });
+    const disabled = await db.pages.get(pageUrl);
+    local[SELECTION_TOOLBAR_KEY] = true;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pageUrl)).toEqual(disabled);
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
+    const enabled = await db.pages.get(pageUrl);
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: true } });
+    expect(await db.pages.get(pageUrl)).toEqual(enabled);
+  });
+
+  it('lets a paused origin override inherited and explicit enabled modes without rewriting either', async () => {
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
+    const saved = await db.pages.get(pageUrl);
+    local[SELECTION_TOOLBAR_KEY] = true;
+    local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: ['https://example.test'] };
+    const fresh = 'https://example.test/new-page';
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: fresh }, { trusted: false, pageUrl: fresh }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pageUrl)).toEqual(saved);
+    expect(await db.pages.get(fresh)).toBeUndefined();
+    local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: [] };
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: true } });
+  });
+
+  it('keeps reminder fallback off after a preference read error without saving a fallback', async () => {
+    const get = chrome.storage.local.get;
+    Object.defineProperty(chrome.storage.local, 'get', {
+      configurable: true,
+      value: async (key: string) => {
+        if (key === SELECTION_TOOLBAR_KEY) throw Error('Storage unavailable');
+        return get(key);
+      },
+    });
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.count()).toBe(0);
+    expect(await db.stats.count()).toBe(0);
+    expect(local).toEqual({});
+  });
+
+  it('does not apply webpage reminder fallback to a PDF document identity', async () => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    const pdfUrl = `urn:web-ink:pdf:${'a'.repeat(64)}`;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: pdfUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.count()).toBe(0);
+  });
+
   it('defaults a missing page to disabled without creating a page record', async () => {
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
       .toEqual({ ok: true, data: { enabled: false } });

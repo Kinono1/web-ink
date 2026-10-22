@@ -162,6 +162,33 @@ it('keeps the menu within a small viewport and closes during a real drag', () =>
   expect(f.menu.isOpen()).toBe(false);
 });
 
+it('places the menu below a 64px pen without overlapping its lower edge', () => {
+  const f = fixture();
+  f.anchor.style.left = '800px'; f.anchor.style.top = '12px';
+  f.anchor.getBoundingClientRect = () => ({
+    x: 800, y: 12, left: 800, top: 12, right: 864, bottom: 76, width: 64, height: 64, toJSON: () => ({}),
+  });
+
+  f.menu.toggle();
+
+  expect(f.panel.style.left).toBe('624px');
+  expect(Number.parseFloat(f.panel.style.top)).toBeGreaterThanOrEqual(84);
+});
+
+it('uses the configured size when layout has not measured the pen yet', () => {
+  const f = fixture();
+  f.anchor.style.left = '800px'; f.anchor.style.top = '12px';
+  f.anchor.style.setProperty('--web-ink-palette-size', '64px');
+  f.anchor.getBoundingClientRect = () => ({
+    x: 0, y: 0, left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0, toJSON: () => ({}),
+  });
+
+  f.menu.toggle();
+
+  expect(f.panel.style.left).toBe('624px');
+  expect(Number.parseFloat(f.panel.style.top)).toBeGreaterThanOrEqual(84);
+});
+
 it('blocks repeat actions while pending but still allows dismissing the menu and cleans up', () => {
   const f = fixture(); f.menu.toggle(); f.menu.update({ pending: true });
   f.panel.querySelector<HTMLButtonElement>('button')!.click(); expect(f.action).not.toHaveBeenCalled();

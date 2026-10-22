@@ -10,6 +10,7 @@ import {
   type PalettePoint,
   type PalettePosition,
 } from "./palette-position";
+import { normalizePaletteSize } from "../core/palette-appearance";
 
 export interface PaletteToggleState {
   enabled: boolean;
@@ -22,6 +23,7 @@ export interface PaletteToggle {
   button: HTMLButtonElement;
   update: (state: PaletteToggleState) => void;
   setPosition: (position?: PalettePosition) => void;
+  setSize: (size: number, restoring?: boolean) => void;
   dispose: () => void;
 }
 
@@ -36,14 +38,14 @@ export function createPaletteToggle(
   const style = document.createElement("style");
   style.dataset.webInkPaletteToggle = "true";
   style.textContent = `
-    .web-ink-palette-toggle { position:fixed; width:40px; height:40px; min-height:var(--ink-control-min-height); padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color var(--ink-motion-fast) ease, color var(--ink-motion-fast) ease, transform var(--ink-motion-fast) ease; }
+    .web-ink-palette-toggle { position:fixed; width:var(--web-ink-palette-size); height:var(--web-ink-palette-size); min-height:var(--ink-control-min-height); padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color var(--ink-motion-fast) ease, color var(--ink-motion-fast) ease, transform var(--ink-motion-fast) ease; }
     .web-ink-palette-toggle:not(:disabled):hover { color:var(--ink-text); transform:translateY(-1px); }
     .web-ink-palette-toggle[data-enabled=true] { color:#fff; background:var(--ink-accent); box-shadow:0 0 0 1px transparent, var(--ink-shadow); }
     .web-ink-palette-toggle[data-enabled=true]:not(:disabled):hover { color:#fff; }
     .web-ink-palette-toggle[data-dragging=true] { cursor:grabbing; transform:none!important; transition:none!important; }
     .web-ink-palette-toggle:focus-visible { outline:2px solid var(--ink-accent); outline-offset:3px; }
     .web-ink-palette-toggle:disabled { cursor:not-allowed; opacity:.5; }
-    .web-ink-palette-toggle svg { width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .web-ink-palette-toggle svg { width:var(--web-ink-palette-icon-size); height:var(--web-ink-palette-icon-size); fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     @media (prefers-reduced-motion: reduce) { .web-ink-palette-toggle { transition:none; } }
   `;
   const button = document.createElement("button");
@@ -51,6 +53,13 @@ export function createPaletteToggle(
   button.className = "web-ink-palette-toggle";
   button.dataset.webInkPaletteToggle = "true";
   button.dataset.dragging = "false";
+  let size = 40;
+  const applySize = (next: number) => {
+    size = next;
+    button.style.setProperty("--web-ink-palette-size", `${size}px`);
+    button.style.setProperty("--web-ink-palette-icon-size", `${size / 2}px`);
+  };
+  applySize(40);
   button.append(highlighterIcon());
   let disposed = false;
   let interacted = false;
@@ -71,8 +80,8 @@ export function createPaletteToggle(
     return {
       width: window.innerWidth,
       height: window.innerHeight,
-      buttonWidth: rect.width || 40,
-      buttonHeight: rect.height || 40,
+      buttonWidth: rect.width || size,
+      buttonHeight: rect.height || size,
     };
   };
   const place = (point: PalettePoint) => {
@@ -217,6 +226,12 @@ export function createPaletteToggle(
     setPosition: (next) => {
       if (disposed || interacted) return;
       position = readPalettePosition(next);
+      restore();
+    },
+    setSize: (next, restoring = false) => {
+      if (disposed || (restoring && interacted)) return;
+      cancel();
+      applySize(normalizePaletteSize(next));
       restore();
     },
     dispose: () => {

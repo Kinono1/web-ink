@@ -66,7 +66,7 @@ export function startEngine(
   let renderFrame = 0;
   let refreshDepth = 0;
   let selectedRange: Range | undefined;
-  let selectionToolbarEnabled = true;
+  let selectionToolbarEnabled = false;
   let selectionPaletteAutomatic = false;
   let selectionToolbarReadGeneration = 0;
   let actionRecords: Array<TextAnnotation | ImageAnnotation> = [];
@@ -1308,7 +1308,7 @@ export function startEngine(
     if (areaName !== "local" || disposed) return;
     if (changes[SELECTION_TOOLBAR_KEY]) {
       selectionToolbarReadGeneration++;
-      selectionToolbarEnabled = changes[SELECTION_TOOLBAR_KEY]!.newValue !== false;
+      selectionToolbarEnabled = changes[SELECTION_TOOLBAR_KEY]!.newValue === true;
       if (!selectionToolbarEnabled && selectionPaletteAutomatic) hideSelection();
     }
     if (!changes["ui.annotationPresets"])

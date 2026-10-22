@@ -91,7 +91,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [hasPermission, setHasPermission] = useState(true);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
-  const [selectionToolbarEnabled, setSelectionToolbarEnabled] = useState(true);
+  const [selectionToolbarEnabled, setSelectionToolbarEnabled] = useState(false);
   const [selectionToolbarSaving, setSelectionToolbarSaving] = useState(false);
   const [selectionConnectionVersion, setSelectionConnectionVersion] = useState(0);
   const [query, setQuery] = useState("");
@@ -110,6 +110,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [editing, setEditing] = useState<string>();
   const [conflicts, setConflicts] = useState<Record<string, true>>({});
   const [error, setError] = useState<string>();
+  const [contextError, setContextError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [backup, setBackup] = useState<unknown>();
   const [preview, setPreview] = useState<ImportPreview>();
@@ -143,7 +144,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       if (!active || areaName !== "local" || !Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) return;
       selectionToolbarVersion.current++;
       const change = changes[SELECTION_TOOLBAR_KEY];
-      setSelectionToolbarEnabled(typeof change?.newValue === "boolean" ? change.newValue : true);
+      setSelectionToolbarEnabled(change?.newValue === true);
     };
     try { chrome.storage.onChanged?.addListener(changed); } catch { /* A revoked context cannot subscribe. */ }
     void readSelectionToolbarEnabled().then((value) => {
@@ -215,13 +216,14 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           expectedContext === undefined ||
           expectedContext === contextRequest.current
         )
-          setError(cause instanceof Error ? cause.message : String(cause));
+          setContextError(cause instanceof Error ? cause.message : String(cause));
       }
     },
     [mode],
   );
   const refreshContext = useCallback(async () => {
     const requestId = ++contextRequest.current;
+    setContextError(undefined);
     setSelectionConnectionVersion((current) => current + 1);
     try {
       const nextTab =
@@ -264,8 +266,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           : undefined;
       await pageState(observedContext.id, nextUrl, requestId);
     } catch (cause) {
-      if (requestId === contextRequest.current)
-        setError(cause instanceof Error ? cause.message : String(cause));
+      if (requestId === contextRequest.current && !(cause instanceof RequestError && cause.code === "PAGE_CHANGED"))
+        setContextError(cause instanceof Error ? cause.message : String(cause));
     }
   }, [mode, pageState]);
   useEffect(() => {
@@ -669,7 +671,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       return;
     pdfOpenPending.current = true;
     setOpeningPdf(true);
-    setError(undefined);
+    setContextError(undefined);
+    const expectedContext = contextRequest.current;
     setPreparationStage('identify'); setIeeeDiagnostic(undefined);
     void request<PdfOpenResult>({
       type: "pdf.openCurrent",
@@ -680,8 +683,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       ...(accessMode ? { accessMode } : {}),
     })
       .catch((cause) => {
+        if (expectedContext !== contextRequest.current) return;
         const message = cause instanceof Error ? cause.message : String(cause);
-        setError(
+        setContextError(
           cause instanceof RequestError && cause.code
             ? ieeeFailureMessage(cause.code, language) ?? message
             : `${message} ${t.refreshPdfHint}`,
@@ -848,15 +852,15 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           history.replaceState(null, "", url.href);
         }}>{language === "zh-CN" ? "查看全部" : "View all"}</button>
       </div>}
-      {error ? (
+      {error || contextError ? (
         <Alert
           kind="error"
-          text={error}
-          close={() => setError(undefined)}
+          text={(error ?? contextError)!}
+          close={() => error ? setError(undefined) : setContextError(undefined)}
           closeLabel={t.close}
         />
       ) : null}
-      {error && ieeeDiagnostic && <details className="ieee-diagnostic">
+      {contextError && ieeeDiagnostic && <details className="ieee-diagnostic">
         <summary>{language === 'zh-CN' ? '诊断详情' : 'Diagnostic details'}</summary>
         <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12 }}>
           {formatIeeeDiagnostic(ieeeDiagnostic, chrome.runtime.getManifest().version)}</pre>

@@ -31,9 +31,9 @@ export type WebSelectionCommand = {
 export async function readSelectionToolbarEnabled(): Promise<boolean> {
   try {
     const values = await chrome.storage.local.get(SELECTION_TOOLBAR_KEY);
-    return values[SELECTION_TOOLBAR_KEY] !== false;
+    return values[SELECTION_TOOLBAR_KEY] === true;
   } catch {
-    return true;
+    return false;
   }
 }
 

@@ -55,7 +55,7 @@ beforeEach(() => {
       onMessage: { addListener: (listener: Listener) => listeners.add(listener), removeListener },
     },
     storage: {
-      local: { get: async () => ({ 'ui.palettePosition': { x: .5, y: .5 } }), set: async () => {} },
+      local: { get: async () => ({ 'ui.palettePosition': { x: .5, y: .5 }, 'ui.selectionToolbarEnabled': true }), set: async () => {} },
       onChanged: {
         addListener: (listener: (changes: Record<string, unknown>, areaName: string) => void) => storageListeners.add(listener),
         removeListener: (listener: (changes: Record<string, unknown>, areaName: string) => void) => storageListeners.delete(listener),

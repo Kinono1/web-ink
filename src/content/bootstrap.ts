@@ -16,6 +16,8 @@ import { getPdfContext } from "../pdf/context";
 import { readPalettePosition } from "./palette-position";
 import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
+import { PALETTE_SIZE_KEY, normalizePaletteSize } from "../core/palette-appearance";
+import { SELECTION_TOOLBAR_KEY } from "../core/selection-toolbar";
 import { createWebSelection } from "./web-selection";
 
 export interface EngineBridge {
@@ -92,6 +94,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   let accessReady = false;
   let permissionRevoked = false;
   let permissionEpoch = 0;
+  let modeReadVersion = 0;
   let busy = true;
   let language: Settings["language"] = DEFAULT_SETTINGS.language;
   let currentUrl = pageKey(location.href);
@@ -143,6 +146,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   };
   const refreshMode = async (showBusy = true) => {
     if (disposed) return;
+    const version = ++modeReadVersion;
     const url = pageKey(location.href);
     const epoch = permissionEpoch;
     currentUrl = url;
@@ -155,7 +159,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         request<Settings>({ type: "settings.get" }),
         request<PageMode>({ type: "page.mode.get", pageUrl: url }),
       ]);
-      if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return;
+      if (disposed || version !== modeReadVersion || epoch !== permissionEpoch || pageKey(location.href) !== url) return;
       language = settings.language;
       view.applyPreferences(settings);
       blocked = permissionRevoked || settings.disabledOrigins.includes(location.origin);
@@ -164,7 +168,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       if (enabled && !blocked) await ensureEngine();
       else stopEngine();
     } catch (error) {
-      if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return;
+      if (disposed || version !== modeReadVersion || epoch !== permissionEpoch || pageKey(location.href) !== url) return;
       if (/Extension context invalidated|Extension unavailable/i.test(String(error))) {
         bootstrap.dispose();
         return;
@@ -174,8 +178,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       accessReady = false;
       stopEngine();
     } finally {
-      if (!disposed && epoch === permissionEpoch && pageKey(location.href) === url) {
-        if (showBusy) busy = false;
+      if (!disposed && version === modeReadVersion && epoch === permissionEpoch && pageKey(location.href) === url) {
+        busy = false;
         updateToggle();
         selectionSession.refresh();
       }
@@ -189,6 +193,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       (!next && window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
     )
       return false;
+    const version = ++modeReadVersion;
     busy = true;
     updateToggle();
     const url = pageKey(location.href);
@@ -200,6 +205,10 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         enabled: next,
       });
       if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return false;
+      if (version !== modeReadVersion) {
+        await refreshMode(false);
+        return enabled === next;
+      }
       enabled = mode.enabled;
       currentUrl = url;
       if (enabled) return ensureEngine();
@@ -408,11 +417,25 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   }, (action, candidate) => { void runMenuAction(action, candidate); });
   // Read once per content-script lifetime. Other open pages keep their position;
   // settings/theme changes and SPA routes must not restore this preference again.
-  void Promise.resolve().then(() => chrome.storage.local.get(PALETTE_POSITION_KEY))
+  let appearanceVersion = 0;
+  const initialAppearance = appearanceVersion;
+  void Promise.resolve().then(() => chrome.storage.local.get([PALETTE_POSITION_KEY, PALETTE_SIZE_KEY]))
     .then(saved => {
-      if (!disposed) toggle.setPosition(readPalettePosition(saved[PALETTE_POSITION_KEY]));
+      if (!disposed) {
+        if (appearanceVersion === initialAppearance) toggle.setSize(normalizePaletteSize(saved[PALETTE_SIZE_KEY]), true);
+        toggle.setPosition(readPalettePosition(saved[PALETTE_POSITION_KEY]));
+      }
     })
     .catch(() => undefined);
+  const onPreferences = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+    if (disposed || area !== "local") return;
+    if (Object.hasOwn(changes, PALETTE_SIZE_KEY)) {
+      appearanceVersion++;
+      toggle.setSize(normalizePaletteSize(changes[PALETTE_SIZE_KEY]?.newValue));
+    }
+    if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) void refreshMode(false);
+  };
+  try { chrome.storage?.onChanged?.addListener(onPreferences); } catch { /* Reload may invalidate storage before cleanup. */ }
   const onMessage = (
     message: { type?: string; pageUrl?: string; action?: string; id?: string; diagnostic?: IeeePdfDiagnostic; stage?: string },
     _sender: chrome.runtime.MessageSender,
@@ -481,6 +504,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       if (disposed) return;
       disposed = true;
       selectionSession.dispose();
+      try { chrome.storage?.onChanged?.removeListener(onPreferences); } catch { /* Context invalidated. */ }
       try {
         chrome.runtime.onMessage.removeListener(onMessage);
       } catch {
