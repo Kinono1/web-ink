@@ -1581,7 +1581,7 @@ test("sidepanel empty state keeps the compact dock visible in a narrow viewport"
   const page = await article();
   await openSidepanel(page);
   const switchControl = manager.getByRole("switch", {
-    name: "显示标注",
+    name: "自动显示标注工具",
     exact: true,
   });
   await expect(switchControl).toHaveAttribute("aria-checked", "true");
@@ -1622,10 +1622,13 @@ test("sidepanel preserves per-annotation notes and its display switch controls p
   expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].note).toBe(
     "从侧栏保存的笔记",
   );
+  await rpc(manager, { type: "page.mode.put", pageUrl: page.url(), enabled: true });
+  await manager.getByRole("switch", { name: "自动显示标注工具", exact: true }).click();
   const switchControl = manager.getByRole("switch", {
     name: "显示标注",
     exact: true,
   });
+  await expect(switchControl).toHaveAttribute("aria-checked", "true");
   await switchControl.click();
   await expect(switchControl).toHaveAttribute("aria-checked", "false");
   await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
