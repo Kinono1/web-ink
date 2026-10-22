@@ -126,6 +126,36 @@ async function mount(mode: "sidepanel" | "library") {
   return host;
 }
 
+for (const timing of ["refresh while pending", "refresh after failure", "navigate while pending"]) {
+  it(`scopes PDF action errors correctly: ${timing}`, async () => {
+    const tab = { id: 7, windowId: 1, url: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123", title: "IEEE" };
+    let updated: TabUpdatedListener | undefined;
+    let finish!: (response: unknown) => void;
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, url: tab.url,
+        publisher: tab.url.includes("ieee.org") ? "ieee" : undefined,
+        kind: tab.url.includes("ieee.org") ? "wrapper" : "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "pdf.openCurrent") return new Promise(resolve => { finish = resolve; });
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+      return { ok: true, data: true };
+    }, tab, listener => { updated = listener; });
+    const host = await mount("sidepanel");
+    await act(async () => host.querySelector<HTMLButtonElement>(".pdf-open-current")!.click());
+    if (timing === "navigate while pending") tab.url = "https://example.test/new-page";
+    if (timing !== "refresh after failure") await act(async () => updated!(7, { status: "complete", ...(timing === "navigate while pending" ? { url: tab.url } : {}) }));
+    await act(async () => finish({ ok: false, code: "IEEE_REDIRECT", error: "The PDF read was refused" }));
+    if (timing === "refresh after failure") {
+      expect(host.querySelector('[role="alert"]')).not.toBeNull();
+      await act(async () => updated!(7, { status: "complete" }));
+    }
+    if (timing === "navigate while pending") expect(host.querySelector('[role="alert"]')).toBeNull();
+    else expect(host.querySelector('[role="alert"]')?.textContent).toContain("The PDF read was refused");
+  });
+}
+
 describe("sidebar context errors", () => {
   for (const code of ["PAGE_CHANGED", "CONTEXT_UNAVAILABLE"]) {
     it(`does not retain ${code} on a newly readable webpage`, async () => {

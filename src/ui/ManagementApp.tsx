@@ -111,6 +111,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [conflicts, setConflicts] = useState<Record<string, true>>({});
   const [error, setError] = useState<string>();
   const [contextError, setContextError] = useState<string>();
+  const [pdfActionError, setPdfActionError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [backup, setBackup] = useState<unknown>();
   const [preview, setPreview] = useState<ImportPreview>();
@@ -126,6 +127,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const libraryScrollY = useRef<number | undefined>(undefined);
   const contextRequest = useRef(0);
   const activeTabId = useRef<number | undefined>(undefined);
+  const activeDocument = useRef<{ id?: number; url?: string; version: number }>({ version: 0 });
   const selectionToolbarVersion = useRef(0);
   const settingsRef = useRef<Settings>(settings);
   const settingsQueue = useRef<Promise<void>>(Promise.resolve());
@@ -134,6 +136,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   settingsRef.current = settings;
   const language = settings.language;
   const t = COPY[language];
+  const displayError = error ?? pdfActionError ?? contextError;
   useEffect(() => {
     let active = true;
     const initialVersion = selectionToolbarVersion.current;
@@ -182,6 +185,16 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             : undefined,
         ),
     );
+
+  const observeDocument = useCallback((context: TabContext) => {
+    const previous = activeDocument.current;
+    const url = context.url ?? (previous.id === context.id ? previous.url : undefined);
+    if (previous.id !== context.id || previous.url !== url) {
+      activeDocument.current = { id: context.id, url, version: previous.version + 1 };
+      setPdfActionError(undefined);
+      setIeeeDiagnostic(undefined);
+    }
+  }, []);
 
   const pageState = useCallback(
     async (tabId?: number, url?: string, expectedContext?: number) => {
@@ -235,6 +248,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         : {};
       if (requestId !== contextRequest.current) return;
       activeTabId.current = context.id;
+      observeDocument(context);
       const nextPdfContext =
         mode === "sidepanel" && context.id !== undefined
           ? await request<PdfTabContext>({
@@ -253,6 +267,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         ...context,
         ...(nextPdfContext?.url ? { url: nextPdfContext.url } : {}),
       };
+      observeDocument(observedContext);
       setTab(observedContext);
       setPdfContext(nextPdfContext);
       setHasPermission(permission);
@@ -269,7 +284,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       if (requestId === contextRequest.current && !(cause instanceof RequestError && cause.code === "PAGE_CHANGED"))
         setContextError(cause instanceof Error ? cause.message : String(cause));
     }
-  }, [mode, pageState]);
+  }, [mode, observeDocument, pageState]);
   useEffect(() => {
     void refreshContext();
   }, [refreshContext]);
@@ -297,12 +312,20 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   useEffect(() => {
     const activated = (activeInfo: { tabId: number }) => {
       if (mode === "sidepanel") {
+        observeDocument({ id: activeInfo.tabId });
         activeTabId.current = activeInfo.tabId;
         void refreshContext();
       }
     };
     const updated = (tabId: number, change: { url?: string; status?: string }) => {
-      if (mode === "sidepanel" && tabId === activeTabId.current && (change.url || change.status === "complete")) void refreshContext();
+      if (mode !== "sidepanel" || tabId !== activeTabId.current) return;
+      if (change.url) observeDocument({ id: tabId, url: change.url });
+      if (change.status === "loading") {
+        activeDocument.current.version++;
+        setPdfActionError(undefined);
+        setIeeeDiagnostic(undefined);
+      }
+      if (change.url || change.status === "complete") void refreshContext();
     };
     chrome.tabs.onActivated.addListener(activated);
     chrome.tabs.onUpdated.addListener(updated);
@@ -310,7 +333,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       releaseChromeListener(() => chrome.tabs.onActivated.removeListener(activated));
       releaseChromeListener(() => chrome.tabs.onUpdated.removeListener(updated));
     };
-  }, [mode, refreshContext]);
+  }, [mode, observeDocument, refreshContext]);
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
       if (message.type === 'pdf.preparation.changed' && mode === 'sidepanel' && message.tabId === tab.id && pdfOpenPending.current) {
@@ -671,8 +694,8 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       return;
     pdfOpenPending.current = true;
     setOpeningPdf(true);
-    setContextError(undefined);
-    const expectedContext = contextRequest.current;
+    setPdfActionError(undefined);
+    const expectedDocument = activeDocument.current.version;
     setPreparationStage('identify'); setIeeeDiagnostic(undefined);
     void request<PdfOpenResult>({
       type: "pdf.openCurrent",
@@ -683,9 +706,9 @@ export function ManagementApp({ mode }: { mode: Mode }) {
       ...(accessMode ? { accessMode } : {}),
     })
       .catch((cause) => {
-        if (expectedContext !== contextRequest.current) return;
+        if (expectedDocument !== activeDocument.current.version) return;
         const message = cause instanceof Error ? cause.message : String(cause);
-        setContextError(
+        setPdfActionError(
           cause instanceof RequestError && cause.code
             ? ieeeFailureMessage(cause.code, language) ?? message
             : `${message} ${t.refreshPdfHint}`,
@@ -852,15 +875,15 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           history.replaceState(null, "", url.href);
         }}>{language === "zh-CN" ? "查看全部" : "View all"}</button>
       </div>}
-      {error || contextError ? (
+      {displayError ? (
         <Alert
           kind="error"
-          text={(error ?? contextError)!}
-          close={() => error ? setError(undefined) : setContextError(undefined)}
+          text={displayError}
+          close={() => error ? setError(undefined) : pdfActionError ? setPdfActionError(undefined) : setContextError(undefined)}
           closeLabel={t.close}
         />
       ) : null}
-      {contextError && ieeeDiagnostic && <details className="ieee-diagnostic">
+      {pdfActionError && ieeeDiagnostic && <details className="ieee-diagnostic">
         <summary>{language === 'zh-CN' ? '诊断详情' : 'Diagnostic details'}</summary>
         <pre style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontSize: 12 }}>
           {formatIeeeDiagnostic(ieeeDiagnostic, chrome.runtime.getManifest().version)}</pre>

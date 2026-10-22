@@ -350,6 +350,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await fixture.close();
       await manager.goto(`chrome-extension://${expectedId}/library.html`);
     }
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
     const settings = await rpc<Settings>(manager, { type: "settings.get" });
     await rpc(manager, {
       type: "settings.put",

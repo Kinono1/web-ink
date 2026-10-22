@@ -810,7 +810,7 @@ test("SPA URL changes and streaming updates do not trigger cross-page errors", a
   await expect(page.locator(".toast.error")).not.toBeVisible();
   await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute(
     "aria-pressed",
-    "false",
+    "true",
   );
   await setPageMode(page, true);
   await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute(
