@@ -8,8 +8,8 @@
 
 ## Install
 
-1. Download `web-ink-<version>-chrome.zip` from Releases and extract it into a permanent folder.
-2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select the folder containing `manifest.json`.
+1. Download `web-ink-<version>-chrome.zip` from Releases. Extract the `web-ink` folder and keep it in a permanent location. Only the ZIP filename includes the version.
+2. Open `chrome://extensions`, turn on Developer mode, choose **Load unpacked**, and select the `web-ink` folder containing `manifest.json`.
 3. Open a webpage, click Web Ink in Chrome's toolbar, and grant page access when prompted. Select text and choose a color or add a note in the side panel. Enable automatic reminders in Settings to show selection tools on current and new webpages.
 
 Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a preview. Check **Library → Settings & data** for the installed version and build identity; source, development builds, and public archives may differ. Consult the release notes for verified coverage.
@@ -17,7 +17,7 @@ Webpages require Chrome 120+, and the PDF reader requires Chrome 125+. This is a
 ## Update without losing notes
 
 1. Export a JSON backup from **Library → Settings & data**.
-2. Replace the runtime files in the same install folder with the new archive's files.
+2. Copy the **contents** of the extracted `web-ink` folder into the original install folder, replacing matching files and merging subfolders. Do not nest another `web-ink` folder inside it. If the old install folder has a version in its name, keep that original name and path.
 3. Click **Reload** on Web Ink's extension card and reopen the side panel. If the browser refuses reinjection into a page, follow the prompt to refresh that page and retry.
 
 **Do not uninstall: uninstalling removes extension-local data.** Keep the same browser profile and install folder. Developer updates run only in the primary checkout. Chrome's loaded target stays `.output/chrome-mv3`; builds go to `.build-output/chrome-mv3`, and receipts and recovery backups live in `.local-install/`. Explicitly enroll a confirmed legacy installation once with `npm run register:local`, then use `npm run update:local`. The updater accepts a clean commit's matching sealed build, backs up and overwrites runtime files individually, hash-checks the result, and rolls back on failure. Linked worktrees are rejected before building or writing. Initial installation remains explicit.

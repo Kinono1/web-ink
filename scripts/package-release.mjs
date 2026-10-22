@@ -10,12 +10,14 @@ const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).tr
 if (manifest.version !== pkg.version || info.version !== pkg.version || info.commit !== head) throw Error('Build is stale: rebuild and validate before packaging');
 const workingTreeDirty = execFileSync('git', ['status', '--porcelain', '--untracked-files=normal'], { encoding: 'utf8' }).trim().length > 0;
 if (process.argv.includes('--release') && (info.dirty || workingTreeDirty)) throw Error('Release packaging requires a clean tested commit');
-const bytes = await packFiles(files);
-verifyArchive(bytes, files);
+// Keep the install folder stable when ordinary unzip tools extract a versioned ZIP.
+const archiveFiles = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [`web-ink/${name}`, bytes]));
+const bytes = await packFiles(archiveFiles);
+verifyArchive(bytes, archiveFiles);
 const name = `web-ink-${pkg.version}-chrome.zip`;
 const releasesDirectory = '.build-output/releases';
 await mkdir(releasesDirectory, { recursive: true });
 await writeFile(`${releasesDirectory}/${name}`, bytes);
 await writeFile(`${releasesDirectory}/${name}.sha256`, `${digest(bytes)}  ${name}\n`);
-console.log(`${name}: ${Object.keys(files).length} runtime files verified, sha256 ${digest(bytes)}`);
+console.log(`${name}: ${Object.keys(files).length} runtime files verified in web-ink/, sha256 ${digest(bytes)}`);
 if (info.dirty) console.log('Working-tree build: local preview only. Rebuild a clean commit before publishing.');

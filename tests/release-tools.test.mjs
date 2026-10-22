@@ -216,6 +216,65 @@ test('ZIP verifier checks complete filenames, contents, and corrupted payloads',
   assert.throws(() => verifyArchive(damaged, files));
 });
 
+test('sharing ZIP extracts into a stable web-ink folder with the complete tested runtime', async t => {
+  const repo = await fixture(t);
+  await writeFile(path.join(repo, 'package.json'), JSON.stringify({ version: '0.3.1' }));
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: repo, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  git('init', '--quiet');
+  git('add', 'package.json');
+  git('-c', 'user.name=Release test', '-c', 'user.email=release@example.test', 'commit', '--quiet', '-m', 'fixture');
+  const source = path.join(repo, sourceName);
+  await writeFile(path.join(source, 'build-info.json'), JSON.stringify({ version: '0.3.1', commit: git('rev-parse', 'HEAD'), dirty: true }));
+  await reseal(source);
+  const script = fileURLToPath(new URL('../scripts/package-release.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [script], { cwd: repo, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const archive = unpackFiles(await readFile(path.join(repo, '.build-output/releases/web-ink-0.3.1-chrome.zip')));
+  assert.ok(archive['web-ink/manifest.json'], 'manifest must live in the stable extracted folder');
+  assert.ok(Object.keys(archive).every(name => name.startsWith('web-ink/')));
+  const contents = Object.fromEntries(Object.entries(archive).map(([name, bytes]) => [name.slice('web-ink/'.length), bytes]));
+  assert.deepEqual(fileHashes(contents), await hashes(source));
+});
+
+test('runtime extraction accepts stable sharing folders and legacy flat ZIPs without nesting the install', async t => {
+  const repo = await fixture(t);
+  const files = await runtimeFiles(path.join(repo, sourceName));
+  const script = fileURLToPath(new URL('../scripts/extract-runtime.mjs', import.meta.url));
+  for (const prefix of ['', 'web-ink/']) {
+    const entries = Object.fromEntries(Object.entries(files).map(([name, bytes]) => [prefix + name, bytes]));
+    const archive = path.join(repo, prefix ? 'sharing.zip' : 'legacy.zip');
+    const destination = path.join(repo, prefix ? 'sharing-runtime' : 'legacy-runtime');
+    await writeFile(archive, await packFiles(entries));
+    const result = spawnSync(process.execPath, [script, archive, destination], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await hashes(destination), fileHashes(files));
+  }
+});
+
+test('runtime extraction rejects mixed, unknown, or nested archive roots before creating the destination', async t => {
+  const repo = await fixture(t);
+  const script = fileURLToPath(new URL('../scripts/extract-runtime.mjs', import.meta.url));
+  const entries = [
+    { 'web-ink/manifest.json': Buffer.from('{}'), 'outside.js': Buffer.from('x') },
+    { 'unknown/manifest.json': Buffer.from('{}') },
+    { 'web-ink/web-ink/manifest.json': Buffer.from('{}') },
+    { 'manifest.json': Buffer.from('{}'), 'web-ink/background.js': Buffer.from('x') },
+  ];
+  for (const [index, files] of entries.entries()) {
+    const archive = path.join(repo, `invalid-${index}.zip`);
+    const destination = path.join(repo, `invalid-${index}`);
+    await writeFile(archive, await packFiles(files));
+    const result = spawnSync(process.execPath, [script, archive, destination], { encoding: 'utf8' });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /archive root/i);
+    await assert.rejects(stat(destination), { code: 'ENOENT' });
+  }
+});
+
 
 test('sealing refuses missing direct and transitive references instead of blessing incomplete output', async t => {
   const repo = await fixture(t);
