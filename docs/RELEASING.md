@@ -12,6 +12,8 @@ This document is a release checklist. It does not assert that any unreleased fea
 
 The manifest `key` is a public extension-identity key used for stable unpacked updates. It is intentionally tracked and is not a signing private key.
 
+Sharing ZIPs keep the version in their filename and contain one stable `web-ink/` folder, with `manifest.json` directly inside it. Ordinary extraction must preserve this folder name. Existing users copy its contents into their original Chrome-loaded directory; they must keep that directory's name and path. `scripts/extract-runtime.mjs` removes this wrapper for acceptance directories and still supports historical flat ZIPs. Sharing ZIPs are for unpacked installation; a Chrome Web Store upload needs a separate flat package with `manifest.json` at the archive root.
+
 ## Pre-release checks
 
 1. Review staged paths and documentation claims. Never add browser profiles, real PDFs, personal annotations, exports, credentials, or private keys.
