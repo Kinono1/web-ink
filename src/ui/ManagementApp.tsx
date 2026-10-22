@@ -91,6 +91,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [hasPermission, setHasPermission] = useState(true);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
+  const pageStateVersion = useRef(0);
   const [selectionToolbarEnabled, setSelectionToolbarEnabled] = useState(false);
   const [selectionToolbarSaving, setSelectionToolbarSaving] = useState(false);
   const [selectionConnectionVersion, setSelectionConnectionVersion] = useState(0);
@@ -198,6 +199,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
 
   const pageState = useCallback(
     async (tabId?: number, url?: string, expectedContext?: number) => {
+      const version = ++pageStateVersion.current;
       if (mode !== "sidepanel" || tabId === undefined || !url) {
         setStates({});
         setPageEnabled(false);
@@ -213,6 +215,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
           request<PageMode>({ type: "page.mode.get", pageUrl: url }),
         ]);
         if (
+          version !== pageStateVersion.current ||
           (expectedContext !== undefined &&
             expectedContext !== contextRequest.current) ||
           (result.pageUrl && result.pageUrl !== url)
@@ -222,18 +225,22 @@ export function ManagementApp({ mode }: { mode: Mode }) {
         for (const state of result.states) next[state.id] = state;
         setStates(next);
         // Content snapshots may precede the asynchronous mode broadcast.
-        // Read the persisted preference so the switch does not revert visually.
+        // Read effective mode so automatic reminders and site pauses agree with the page.
         setPageEnabled(pageMode.enabled === true);
       } catch (cause) {
         if (
-          expectedContext === undefined ||
-          expectedContext === contextRequest.current
+          version === pageStateVersion.current &&
+          (expectedContext === undefined || expectedContext === contextRequest.current)
         )
           setContextError(cause instanceof Error ? cause.message : String(cause));
       }
     },
     [mode],
   );
+  useEffect(() => {
+    if (mode === "sidepanel" && pageUrl)
+      void pageState(tab.id, pageUrl, contextRequest.current);
+  }, [mode, pageUrl, tab.id, selectionToolbarEnabled, pageState]);
   const refreshContext = useCallback(async () => {
     const requestId = ++contextRequest.current;
     setContextError(undefined);
@@ -921,7 +928,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
             title={pageUrl ? tab.title || new URL(pageUrl).host : t.unknownPage}
             host={pageUrl ? new URL(pageUrl).host : undefined}
             enabled={pageEnabled}
-            onToggle={toggleCurrentPage}
+            onToggle={selectionToolbarEnabled && !paused ? undefined : toggleCurrentPage}
             toggleLabel={t.showAnnotations}
             disabled={!pageUrl || paused}
           /> : null}

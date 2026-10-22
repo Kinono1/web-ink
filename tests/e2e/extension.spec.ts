@@ -110,8 +110,6 @@ async function article(activate = true) {
   await expect(page.locator("web-ink-ui")).toHaveCount(1);
   const toggle = page.locator(".web-ink-palette-toggle");
   await expect(toggle).toBeEnabled();
-  if (activate && (await toggle.getAttribute("aria-pressed")) === "false")
-    await setPageMode(page, true);
   if (activate) await expect(toggle).toHaveAttribute("aria-pressed", "true");
   return page;
 }
@@ -138,21 +136,56 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     .toBe(1);
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
-test("automatic reminders are opt-in for new pages and respect a manual page override", async () => {
+test("automatic reminders activate current and new pages despite stored off modes, except paused sites", async () => {
   await enable();
   const first = await article(false);
   const toggle = first.locator(".web-ink-palette-toggle");
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await rpc(manager, { type: "page.mode.put", pageUrl: first.url(), enabled: false });
   await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
-  await setPageMode(first, false);
-  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(first.locator(".web-ink-palette-menu")).toHaveAttribute("aria-busy", "false");
+  await expect(first.getByRole("menuitem", { name: "关闭本页标注", exact: true })).toHaveCount(0);
+  await first.keyboard.press("Escape");
+  await selectAndMark(first);
+  await first.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => first.evaluate(() => CSS.highlights.size)).toBeGreaterThan(0);
   const next = await context.newPage();
   await next.goto("http://127.0.0.1:4173/article?reminder=next");
   await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
-  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  const select = async (page: Page) => page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await select(next);
+  await expect(next.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(1);
+  await next.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" })).length).toBe(2);
+  const settings = await rpc<any>(manager, { type: "settings.get" });
+  await rpc(manager, { type: "settings.put", settings: { ...settings, disabledOrigins: [new URL(first.url()).origin] } });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
-  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(0);
+  await select(next);
+  await expect(next.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  const paused = await context.newPage();
+  await paused.goto("http://127.0.0.1:4173/article?reminder=paused");
+  await expect(paused.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
+  await select(paused);
+  await expect(paused.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  await rpc(manager, { type: "settings.put", settings });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
+  await setPageMode(first, true);
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await select(first);
+  await expect(first.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(2);
 });
 
 test("web preset shortcut captures live text and keeps ordinary copy inert", async () => {
@@ -1101,6 +1134,7 @@ test("palette is quiet by default and remembers the page switch without deleting
   await expect
     .poll(() => page.evaluate(() => CSS.highlights.size))
     .toBeGreaterThan(0);
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
   await setPageMode(page, false);
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
   await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
@@ -1341,6 +1375,7 @@ test("existing image marks can be removed directly after reload", async () => {
   await page.reload();
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(1);
   const toggle = page.locator(".web-ink-palette-toggle");
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
   await setPageMode(page, false);
   await expect(page.locator("g[data-annotation-id]")).toHaveCount(0);
   expect((await rpc<any[]>(manager, { type: "annotations.list" })).length).toBe(

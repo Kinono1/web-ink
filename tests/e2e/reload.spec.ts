@@ -181,7 +181,7 @@ async function setPageMode(page: Page, enabled: boolean) {
     .click();
 }
 
-async function mark(page: Page, selector: string, color: string) {
+async function markWithAutomaticToolbar(page: Page, selector: string, color: string) {
   await page.locator(selector).scrollIntoViewIfNeeded();
   await page.locator(selector).evaluate((element) => {
     const range = document.createRange();
@@ -192,6 +192,20 @@ async function mark(page: Page, selector: string, color: string) {
     element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
   await page.getByRole("button", { name: `高亮 ${color}`, exact: true }).click();
+}
+
+async function markWithPresetShortcut(page: Page, selector: string) {
+  await page.locator(selector).scrollIntoViewIfNeeded();
+  await page.locator(selector).evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  await page.keyboard.press("Alt+Shift+1");
 }
 
 test("in-place extension Reload replaces old runtimes three times without navigating existing pages", async ({}, testInfo) => {
@@ -350,7 +364,10 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await fixture.close();
       await manager.goto(`chrome-extension://${expectedId}/library.html`);
     }
-    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
+    // The old baseline ignores this preference for its floating toolbar. Keeping
+    // it off preserves the disabled-page regression check after the candidate
+    // gives a global true preference precedence over a page-level false setting.
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
     const settings = await rpc<Settings>(manager, { type: "settings.get" });
     await rpc(manager, {
       type: "settings.put",
@@ -374,7 +391,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     await setPageMode(enabled, true);
     await expect(enabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
     await expect(disabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
-    await mark(enabled, "#selection strong", "#facc15");
+    await markWithAutomaticToolbar(enabled, "#selection strong", "#facc15");
     await expect.poll(async () => (await rpc<Annotation[]>(manager, { type: "annotations.list" })).length).toBe(1);
     const [record] = await rpc<Annotation[]>(manager, { type: "annotations.list" });
     await rpc(manager, {
@@ -521,7 +538,7 @@ test("in-place extension Reload replaces old runtimes three times without naviga
         },
       });
       expect(navigationCounts).toEqual([0, 0]);
-      await mark(enabled, ["#repeat-a", "#repeat-b", "#ending"][round]!, "#facd5a");
+      await markWithPresetShortcut(enabled, ["#repeat-a", "#repeat-b", "#ending"][round]!);
       await expect.poll(async () => (await rpc<Annotation[]>(manager, { type: "annotations.list" })).length).toBe(before.records.length + 1);
       const after = await durableState();
       for (const saved of before.records) expect(after.records.find((row) => row.id === saved.id)).toEqual(saved);
@@ -546,6 +563,33 @@ test("in-place extension Reload replaces old runtimes three times without naviga
         palette: after.palette,
       });
     }
+    // Automatic mode also survives Reload when a page has a saved manual OFF.
+    const savedRecords = await rpc<Annotation[]>(manager, { type: "annotations.list" });
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
+    await expect(disabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+    const previousHealth = await rpc<RuntimeHealth>(manager, { type: "runtime.health" });
+    await reload();
+    const automaticHealth = await rpc<RuntimeHealth>(manager, { type: "runtime.health" });
+    expect(automaticHealth).toMatchObject(candidate.info);
+    expect(automaticHealth.generation).not.toBe(previousHealth.generation);
+    for (const page of pages) {
+      await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+      await expect(page.locator("web-ink-ui")).toHaveCount(1);
+    }
+    await disabled.locator("#selection strong").evaluate(element => {
+      const range = document.createRange(); range.selectNodeContents(element);
+      getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    });
+    await expect(disabled.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+    await expect(disabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
+    await expect(enabled.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+    expect(await rpc<Annotation[]>(manager, { type: "annotations.list" })).toEqual(savedRecords);
+    expect(navigationCounts).toEqual([0, 0]);
+    const automaticCard = await extensionRuntimeErrors(context);
+    expect(automaticCard.errorsButtonCount).toBe(0);
+    expect(automaticCard.runtimeErrors).toEqual([]);
   } finally {
     await context?.close();
     const receipt = testInfo.outputPath("reload-observations.json");

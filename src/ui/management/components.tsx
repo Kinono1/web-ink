@@ -59,7 +59,7 @@ export function PageHeader({
   title: string;
   host?: string;
   enabled: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   toggleLabel: string;
   disabled?: boolean;
 }) {
@@ -68,16 +68,18 @@ export function PageHeader({
       <strong title={title}>{title}</strong>
       <div className="page-context">
         {host ? <span>{host}</span> : null}
-      <button
-        className={enabled ? "page-switch on" : "page-switch"}
-        role="switch"
-        aria-checked={enabled}
-        disabled={disabled}
-        onClick={onToggle}
-      >
-        <span aria-hidden="true" />
-        {toggleLabel}
-      </button>
+        {onToggle ? (
+          <button
+            className={enabled ? "page-switch on" : "page-switch"}
+            role="switch"
+            aria-checked={enabled}
+            disabled={disabled}
+            onClick={onToggle}
+          >
+            <span aria-hidden="true" />
+            {toggleLabel}
+          </button>
+        ) : null}
       </div>
     </section>
   );

@@ -90,6 +90,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   view.host.dataset.webInkGeneration = health.generation;
   let disposed = false;
   let enabled = false;
+  let automaticReminders = false;
+  let reminderPreferenceVersion = 0;
   let blocked = false;
   let accessReady = false;
   let permissionRevoked = false;
@@ -334,7 +336,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
             : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
-    } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
+    } else if (!automaticReminders && menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
       items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
         label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
           : enabled ? "Disable page annotations" : "Enable page annotations" });
@@ -419,11 +421,16 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   // settings/theme changes and SPA routes must not restore this preference again.
   let appearanceVersion = 0;
   const initialAppearance = appearanceVersion;
-  void Promise.resolve().then(() => chrome.storage.local.get([PALETTE_POSITION_KEY, PALETTE_SIZE_KEY]))
+  const initialReminderPreference = reminderPreferenceVersion;
+  void Promise.resolve().then(() => chrome.storage.local.get([PALETTE_POSITION_KEY, PALETTE_SIZE_KEY, SELECTION_TOOLBAR_KEY]))
     .then(saved => {
       if (!disposed) {
         if (appearanceVersion === initialAppearance) toggle.setSize(normalizePaletteSize(saved[PALETTE_SIZE_KEY]), true);
         toggle.setPosition(readPalettePosition(saved[PALETTE_POSITION_KEY]));
+        if (reminderPreferenceVersion === initialReminderPreference) {
+          automaticReminders = saved[SELECTION_TOOLBAR_KEY] === true;
+          updateToggle();
+        }
       }
     })
     .catch(() => undefined);
@@ -433,7 +440,11 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       appearanceVersion++;
       toggle.setSize(normalizePaletteSize(changes[PALETTE_SIZE_KEY]?.newValue));
     }
-    if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) void refreshMode(false);
+    if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) {
+      reminderPreferenceVersion++;
+      automaticReminders = changes[SELECTION_TOOLBAR_KEY]?.newValue === true;
+      void refreshMode(false);
+    }
   };
   try { chrome.storage?.onChanged?.addListener(onPreferences); } catch { /* Reload may invalidate storage before cleanup. */ }
   const onMessage = (
