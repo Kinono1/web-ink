@@ -52,14 +52,20 @@ Chrome 120 起支持网页标注，PDF 阅读器要求 Chrome 125 或更高。�
 ```sh
 npm ci
 npm run check
-npm test
+npm run test:coverage
 npm run test:skill
 npm run test:bulk
 npm run test:release
+npm run test:benchmark:tools
 npm run build
 npm run test:e2e
+npm run test:benchmark
 npm run zip
 ```
+
+`npm run test:coverage` 同时运行单元测试，统计 `src/` 和 `entrypoints/`；行与语句覆盖率门槛为 80%，函数为 75%，分支为 70%。报告默认写入 `coverage/`，可用 `WEB_INK_COVERAGE_DIR` 指定临时目录。只运行单元测试时使用 `npm test`。
+
+`npm run test:benchmark` 使用合成网页、万条标注和最高 1000 页 PDF，在独立临时 profile 中测量。CI 检查样本数量、最多 3 个页面 canvas，以及关闭文档后没有残留 PDF worker。耗时和 GC 后的主页面堆大小供同环境比较；主页面堆不代表整个浏览器内存，耗时也不作为跨机器的固定门槛。运行基准时避免同时构建或测试。
 
 完整浏览器回归需要两份已核验的旧构建：`WEB_INK_OLD_BUILD` 指向校验过的 v0.3.0 解压包，`WEB_INK_RELOAD_OLD_BUILD` 指向提交 `d37555855f4d3f8cec0bbd27d28de8afa12f49fc` 的 v0.3.1 构建。CI 自动准备；本地运行方法见[发布流程](docs/RELEASING.md)。缺少基线会失败，不跳过升级验收。
 
