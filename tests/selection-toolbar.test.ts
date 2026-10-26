@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { createChromeMock } from "./helpers/chrome-mock";
 import {
   readSelectionToolbarEnabled,
   writeSelectionToolbarEnabled,
@@ -12,31 +13,26 @@ it.each([
 ])(
   "preserves valid automatic-reminder preferences and defaults invalid values off: %j",
   async (value, expected) => {
-    vi.stubGlobal("chrome", { storage: { local: {
-      get: async () => ({ "ui.selectionToolbarEnabled": value }),
-    } } });
+    vi.stubGlobal("chrome", createChromeMock({ local: { "ui.selectionToolbarEnabled": value } }));
     expect(await readSelectionToolbarEnabled()).toBe(expected);
   },
 );
 
 it("keeps automatic reminders off when local storage is unavailable", async () => {
-  vi.stubGlobal("chrome", { storage: { local: {
-    get: async () => { throw Error("storage unavailable"); },
-  } } });
+  const mock = createChromeMock();
+  mock.storage.local.get.mockRejectedValue(Error("storage unavailable"));
+  vi.stubGlobal("chrome", mock);
   expect(await readSelectionToolbarEnabled()).toBe(false);
 });
 
 it("changes only the automatic-toolbar preference and reports failed writes", async () => {
   const values: Record<string, unknown> = { settings: { defaultColor: "#facd5a" } };
-  vi.stubGlobal("chrome", { storage: { local: {
-    set: async (entries: Record<string, unknown>) => { Object.assign(values, entries); },
-  } } });
+  const mock = createChromeMock({ local: values });
+  vi.stubGlobal("chrome", mock);
   await writeSelectionToolbarEnabled(false);
-  expect(values).toEqual({ settings: { defaultColor: "#facd5a" }, "ui.selectionToolbarEnabled": false });
+  expect(await mock.storage.local.get(null)).toEqual({ settings: { defaultColor: "#facd5a" }, "ui.selectionToolbarEnabled": false });
   await expect(writeSelectionToolbarEnabled("false" as unknown as boolean)).rejects.toThrow(/boolean/i);
-  expect(values["ui.selectionToolbarEnabled"]).toBe(false);
-  vi.stubGlobal("chrome", { storage: { local: {
-    set: async () => { throw Error("storage denied"); },
-  } } });
+  expect((await mock.storage.local.get("ui.selectionToolbarEnabled"))["ui.selectionToolbarEnabled"]).toBe(false);
+  mock.storage.local.set.mockRejectedValue(Error("storage denied"));
   await expect(writeSelectionToolbarEnabled(true)).rejects.toThrow("storage denied");
 });
