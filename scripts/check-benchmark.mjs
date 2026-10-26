@@ -75,14 +75,67 @@ function measureBenchmark(report, mode) {
   }));
 }
 
-export function validateBenchmark(report, mode, baseline) {
-  const measurements = measureBenchmark(report, mode);
-  if (!baseline) return measurements;
-  const previous = measureBenchmark(baseline, mode);
+function assertSameWorkload(report, baseline, mode) {
   if (typeof report.browser !== "string" || !report.browser || report.browser !== baseline.browser)
     throw Error("Paired benchmark browser versions must match");
   if (!isDeepStrictEqual(report.fixture, baseline.fixture))
     throw Error("Paired benchmark fixture descriptions and sizes must match");
+  if (mode === "v03") {
+    const queryWork = report => report.libraryQuery.map(sample => `${sample.api}:${sample.count}`).sort();
+    if (!isDeepStrictEqual(queryWork(report), queryWork(baseline)))
+      throw Error("Paired query workload must use the same APIs and record counts");
+  } else {
+    const inputs = report => report.cases.map(({ name, pages, bytes }) => ({ name, pages, bytes }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (!isDeepStrictEqual(inputs(report), inputs(baseline)))
+      throw Error("Paired PDF fixture names, page counts and byte sizes must match");
+  }
+}
+
+// Pool raw observations, never round percentiles: each build contributes two
+// independently warmed producer runs, and every measured observation counts.
+export function aggregateBenchmarkReports(reports, mode) {
+  if (!Array.isArray(reports) || reports.length !== 2)
+    throw Error("Paired benchmark requires exactly two independent reports per build");
+  const first = reports[0];
+  for (const report of reports) {
+    assertSameWorkload(report, first, mode);
+    if (mode === "pdf" && new Set(report.cases.map(item => item.name)).size !== report.cases.length)
+      throw Error("PDF benchmark case names must be unique; duplicate cases cannot be pooled");
+    const measurements = measureBenchmark(report, mode);
+    const summaries = mode === "v03" ? Object.values(measurements) :
+      Object.values(measurements).flatMap(item => [item.open, item.jump, item.retainedMainHeapBytes].filter(Boolean));
+    if (summaries.some(summary => summary.samples !== 30))
+      throw Error("Each independent report must contain exactly 30 post-warmup samples per metric");
+  }
+  const pooled = { browser: first.browser, fixture: first.fixture };
+  if (mode === "v03") {
+    for (const key of ["restore", "captureSave", "libraryPaint", "libraryQuery"])
+      pooled[key] = reports.flatMap(report => report[key]);
+    pooled.search = Object.fromEntries(["rare", "absent", "tag"].map(key =>
+      [key, reports.flatMap(report => report.search[key])]));
+  } else {
+    pooled.cases = first.cases.map(({ name, pages, bytes }) => {
+      const rounds = reports.map(report => report.cases.find(item => item.name === name));
+      return {
+        name, pages, bytes,
+        open: rounds.flatMap(item => item.open),
+        ...(pages > 1 ? { jump: rounds.flatMap(item => item.jump) } : {}),
+        retainedMainHeapBytes: rounds.flatMap(item => item.retainedMainHeapBytes),
+        maxCanvas: Math.max(...rounds.map(item => item.maxCanvas)),
+        maxWorkersAfterClose: Math.max(...rounds.map(item => item.maxWorkersAfterClose)),
+        observedMainBackingBytes: Math.max(...rounds.map(item => item.observedMainBackingBytes ?? 0)),
+      };
+    });
+  }
+  return pooled;
+}
+
+export function validateBenchmark(report, mode, baseline) {
+  const measurements = measureBenchmark(report, mode);
+  if (!baseline) return measurements;
+  const previous = measureBenchmark(baseline, mode);
+  assertSameWorkload(report, baseline, mode);
   const compare = (before, after, label) => {
     if (before.samples !== after.samples) throw Error(`${label}: paired sample counts must match`);
     const limit = before.p95 + Math.max(before.p95 * 0.2, 2);
@@ -90,15 +143,8 @@ export function validateBenchmark(report, mode, baseline) {
       throw Error(`${label}: p95 latency regression (${after.p95} ms exceeds ${limit} ms)`);
   };
   if (mode === "v03") {
-    const queryWork = report => [...new Set(report.libraryQuery.map(sample => `${sample.api}:${sample.count}`))].sort();
-    if (!isDeepStrictEqual(queryWork(report), queryWork(baseline)))
-      throw Error("Paired query workload must use the same APIs and record counts");
     for (const key of Object.keys(previous)) compare(previous[key], measurements[key], key);
   } else {
-    const inputs = report => report.cases.map(({ name, pages, bytes }) => ({ name, pages, bytes }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-    if (!isDeepStrictEqual(inputs(report), inputs(baseline)))
-      throw Error("Paired PDF fixture names, page counts and byte sizes must match");
     for (const name of Object.keys(previous)) {
       compare(previous[name].open, measurements[name].open, `${name}.open`);
       if (previous[name].jump) compare(previous[name].jump, measurements[name].jump, `${name}.jump`);
@@ -107,18 +153,36 @@ export function validateBenchmark(report, mode, baseline) {
   return measurements;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const run = (mode, build) => JSON.parse(execFileSync(process.execPath,
-    [fileURLToPath(new URL("./benchmark.mjs", import.meta.url)), `--mode=${mode}`], {
-      env: { ...process.env, ...(build ? { WEB_INK_BUILD: build } : {}) },
-      encoding: "utf8", maxBuffer: 2 * 1024 * 1024, stdio: ["ignore", "pipe", "inherit"],
-    }));
+export function runBenchmarkChecks({ env = process.env, execute = execFileSync, log = console.log } = {}) {
+  const baselineBuild = env.WEB_INK_BENCHMARK_BASELINE;
+  const schedule = baselineBuild ? ["baseline", "candidate", "candidate", "baseline"] : ["candidate"];
+  const runs = [];
   for (const mode of ["v03", "pdf"]) {
-    const baseline = process.env.WEB_INK_BENCHMARK_BASELINE ? run(mode, process.env.WEB_INK_BENCHMARK_BASELINE) : undefined;
-    const report = run(mode);
-    console.log(JSON.stringify({ mode, browser: report.browser, units: "milliseconds",
+    for (const [index, build] of schedule.entries()) {
+      log(JSON.stringify({ type: "benchmark-run", mode, build, position: index + 1 }));
+      const raw = execute(process.execPath,
+        [fileURLToPath(new URL("./benchmark.mjs", import.meta.url)), `--mode=${mode}`], {
+          env: { ...env, ...(build === "baseline" ? { WEB_INK_BUILD: baselineBuild } : {}) },
+          encoding: "utf8", maxBuffer: 2 * 1024 * 1024, stdio: ["ignore", "pipe", "inherit"],
+        });
+      log(raw);
+      runs.push({ mode, build, raw });
+    }
+  }
+  // Emit all original reports, including later modes, before parsing, checking
+  // workload invariants, or evaluating a performance/resource failure.
+  for (const mode of ["v03", "pdf"]) {
+    const reports = build => runs.filter(run => run.mode === mode && run.build === build).map(run => JSON.parse(run.raw));
+    const report = baselineBuild ? aggregateBenchmarkReports(reports("candidate"), mode) : reports("candidate")[0];
+    const baseline = baselineBuild ? aggregateBenchmarkReports(reports("baseline"), mode) : undefined;
+    log(JSON.stringify({ mode, browser: report.browser, units: "milliseconds",
       measurements: validateBenchmark(report, mode, baseline),
-      ...(baseline ? { baseline: validateBenchmark(baseline, mode), tolerance: "P95 increase <= max(20%, 2 ms)" } : {}),
+      ...(baseline ? {
+        baseline: validateBenchmark(baseline, mode), tolerance: "P95 increase <= max(20%, 2 ms)",
+        schedule, samplesPerMetric: 60,
+      } : {}),
     }));
   }
 }
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) runBenchmarkChecks();

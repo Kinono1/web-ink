@@ -88,35 +88,48 @@ tests use real PDF.js, and browser regressions use the reader, verify annotation
 state and open a healthy file afterwards. Password-protected files remain a
 separate case and are not counted among the ten corruption samples.
 
-`npm run test:benchmark` retains the 30-sample and canvas/worker checks. With
-`WEB_INK_BENCHMARK_BASELINE` set, it also compares P95 timings against a baseline
-on the same browser and workload. Each metric may increase by at most the larger
-of 20% or 2 ms. It rejects different browser versions, fixture descriptions,
-query API/count workloads, PDF sizes/pages and sample counts. CI builds the
-pinned pre-refactor `301819d` and runs both versions with the current producer.
-Ordinary and benchmark-tool tests cover rejection of timing regressions; sample
-count/resource checks alone are insufficient evidence of preserved latency.
+`npm run test:benchmark` retains at least 30 post-warmup samples per producer run
+and the canvas/worker checks. With `WEB_INK_BENCHMARK_BASELINE` set, it runs the
+baseline and candidate in the fixed order A → B → B → A. Both independent rounds
+contribute all their samples, giving 60 samples per version and metric, without
+trimming, choosing the fastest round or retrying a failing metric. Each P95 may
+increase by at most the larger of 20% or 2 ms. It rejects different browsers,
+fixtures, query API/count workloads, PDF sizes/pages and sample counts. Resource
+limits apply to every round. Raw synthetic reports are printed before validation
+so a failed gate retains the underlying samples. CI builds the pinned
+pre-refactor `301819d` and uses the current producer for both versions.
+The latency gate evaluates the pooled distribution; a passing aggregate does not
+establish that each round's separate P95 met the same limit.
 
-The local paired run used Chromium 153.0.8010.12, Node 26.5.0 and the same Apple
-M4 Pro described below. Each row has 30 measured samples per version, after the
-producer's warmups. Runtime source matches `e70096b`; subsequent fixture assertions
-and this evidence section do not change runtime behavior. All rows pass the
-relative budget. The 20 MiB case is slower in this run; no PDF startup speedup is
-claimed.
+The initial A → B CI protocol failed at capture/save (12.30 ms versus a 12.12 ms
+limit) and, on one unchanged-commit retest, absent search (222.80 ms versus
+191.64 ms). No source-level cause was established. The fixed-order runs did not
+retain raw samples on failure. Counterbalancing and preserving samples correct
+those measurement limitations; they do not establish a runtime speedup or remove
+all shared-host variation. The thresholds remain unchanged, and the extra rounds
+roughly double benchmark work. Tool tests still reject genuine aggregate timing
+regressions, mismatched workloads and a resource violation in either round.
+
+The local counterbalanced run used Chromium 153.0.8010.12, Node 26.5.0 and the
+same Apple M4 Pro described below. Each row pools 60 measured samples per version,
+after each producer's warmups. Runtime source is unchanged since `e70096b`;
+subsequent fixture assertions, benchmark tooling and this section do not change
+runtime behavior. All rows pass the relative budget. The 500-page startup is
+slower in this run; no PDF startup speedup is claimed.
 
 | P95, milliseconds | `301819d` | Refactored runtime |
 | --- | ---: | ---: |
-| Restore 200 webpage annotations | 34.3 | 29.2 |
-| Selection to saved highlight | 6.8 | 6.3 |
-| Library first paint / first-page query | 31.9 / 1.4 | 31.9 / 1.3 |
-| Sparse / absent / tag search | 32.2 / 57.7 / 29.8 | 31.2 / 58.5 / 30.4 |
-| 20 MiB PDF open | 268.7 | 300.0 |
-| 50 MiB PDF open | 519.1 | 521.4 |
-| 500-page PDF open / last-page jump | 116.4 / 3.5 | 115.5 / 3.4 |
-| 1,000-page PDF open / last-page jump | 131.6 / 5.2 | 132.9 / 5.5 |
+| Restore 200 webpage annotations | 31.7 | 31.8 |
+| Selection to saved highlight | 7.2 | 6.5 |
+| Library first paint / first-page query | 43.4 / 1.3 | 44.6 / 1.2 |
+| Sparse / absent / tag search | 31.7 / 60.0 / 32.3 | 31.8 / 63.1 / 32.7 |
+| 20 MiB PDF open | 282.6 | 282.6 |
+| 50 MiB PDF open | 532.8 | 524.2 |
+| 500-page PDF open / last-page jump | 127.3 / 5.8 | 135.0 / 6.6 |
+| 1,000-page PDF open / last-page jump | 136.4 / 7.1 | 137.0 / 3.9 |
 
 The PDF runs retain at most three visible canvases and observe zero page workers
-after reader teardown. Main-page retained JS heap stays within about 2.68 MB at
+after reader teardown. Main-page retained JS heap stays within about 2.74 MB at
 P95 in these samples. This is a repeated-navigation page-resource check, excluding
 worker-process, GPU and whole-browser memory; it does not prove absence of all
 leaks. Reproduce with a separately built `301819d` runtime:
