@@ -97,6 +97,34 @@ pinned pre-refactor `301819d` and runs both versions with the current producer.
 Ordinary and benchmark-tool tests cover rejection of timing regressions; sample
 count/resource checks alone are insufficient evidence of preserved latency.
 
+The local paired run used Chromium 153.0.8010.12, Node 26.5.0 and the same Apple
+M4 Pro described below. Each row has 30 measured samples per version, after the
+producer's warmups. Runtime source matches `e70096b`; subsequent fixture assertions
+and this evidence section do not change runtime behavior. All rows pass the
+relative budget. The 20 MiB case is slower in this run; no PDF startup speedup is
+claimed.
+
+| P95, milliseconds | `301819d` | Refactored runtime |
+| --- | ---: | ---: |
+| Restore 200 webpage annotations | 34.3 | 29.2 |
+| Selection to saved highlight | 6.8 | 6.3 |
+| Library first paint / first-page query | 31.9 / 1.4 | 31.9 / 1.3 |
+| Sparse / absent / tag search | 32.2 / 57.7 / 29.8 | 31.2 / 58.5 / 30.4 |
+| 20 MiB PDF open | 268.7 | 300.0 |
+| 50 MiB PDF open | 519.1 | 521.4 |
+| 500-page PDF open / last-page jump | 116.4 / 3.5 | 115.5 / 3.4 |
+| 1,000-page PDF open / last-page jump | 131.6 / 5.2 | 132.9 / 5.5 |
+
+The PDF runs retain at most three visible canvases and observe zero page workers
+after reader teardown. Main-page retained JS heap stays within about 2.68 MB at
+P95 in these samples. This is a repeated-navigation page-resource check, excluding
+worker-process, GPU and whole-browser memory; it does not prove absence of all
+leaks. Reproduce with a separately built `301819d` runtime:
+
+```bash
+WEB_INK_BENCHMARK_BASELINE=/path/to/baseline/chrome-mv3 npm run test:benchmark
+```
+
 ## PDF remote startup follow-up (2026-10-11)
 
 Baseline `4e74a0f` and the source hashes in
