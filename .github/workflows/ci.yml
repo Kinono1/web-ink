@@ -73,6 +73,23 @@ jobs:
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
+      - name: Prepare pre-refactor performance baseline
+        shell: bash
+        run: |
+          BASELINE_COMMIT=301819da1c534306634d3533abd8b897583feb84
+          BASELINE_WORKTREE="$RUNNER_TEMP/webink-performance-baseline"
+          git worktree add --detach "$BASELINE_WORKTREE" "$BASELINE_COMMIT"
+          mkdir "$BASELINE_WORKTREE/node_modules"
+          cp -a "$GITHUB_WORKSPACE/node_modules/." "$BASELINE_WORKTREE/node_modules/"
+          (
+            cd "$BASELINE_WORKTREE"
+            node scripts/pdf-assets.mjs
+            node scripts/build-info.mjs
+            npm run build --ignore-scripts
+            node scripts/seal-runtime.mjs
+          )
+          node -e 'const fs=require("fs"); const info=JSON.parse(fs.readFileSync(process.argv[1]+"/build-info.json")); if(info.commit!==process.argv[2]||info.dirty) throw Error("Invalid performance baseline identity")' "$BASELINE_WORKTREE/.build-output/chrome-mv3" "$BASELINE_COMMIT"
+          echo "WEB_INK_BENCHMARK_BASELINE=$BASELINE_WORKTREE/.build-output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:benchmark
       - name: Verify minimum PDF browser (Chrome 125)
         shell: bash

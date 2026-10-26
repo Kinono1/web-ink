@@ -6,11 +6,12 @@ const samples = () => Array.from({ length: 30 }, (_, i) => i + 1);
 const querySamples = (api = "annotations.query", count = 50) =>
   Array.from({ length: 30 }, (_, i) => ({ ms: i + 1, api, count }));
 const webpage = () => ({
+  browser: "153.0.8010.12",
   fixture: { characters: 100000, annotations: 200, libraryRecords: 10000 },
   restore: samples(), captureSave: samples(), libraryQuery: querySamples(), libraryPaint: samples(),
   search: { rare: samples(), absent: samples(), tag: samples() },
 });
-const pdf = () => ({ cases: [
+const pdf = () => ({ browser: "153.0.8010.12", fixture: "Authored PDF workload", cases: [
   { name: "20MiB", pages: 1, open: samples(), maxCanvas: 1, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples() },
   { name: "50MiB", pages: 1, open: samples(), maxCanvas: 1, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples() },
   { name: "500pages", pages: 500, open: samples(), jump: samples(), maxCanvas: 3, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples() },
@@ -69,4 +70,54 @@ test("detects PDF workers retained after document teardown", () => {
   const retained = pdf();
   retained.cases[3].maxWorkersAfterClose = 1;
   assert.throws(() => validateBenchmark(retained, "pdf"), /worker/i);
+});
+
+test("paired webpage measurements reject a real p95 latency regression", () => {
+  const baseline = webpage(), candidate = webpage();
+  candidate.captureSave = Array(30).fill(40);
+  assert.throws(() => validateBenchmark(candidate, "v03", baseline), /captureSave.*regression/i);
+  assert.equal(validateBenchmark(candidate, "v03").captureSave.p95, 40);
+});
+
+test("paired latency comparisons allow twenty percent or two milliseconds of variation", () => {
+  const baseline = webpage(), candidate = webpage();
+  candidate.restore = Array(30).fill(34.8);
+  assert.equal(validateBenchmark(candidate, "v03", baseline).restore.p95, 34.8);
+  baseline.restore = Array(30).fill(0.5);
+  candidate.restore = Array(30).fill(2.5);
+  assert.equal(validateBenchmark(candidate, "v03", baseline).restore.p95, 2.5);
+  candidate.restore = Array(30).fill(2.6);
+  assert.throws(() => validateBenchmark(candidate, "v03", baseline), /restore.*regression/i);
+});
+
+test("paired comparisons cover paged queries, sparse searches, PDF startup and jumps", () => {
+  const baseline = webpage(), candidate = webpage();
+  candidate.libraryQuery = candidate.libraryQuery.map(sample => ({ ...sample, ms: 40 }));
+  assert.throws(() => validateBenchmark(candidate, "v03", baseline), /libraryQuery.*regression/i);
+  const search = webpage();
+  search.search.tag = Array(30).fill(40);
+  assert.throws(() => validateBenchmark(search, "v03", baseline), /search.tag.*regression/i);
+  const before = pdf(), after = pdf();
+  after.cases[0].open = Array(30).fill(40);
+  assert.throws(() => validateBenchmark(after, "pdf", before), /20MiB.open.*regression/i);
+  after.cases[0].open = samples();
+  after.cases[3].jump = Array(30).fill(40);
+  assert.throws(() => validateBenchmark(after, "pdf", before), /1000pages.jump.*regression/i);
+});
+
+test("paired comparisons refuse different browser, fixture, query work or sample counts", () => {
+  for (const [mutate, error] of [
+    [report => { report.browser = "120.0.6099.109"; }, /browser/i],
+    [report => { delete report.browser; }, /browser/i],
+    [report => { report.fixture.libraryRecords = 20000; }, /fixture/i],
+    [report => { report.libraryQuery = querySamples("annotations.list", 10000); }, /query workload/i],
+    [report => { report.restore.push(31); }, /sample count/i],
+  ]) {
+    const candidate = webpage();
+    mutate(candidate);
+    assert.throws(() => validateBenchmark(candidate, "v03", webpage()), error);
+  }
+  const candidate = pdf();
+  candidate.cases[2].pages = 501;
+  assert.throws(() => validateBenchmark(candidate, "pdf", pdf()), /fixture/i);
 });
