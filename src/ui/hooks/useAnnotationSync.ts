@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useMemo, useRef, useEffect, useState } from "react";
 import { request, releaseChromeListener } from "../../core/client";
 import type { Annotation, AnnotationPage, Language } from "../../core/model";
 import { COPY } from "../management/copy";
@@ -39,6 +39,8 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
         ),
     );
 
+  const activeFilter = useRef({ mode, pageUrl, kind, color, tag, query });
+  activeFilter.current = { mode, pageUrl, kind, color, tag, query };
   useEffect(() => {
     const listener = (message: NoticeMessage) => {
       if (message.type !== "annotations.changed") return;
@@ -49,6 +51,7 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
         return;
       }
       if (message.annotation) {
+        const { mode, pageUrl, kind, color, tag, query } = activeFilter.current;
         const active = {
           pageUrl: mode === "sidepanel" ? pageUrl : undefined,
           kind,
@@ -71,137 +74,139 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
     return () => {
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
-  }, [color, kind, loadRecords, mode, pageUrl, query, tag]);
-  const startEdit = (record: Annotation) => {
-    setEditing(record.id);
-    setDrafts((current) => ({
-      ...current,
-      [record.id]: current[record.id] ?? {
-        note: record.note,
-        tags: tagText(record.tags),
-        color: record.color,
-        base: record,
-      },
-    }));
-  };
-  const updateDraft = (
-    id: string,
-    patch: Pick<Partial<Draft>, "note" | "tags" | "color">,
-  ) =>
-    setDrafts((current) =>
-      current[id]
-        ? { ...current, [id]: { ...current[id], ...patch } }
-        : current,
-    );
-  const saveRecord = async (id: string) => {
-    const draft = drafts[id];
-    if (!draft) return;
-    try {
-      const candidate: Annotation = {
-        ...draft.base,
-        note: draft.note,
-        tags: parseTags(draft.tags),
-        color: draft.color,
-        updatedAt: new Date().toISOString(),
-      };
-      const saved = await request<Annotation>({
-        type: "annotations.put",
-        annotation: candidate,
-        expectedRevision: draft.base.revision,
-      });
-      setRecords((current) =>
-        current.map((item) => (item.id === saved.id ? saved : item)),
-      );
-      setDrafts((current) => {
-        const { [id]: _removed, ...rest } = current;
-        return rest;
-      });
-      setConflicts((current) => {
-        const { [id]: _removed, ...rest } = current;
-        return rest;
-      });
-      setEditing(undefined);
-      setNotice(t.updated);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : String(cause);
-      if (/changed in another tab|CONFLICT/i.test(message)) {
-        setConflicts((current) => ({ ...current, [id]: true }));
-        setError(t.conflict);
-        void loadRecords();
-      } else setError(message);
-    }
-  };
-  const loadLatest = async (id: string) => {
-    const draft = drafts[id];
-    if (!draft) return;
-    try {
-      const latest = await request<AnnotationPage>({
-        type: "annotations.query",
-        query: {
-          ...(mode === "sidepanel" && pageUrl ? { pageUrl } : {}),
-          text: "",
-          limit: 50,
-          requestId: crypto.randomUUID(),
+  }, [loadRecords, setRecords]);
+  return useMemo(() => {
+    const startEdit = (record: Annotation) => {
+      setEditing(record.id);
+      setDrafts((current) => ({
+        ...current,
+        [record.id]: current[record.id] ?? {
+          note: record.note,
+          tags: tagText(record.tags),
+          color: record.color,
+          base: record,
         },
-      });
-      const record = latest.items.find((item) => item.id === id);
-      if (!record)
-        throw new Error(
-          language === "zh-CN"
-            ? "标注已被删除。"
-            : "The annotation was deleted.",
-        );
-      setRecords((current) =>
-        current.map((item) => (item.id === id ? record : item)),
-      );
+      }));
+    };
+    const updateDraft = (
+      id: string,
+      patch: Pick<Partial<Draft>, "note" | "tags" | "color">,
+    ) =>
       setDrafts((current) =>
         current[id]
-          ? { ...current, [id]: { ...current[id], base: record } }
+          ? { ...current, [id]: { ...current[id], ...patch } }
           : current,
       );
-      setConflicts((current) => {
-        const { [id]: _removed, ...rest } = current;
-        return rest;
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  const removeRecord = async (record: Annotation): Promise<boolean> => {
-    try {
-      await request<{ id: string; deleted: true }>({
-        type: "annotations.delete",
-        id: record.id,
-        expectedRevision: record.revision,
-      });
-      setRecords((current) => current.filter((item) => item.id !== record.id));
-      if (selectedId === record.id) setSelectedId(undefined);
-      return true;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      return false;
-    }
-  };
-  const selectionSaved = (annotation: Annotation, startEditing: boolean) => {
-    setRecords((current) => current.some((record) => record.id === annotation.id)
-      ? current.map((record) => record.id === annotation.id ? annotation : record)
-      : [annotation, ...current]);
-    setSelectedId(annotation.id);
-    if (startEditing) startEdit(annotation);
-    void loadRecords();
-  };
-  const filterCount = Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
-  const showAllDocuments = () => {
-    setLibraryDocument(undefined);
-    const url = new URL(location.href);
-    url.searchParams.delete("document");
-    history.replaceState(null, "", url.href);
-  };
-  return {
-    records, nextCursor, loading, loadRecords,
-    query, setQuery, kind, setKind, color, setColor, tag, setTag,
-    filterOpen, setFilterOpen, filterCount, libraryDocument, showAllDocuments,
-    selectedId, setSelectedId, editing, setEditing, drafts, conflicts,
-    startEdit, updateDraft, saveRecord, loadLatest, removeRecord, selectionSaved,
-  };
+    const saveRecord = async (id: string) => {
+      const draft = drafts[id];
+      if (!draft) return;
+      try {
+        const candidate: Annotation = {
+          ...draft.base,
+          note: draft.note,
+          tags: parseTags(draft.tags),
+          color: draft.color,
+          updatedAt: new Date().toISOString(),
+        };
+        const saved = await request<Annotation>({
+          type: "annotations.put",
+          annotation: candidate,
+          expectedRevision: draft.base.revision,
+        });
+        setRecords((current) =>
+          current.map((item) => (item.id === saved.id ? saved : item)),
+        );
+        setDrafts((current) => {
+          const { [id]: _removed, ...rest } = current;
+          return rest;
+        });
+        setConflicts((current) => {
+          const { [id]: _removed, ...rest } = current;
+          return rest;
+        });
+        setEditing(undefined);
+        setNotice(t.updated);
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        if (/changed in another tab|CONFLICT/i.test(message)) {
+          setConflicts((current) => ({ ...current, [id]: true }));
+          setError(t.conflict);
+          void loadRecords();
+        } else setError(message);
+      }
+    };
+    const loadLatest = async (id: string) => {
+      const draft = drafts[id];
+      if (!draft) return;
+      try {
+        const latest = await request<AnnotationPage>({
+          type: "annotations.query",
+          query: {
+            ...(mode === "sidepanel" && pageUrl ? { pageUrl } : {}),
+            text: "",
+            limit: 50,
+            requestId: crypto.randomUUID(),
+          },
+        });
+        const record = latest.items.find((item) => item.id === id);
+        if (!record)
+          throw new Error(
+            language === "zh-CN"
+              ? "标注已被删除。"
+              : "The annotation was deleted.",
+          );
+        setRecords((current) =>
+          current.map((item) => (item.id === id ? record : item)),
+        );
+        setDrafts((current) =>
+          current[id]
+            ? { ...current, [id]: { ...current[id], base: record } }
+            : current,
+        );
+        setConflicts((current) => {
+          const { [id]: _removed, ...rest } = current;
+          return rest;
+        });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    const removeRecord = async (record: Annotation): Promise<boolean> => {
+      try {
+        await request<{ id: string; deleted: true }>({
+          type: "annotations.delete",
+          id: record.id,
+          expectedRevision: record.revision,
+        });
+        setRecords((current) => current.filter((item) => item.id !== record.id));
+        if (selectedId === record.id) setSelectedId(undefined);
+        return true;
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+        return false;
+      }
+    };
+    const selectionSaved = (annotation: Annotation, startEditing: boolean) => {
+      setRecords((current) => current.some((record) => record.id === annotation.id)
+        ? current.map((record) => record.id === annotation.id ? annotation : record)
+        : [annotation, ...current]);
+      setSelectedId(annotation.id);
+      if (startEditing) startEdit(annotation);
+      void loadRecords();
+    };
+    const filterCount = Number(kind !== "all") + Number(Boolean(color)) + Number(Boolean(tag));
+    const showAllDocuments = () => {
+      setLibraryDocument(undefined);
+      const url = new URL(location.href);
+      url.searchParams.delete("document");
+      history.replaceState(null, "", url.href);
+    };
+    return {
+      records, nextCursor, loading, loadRecords,
+      query, setQuery, kind, setKind, color, setColor, tag, setTag,
+      filterOpen, setFilterOpen, filterCount, libraryDocument, showAllDocuments,
+      selectedId, setSelectedId, editing, setEditing, drafts, conflicts,
+      startEdit, updateDraft, saveRecord, loadLatest, removeRecord, selectionSaved,
+    };
+  }, [records, nextCursor, loading, loadRecords, query, kind, color, tag, filterOpen, libraryDocument, selectedId, editing, drafts, conflicts, mode, pageUrl, language, setError, setNotice, setRecords]);
 }

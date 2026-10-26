@@ -57,6 +57,22 @@ vi.mock("../src/pdf/PdfPage", async (original) => {
     : MeasuredPdfPage;
   return { ...actual, PdfPage };
 });
+const noteRenderMetrics = vi.hoisted(() => ({ renders: [] as string[] }));
+vi.mock("../src/pdf/PdfNote", async (original) => {
+  const actual = await original<typeof import("../src/pdf/PdfNote")>();
+  const React = await import("react");
+  type Props = ComponentProps<typeof actual.PdfNote>;
+  const exported = actual.PdfNote as unknown as {
+    type?: (props: Props) => ReactNode;
+    compare?: ((previous: Readonly<Props>, next: Readonly<Props>) => boolean) | null;
+  };
+  const render = exported.type ?? actual.PdfNote;
+  function MeasuredPdfNote(props: Props) {
+    noteRenderMetrics.renders.push(props.record.id);
+    return render(props);
+  }
+  return { ...actual, PdfNote: exported.type ? React.memo(MeasuredPdfNote, exported.compare ?? undefined) : MeasuredPdfNote };
+});
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
   return { ...actual, readIeeePdf: async (input: { pageUrl: string; sourceUrl?: string }) => {
@@ -181,6 +197,7 @@ const baseRecord = () => ({
 
 beforeEach(() => {
   pageRenderMetrics.renders.length = 0;
+  noteRenderMetrics.renders.length = 0;
   host = document.createElement("div");
   document.body.append(host);
   history.replaceState(null, "", "/pdf.html");
@@ -528,6 +545,33 @@ it("[perf] reports real PdfPage render invocations for unrelated reader UI and d
   process.stdout.write(`PDF_RENDER_BASELINE ${JSON.stringify(metric)}\n`);
 });
 
+it("[perf] edits one draft without invoking unrelated PdfNote render functions", async () => {
+  io.pageCount = 1;
+  records = [baseRecord(), { ...baseRecord(), id: "second", note: "Second note" }, { ...baseRecord(), id: "third", note: "Third note" }];
+  await mount();
+  await openNotes();
+  noteRenderMetrics.renders.length = 0;
+  const article = host.querySelector<HTMLElement>('[data-pdf-note="saved-highlight"]')!;
+  const edit = [...article.querySelectorAll("button")].find(node => node.textContent === "编辑")!;
+  await act(async () => edit.click());
+  await settle();
+  const editing = noteRenderMetrics.renders.splice(0);
+  const textarea = article.querySelector("textarea")!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+  await act(async () => {
+    setter.call(textarea, "Only the first draft changed");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+  const typing = noteRenderMetrics.renders.splice(0);
+  process.stdout.write(`PDF_NOTE_RENDER_COUNTS ${JSON.stringify({ editing, typing })}\n`);
+  expect(textarea.value).toBe("Only the first draft changed");
+  expect(editing).toEqual(["saved-highlight"]);
+  expect(typing).toEqual(["saved-highlight"]);
+  expect(host.querySelector('[data-pdf-note="second"]')?.textContent).toContain("Second note");
+  expect(host.querySelector('[data-pdf-note="third"]')?.textContent).toContain("Third note");
+});
+
 it("uses PDF metadata for the reader and new annotations without renaming old records", async () => {
   io.metadataTitle = "A scientific paper";
   io.metadataDoi = "10.1109/TII.2026.3716639";
@@ -818,7 +862,9 @@ describe("PDF annotation export and original notes", () => {
     await mount();
     await click("更多");
     await click("导出给 AI");
-    expect(downloads).toHaveLength(1);
+    // The native collector yields between batches; wait for its download, not
+    // a fixed number of render/microtask rounds.
+    await act(async () => { await vi.waitFor(() => expect(downloads).toHaveLength(1)); });
     const exported = JSON.parse(await blobText(downloads[0]!.blob));
     expect(Object.keys(exported).sort()).toEqual(["annotations", "document", "exportedAt", "format", "nativeAnnotations", "schemaVersion"]);
     expect(exported).toMatchObject({ format: "web-ink-pdf-notes", schemaVersion: 1,

@@ -32,9 +32,9 @@ export function useAnnotationsState() {
   draftsRef.current = noteDrafts;
   unsavedRef.current = unsaved;
   const savedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
-  const deletedDrafts = Object.values(noteDrafts).filter(
+  const deletedDrafts = useMemo(() => Object.values(noteDrafts).filter(
     (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
-  );
+  ), [noteDrafts, savedIds]);
   const sortedNotes = useMemo(
     () =>
       records
@@ -83,7 +83,7 @@ export function useAnnotations(
 ) {
   const {
     annotationChangeEpoch, annotationWrites, color, documentSession, documentSessionRef,
-    draftsRef, fallbackNotes, key, locked, noteAfterSave, opened, paperDoi, records,
+    draftsRef, fallbackNotes, key, locked, noteAfterSave, opened, paperDoi,
     recordsRef, removing, saving, setError, setNoteConflicts, setNoteDrafts, setNoteSaving,
     setNotesLimit, setNotesOpen, setPicked, setRecords, setRemoving, setSaving, setSelection,
     setUndoRecord, setUnsaved, setWriteCount, supportsSidebar, t, undoRecord, unsaved,
@@ -91,7 +91,7 @@ export function useAnnotations(
   } = state;
 
   // Remote deletion must reach pending save callbacks before React renders.
-  function updateRecords(next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) {
+  const updateRecords = useCallback((next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) => {
     const values = typeof next === "function" ? next(recordsRef.current) : next;
     const ids = new Set(values.map((record) => record.id));
     for (const record of recordsRef.current) {
@@ -103,18 +103,19 @@ export function useAnnotations(
     }
     recordsRef.current = values;
     setRecords(values);
-  }
+  }, [recordsRef, draftsRef, setNotesOpen, setRecords]);
 
-  function updateDraft(id: string, draft?: PdfNoteDraft, resolveConflict = false) {
+  const updateDraft = useCallback((id: string, draft?: PdfNoteDraft, resolveConflict = false) => {
+    if (documentSession !== documentSessionRef.current) return;
     const next = { ...draftsRef.current };
     if (draft) next[id] = draft;
     else delete next[id];
     draftsRef.current = next;
     setNoteDrafts(next);
     if (!draft || resolveConflict) setNoteConflicts((current) => ({ ...current, [id]: false }));
-  }
+  }, [documentSession, documentSessionRef, draftsRef, setNoteDrafts, setNoteConflicts]);
 
-  async function trackWrite<T>(operation: () => Promise<T>): Promise<T> {
+  const trackWrite = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     const pending = operation();
     annotationWrites.current.add(pending);
     setWriteCount(annotationWrites.current.size);
@@ -124,10 +125,10 @@ export function useAnnotations(
       annotationWrites.current.delete(pending);
       setWriteCount(annotationWrites.current.size);
     }
-  }
+  }, [annotationWrites, setWriteCount]);
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (!key) return;
+    if (!key || documentSession !== documentSessionRef.current) return;
     const active = documentSession;
     const epoch = annotationChangeEpoch.current;
     try {
@@ -143,7 +144,7 @@ export function useAnnotations(
       if (epoch !== annotationChangeEpoch.current) return refresh();
       setError(errorText(cause));
     }
-  }, [key, documentSession]);
+  }, [key, documentSession, documentSessionRef, annotationChangeEpoch, updateRecords, setError]);
 
   useEffect(() => {
     if (!key) return;
@@ -183,13 +184,15 @@ export function useAnnotations(
     setNotesLimit(50);
   }, [documentSession]);
 
-  async function save(record: PdfAnnotation, editNote = false): Promise<PdfAnnotation> {
+  const save = useCallback(async (record: PdfAnnotation, editNote = false): Promise<PdfAnnotation> => {
+    if (documentSession !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
     setSaving(true);
     setUnsaved(record);
     unsavedRef.current = record;
     noteAfterSave.current = editNote;
     setError("");
     const active = documentSession;
+    const notesCount = recordsRef.current.length;
     return trackWrite(async () => { try {
       const stored = await request<PdfAnnotation>({
         type: "annotations.put",
@@ -205,7 +208,7 @@ export function useAnnotations(
       actions.current.tell(t("已保存到本机", "Saved on this device"));
       if (editNote) {
         setNotesOpen(true);
-        if (!supportsSidebar || fallbackNotes) setNotesLimit((limit) => Math.max(limit, records.length + 1));
+        if (!supportsSidebar || fallbackNotes) setNotesLimit((limit) => Math.max(limit, notesCount + 1));
         updateDraft(stored.id, { note: stored.note, tags: stored.tags.join(", "), color: stored.color, base: stored, editing: true });
       }
       return stored;
@@ -215,9 +218,14 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setSaving(false);
     } });
-  }
+  }, [
+    documentSession, documentSessionRef, trackWrite, updateRecords, updateDraft, setSaving,
+    setUnsaved, unsavedRef, noteAfterSave, setError, setSelection, actions, t, setNotesOpen,
+    supportsSidebar, fallbackNotes, setNotesLimit, recordsRef,
+  ]);
 
-  async function saveNote(id: string, draft: PdfNoteDraft): Promise<void> {
+  const saveNote = useCallback(async (id: string, draft: PdfNoteDraft): Promise<void> => {
+    if (documentSession !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
     const deletedMessage = t(
       "原标注已被删除。草稿仅保留在此窗口，请复制内容或放弃草稿后再继续。",
       "The original annotation was deleted. This draft remains in this window; copy its contents or discard it before leaving.",
@@ -247,10 +255,13 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setNoteSaving(undefined);
     } });
-  }
+  }, [
+    documentSession, documentSessionRef, recordsRef, t, setNotesOpen, setError, setNoteSaving,
+    trackWrite, updateRecords, updateDraft, setNoteConflicts,
+  ]);
 
-  async function remove(record: PdfAnnotation) {
-    if (removing || saving || unsaved || record.pageUrl !== key) return;
+  const remove = useCallback(async (record: PdfAnnotation) => {
+    if (documentSession !== documentSessionRef.current || removing || saving || unsaved || record.pageUrl !== key) return;
     setRemoving(true);
     setError("");
     const active = documentSession;
@@ -274,10 +285,14 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setRemoving(false);
     }
-  }
+  }, [
+    documentSession, documentSessionRef, removing, saving, unsaved, key, setRemoving, setError,
+    trackWrite, updateRecords, setNoteDrafts, setPicked, setUndoRecord, actions, t,
+  ]);
 
-  async function restoreRemoved() {
+  const restoreRemoved = useCallback(async () => {
     if (
+      documentSession !== documentSessionRef.current ||
       !undoRecord ||
       removing ||
       saving ||
@@ -305,16 +320,19 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setRemoving(false);
     }
-  }
+  }, [
+    documentSession, documentSessionRef, undoRecord, removing, saving, unsaved, key, setRemoving,
+    setError, trackWrite, updateRecords, setUndoRecord, actions, t,
+  ]);
 
-  function mark(
+  const mark = useCallback((
     target: SelectionTarget,
     kind: "pdf-text" | "pdf-area",
     chosen = color,
     editNote = false,
     tags: string[] = [],
-  ) {
-    if (!opened || !key || locked || annotationWrites.current.size) return;
+  ) => {
+    if (documentSession !== documentSessionRef.current || !opened || !key || locked || annotationWrites.current.size) return;
     const now = new Date().toISOString();
     const recordSource = opened.sourceUrl && isIeeeSessionPage(opened.sourceUrl)
       ? doiUrl(paperDoi) || opened.sourceUrl : opened.sourceUrl;
@@ -337,7 +355,7 @@ export function useAnnotations(
       kind,
       target: pdfTarget,
     }, editNote).catch(() => undefined);
-  }
+  }, [documentSession, documentSessionRef, opened, key, locked, annotationWrites, color, paperDoi, save]);
   return {
     updateRecords, updateDraft, trackWrite, refresh, save, saveNote, remove, restoreRemoved,
     mark,

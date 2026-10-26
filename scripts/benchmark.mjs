@@ -496,7 +496,8 @@ async function benchmarkPdf(temp) {
     (await context.waitForEvent("serviceworker"));
   const id = new URL(worker.url()).host;
   const page = await context.newPage();
-  await page.goto(`chrome-extension://${id}/pdf.html`);
+  const readerUrl = `chrome-extension://${id}/pdf.html?page=1`;
+  await page.goto(readerUrl);
   const cdp = await context.newCDPSession(page);
   const report = {
     label: label || "candidate",
@@ -518,6 +519,7 @@ async function benchmarkPdf(temp) {
     );
     const times = [],
       jumps = [],
+      jumpInitialStates = [],
       retainedMainHeapBytes = [];
     let peakBacking = 0,
       maxCanvas = 0,
@@ -531,7 +533,8 @@ async function benchmarkPdf(temp) {
       await page.waitForFunction(
         (name) =>
           document.querySelector(".pdf-name")?.textContent === `${name}.pdf` &&
-          document.querySelector(".pdf-page[data-ready=true]"),
+          document.querySelector('[data-page="1"] .pdf-page[data-ready=true]') &&
+          document.querySelector(".pdf-page-field input")?.value === "1",
         name,
         { timeout: 30000 },
       );
@@ -542,22 +545,37 @@ async function benchmarkPdf(temp) {
       const usage = await cdp.send("Runtime.getHeapUsage");
       peakBacking = Math.max(peakBacking, usage.backingStorageSize ?? 0);
       if (pages > 1) {
-        await page.evaluate(() => (window.__pdfJump = performance.now()));
+        const initialState = await page.evaluate((targetPage) => {
+          const target = document.querySelector(`.pdf-slot[data-page="${targetPage}"]`);
+          const state = {
+            page: Number(document.querySelector(".pdf-page-field input")?.value),
+            page1Ready: Boolean(document.querySelector('[data-page="1"] .pdf-page[data-ready=true]')),
+            targetPage,
+            targetMounted: Boolean(target),
+            targetReady: Boolean(target?.querySelector(".pdf-page[data-ready=true]")),
+          };
+          if (state.page !== 1 || !state.page1Ready || state.targetMounted || state.targetReady)
+            throw Error(`PDF jump requires ready page 1 and an unmounted target: ${JSON.stringify(state)}`);
+          window.__pdfJump = performance.now();
+          return state;
+        }, pages);
         await page.getByLabel("页码", { exact: true }).fill(String(pages));
         await page
           .locator(`[data-page="${pages}"] .pdf-page[data-ready=true]`)
           .waitFor();
-        if (i >= 3)
+        if (i >= 3) {
           jumps.push(
             await page.evaluate(() => performance.now() - window.__pdfJump),
           );
+          jumpInitialStates.push(initialState);
+        }
       }
       maxCanvas = Math.max(
         maxCanvas,
         await page.locator(".pdf-page canvas").count(),
       );
       // Each navigation closes the reader/worker; browser module cache remains warm.
-      await page.goto(`chrome-extension://${id}/pdf.html`);
+      await page.goto(readerUrl);
       maxWorkersAfterClose = Math.max(maxWorkersAfterClose, page.workers().length);
       await cdp.send("HeapProfiler.collectGarbage");
       if (i >= 3)
@@ -569,7 +587,7 @@ async function benchmarkPdf(temp) {
       pages,
       open: times,
       openSummary: percentiles(times),
-      ...(jumps.length ? { jump: jumps, jumpSummary: percentiles(jumps) } : {}),
+      ...(jumps.length ? { jump: jumps, jumpSummary: percentiles(jumps), jumpInitialStates } : {}),
       maxCanvas,
       maxWorkersAfterClose,
       retainedMainHeapBytes,

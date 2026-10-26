@@ -11,7 +11,7 @@ export default defineConfig({
       include: ['src/**/*.{ts,tsx}', 'entrypoints/**/*.{ts,tsx}'],
       reporter: ['text', 'html', 'lcov', 'json-summary'],
       reportsDirectory: process.env.WEB_INK_COVERAGE_DIR || 'coverage',
-      thresholds: { lines: 80, statements: 80, functions: 75, branches: 70 },
+      thresholds: { lines: 85, statements: 80, functions: 75, branches: 70 },
     },
   },
 });

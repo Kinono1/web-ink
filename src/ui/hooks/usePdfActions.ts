@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
+import { useMemo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { RequestError, request, releaseChromeListener } from "../../core/client";
 import type { Annotation, Language, PdfOpenResult, PdfTabContext } from "../../core/model";
 import type { IeeePdfDiagnostic } from "../../pdf/ieee-diagnostics";
@@ -46,118 +46,120 @@ export function usePdfActions({
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
   }, [mode, tab.id]);
-  const showPdf = async (record?: Annotation) => {
-    if (pdfOpenPending.current) return;
-    pdfOpenPending.current = true;
-    setOpeningPdf(true);
-    try {
-      const identity = record && isPdf(record)
-        ? await readPdfPaperIdentity(record.target.documentHash, record.target.sourceUrl)
-        : undefined;
-      const url = pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record, identity);
-      const tabId = await openPdfTab(url);
-      if (record && isPdf(record) && new URL(url).protocol === "https:")
-        await rememberPdfPaperReopen(record.target, identity?.doi, tabId);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      pdfOpenPending.current = false;
-      setOpeningPdf(false);
-    }
-  };
-  const openCurrentPdf = (candidateUrl?: string, accessMode?: "site-session") => {
-    if (tab.id === undefined || pdfContext?.currentReader || pdfOpenPending.current)
-      return;
-    pdfOpenPending.current = true;
-    setOpeningPdf(true);
-    setPdfActionError(undefined);
-    const expectedDocument = activeDocument.current.version;
-    setPreparationStage("identify");
-    setIeeeDiagnostic(undefined);
-    void request<PdfOpenResult>({
-      type: "pdf.openCurrent",
-      tabId: tab.id,
-      ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
-      ...(tab.url ? { expectedUrl: tab.url } : {}),
-      ...(candidateUrl ? { candidateUrl } : {}),
-      ...(accessMode ? { accessMode } : {}),
-    })
-      .catch((cause) => {
-        if (expectedDocument !== activeDocument.current.version) return;
-        const message = cause instanceof Error ? cause.message : String(cause);
-        setPdfActionError(
-          cause instanceof RequestError && cause.code
-            ? ieeeFailureMessage(cause.code, language) ?? message
-            : `${message} ${t.refreshPdfHint}`,
-        );
-        if (cause instanceof RequestError) setIeeeDiagnostic(cause.diagnostic);
-      })
-      .finally(() => {
+  return useMemo(() => {
+    const showPdf = async (record?: Annotation) => {
+      if (pdfOpenPending.current) return;
+      pdfOpenPending.current = true;
+      setOpeningPdf(true);
+      try {
+        const identity = record && isPdf(record)
+          ? await readPdfPaperIdentity(record.target.documentHash, record.target.sourceUrl)
+          : undefined;
+        const url = pdfReaderUrl(chrome.runtime.getURL("/pdf.html"), record, identity);
+        const tabId = await openPdfTab(url);
+        if (record && isPdf(record) && new URL(url).protocol === "https:")
+          await rememberPdfPaperReopen(record.target, identity?.doi, tabId);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
         pdfOpenPending.current = false;
         setOpeningPdf(false);
-        setPreparationStage(undefined);
-      });
-  };
-  const openIeeeSessionPdf = async (candidateUrl?: string) => {
-    const origin = { origins: ["https://ieeexplore.ieee.org/*"] };
-    try {
-      const granted = await chrome.permissions.contains(origin);
-      if (granted || await chrome.permissions.request(origin)) {
-        openCurrentPdf(candidateUrl, "site-session");
-        return;
       }
-    } catch {
-      // A revoked extension context is handled as a denied IEEE host grant.
-    }
-    setError(t.ieeePermissionDenied);
-  };
-  const openLocalPdf = () => {
-    void chrome.tabs.create({ url: chrome.runtime.getURL("pdf.html?open=local") }).catch((cause) => {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    });
-  };
-  const openLibrary = () => {
-    window.open(chrome.runtime.getURL("library.html"));
-  };
-  const openPdf = (record?: Annotation) => {
-    void showPdf(record);
-  };
-  const showHeaderPdfAction =
-    !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
-  const isIeeeSession = pdfContext?.publisher === "ieee";
-  const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
-    const url = new URL(candidate.url);
-    return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
-  };
-  const ieeeCandidates = isIeeeSession
-    ? pdfContext?.candidates.filter(isIeeeCandidate) ?? []
-    : [];
-  const publicCandidates = isIeeeSession
-    ? pdfContext?.candidates.filter(candidate => !isIeeeCandidate(candidate)) ?? []
-    : [];
-  const cancelCurrentPdf = () => {
-    void request({
-      type: "pdf.cancelCurrent", tabId: tab.id,
-      ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
-      ...(tab.url ? { expectedUrl: tab.url } : {}),
-    }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
-  };
-  return {
-    openingPdf,
-    preparationStage,
-    pdfActionError,
-    setPdfActionError,
-    ieeeDiagnostic,
-    openCurrentPdf,
-    openIeeeSessionPdf,
-    openLocalPdf,
-    openLibrary,
-    openPdf,
-    showHeaderPdfAction,
-    isIeeeSession,
-    ieeeCandidates,
-    publicCandidates,
-    cancelCurrentPdf,
-  };
+    };
+    const openCurrentPdf = (candidateUrl?: string, accessMode?: "site-session") => {
+      if (tab.id === undefined || pdfContext?.currentReader || pdfOpenPending.current)
+        return;
+      pdfOpenPending.current = true;
+      setOpeningPdf(true);
+      setPdfActionError(undefined);
+      const expectedDocument = activeDocument.current.version;
+      setPreparationStage("identify");
+      setIeeeDiagnostic(undefined);
+      void request<PdfOpenResult>({
+        type: "pdf.openCurrent",
+        tabId: tab.id,
+        ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
+        ...(tab.url ? { expectedUrl: tab.url } : {}),
+        ...(candidateUrl ? { candidateUrl } : {}),
+        ...(accessMode ? { accessMode } : {}),
+      })
+        .catch((cause) => {
+          if (expectedDocument !== activeDocument.current.version) return;
+          const message = cause instanceof Error ? cause.message : String(cause);
+          setPdfActionError(
+            cause instanceof RequestError && cause.code
+              ? ieeeFailureMessage(cause.code, language) ?? message
+              : `${message} ${t.refreshPdfHint}`,
+          );
+          if (cause instanceof RequestError) setIeeeDiagnostic(cause.diagnostic);
+        })
+        .finally(() => {
+          pdfOpenPending.current = false;
+          setOpeningPdf(false);
+          setPreparationStage(undefined);
+        });
+    };
+    const openIeeeSessionPdf = async (candidateUrl?: string) => {
+      const origin = { origins: ["https://ieeexplore.ieee.org/*"] };
+      try {
+        const granted = await chrome.permissions.contains(origin);
+        if (granted || await chrome.permissions.request(origin)) {
+          openCurrentPdf(candidateUrl, "site-session");
+          return;
+        }
+      } catch {
+        // A revoked extension context is handled as a denied IEEE host grant.
+      }
+      setError(t.ieeePermissionDenied);
+    };
+    const openLocalPdf = () => {
+      void chrome.tabs.create({ url: chrome.runtime.getURL("pdf.html?open=local") }).catch((cause) => {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      });
+    };
+    const openLibrary = () => {
+      window.open(chrome.runtime.getURL("library.html"));
+    };
+    const openPdf = (record?: Annotation) => {
+      void showPdf(record);
+    };
+    const showHeaderPdfAction =
+      !pdfContext?.currentReader && (!pdfContext || pdfContext.candidates.length <= 1);
+    const isIeeeSession = pdfContext?.publisher === "ieee";
+    const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
+      const url = new URL(candidate.url);
+      return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
+    };
+    const ieeeCandidates = isIeeeSession
+      ? pdfContext?.candidates.filter(isIeeeCandidate) ?? []
+      : [];
+    const publicCandidates = isIeeeSession
+      ? pdfContext?.candidates.filter(candidate => !isIeeeCandidate(candidate)) ?? []
+      : [];
+    const cancelCurrentPdf = () => {
+      void request({
+        type: "pdf.cancelCurrent", tabId: tab.id,
+        ...(tab.windowId !== undefined ? { windowId: tab.windowId } : {}),
+        ...(tab.url ? { expectedUrl: tab.url } : {}),
+      }).catch((cause) => setError(cause instanceof Error ? cause.message : String(cause)));
+    };
+    return {
+      openingPdf,
+      preparationStage,
+      pdfActionError,
+      setPdfActionError,
+      ieeeDiagnostic,
+      openCurrentPdf,
+      openIeeeSessionPdf,
+      openLocalPdf,
+      openLibrary,
+      openPdf,
+      showHeaderPdfAction,
+      isIeeeSession,
+      ieeeCandidates,
+      publicCandidates,
+      cancelCurrentPdf,
+    };
+  }, [openingPdf, preparationStage, pdfActionError, ieeeDiagnostic, mode, tab, pdfContext, activeDocument, language, setError]);
 }
 export type PdfActions = ReturnType<typeof usePdfActions>;

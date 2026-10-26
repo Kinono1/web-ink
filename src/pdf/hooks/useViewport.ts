@@ -85,16 +85,16 @@ export function useViewport(
     measureFrame.current = 0;
   }, []);
 
-  function userIntent() {
+  const userIntent = useCallback(() => {
     intentEpoch.current++;
     nativeFocus.current = undefined;
     if (positionSession.current) positionSession.current.pending = undefined;
     setPositionEpoch((epoch) => epoch + 1);
-  }
+  }, [intentEpoch, nativeFocus, positionSession, setPositionEpoch]);
 
-  function pagesPadding() {
+  const pagesPadding = useCallback(() => {
     return container.current ? parseFloat(getComputedStyle(container.current).paddingTop) || 0 : 0;
-  }
+  }, [container]);
 
   function currentPosition() {
     const active = positionSession.current;
@@ -297,8 +297,8 @@ export function useViewport(
     };
   }, [opened?.hash, layoutEpoch, positionEpoch, zoom, rotation]);
 
-  function jump(n: number) {
-    if (!opened) return;
+  const jump = useCallback((n: number) => {
+    if (!opened || documentSession !== documentSessionRef.current) return;
     userIntent();
     const page = Math.min(opened.document.numPages, Math.max(1, n));
     setPageNumber(page);
@@ -310,7 +310,10 @@ export function useViewport(
       top: layoutIndex.current.offsetBefore(page) + pagesPadding(),
       behavior: "instant",
     });
-  }
+  }, [
+    opened, documentSession, documentSessionRef, userIntent, setPageNumber, setPageWindow,
+    container, layoutIndex, pagesPadding,
+  ]);
 
   function applyView(nextZoom: number, nextRotation: PdfRotation = rotation) {
     if (nextZoom === zoom && nextRotation === rotation) return;

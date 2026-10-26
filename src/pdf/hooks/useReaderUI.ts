@@ -3,7 +3,7 @@ import {
   type AnnotationPreset,
 } from "../../core/annotation-presets";
 import { errorText } from "../types";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { request, releaseChromeListener } from "../../core/client";
 import { COLORS, DEFAULT_SETTINGS, type Settings } from "../../core/model";
 import { THEME_TOKENS } from "../../ui/theme";
@@ -33,7 +33,7 @@ export function useReaderUIState() {
   const moreTrigger = useRef<HTMLButtonElement>(null);
   const notesRail = useRef<HTMLElement>(null);
   const zh = settings.language === "zh-CN";
-  const t = (cn: string, en: string) => (zh ? cn : en);
+  const t = useCallback((cn: string, en: string) => (zh ? cn : en), [zh]);
 
   return {
     zh, t,
@@ -46,7 +46,7 @@ export function useReaderUIState() {
 }
 
 type Inputs = Pick<ReaderSnapshot,
-  "container" | "deletedDrafts" | "dirtyNotes" | "draftsRef" | "focusAttempt" | "focusMode" |
+  "container" | "documentSession" | "documentSessionRef" | "deletedDrafts" | "dirtyNotes" | "draftsRef" | "focusAttempt" | "focusMode" |
   "focusScroll" | "inlineNotes" | "locked" | "moreMenu" | "moreOpen" | "notesRail" |
   "pendingLeave" | "presetReadGeneration" | "presetsOpen" | "readerTab" | "readerWindow" |
   "selection" | "setColor" | "setError" | "setFallbackNotes" | "setFocusBusy" |
@@ -60,7 +60,7 @@ export function useReaderUI(
   actions: ReaderActionsRef<"mark">,
 ) {
   const {
-    container, deletedDrafts, dirtyNotes, draftsRef, focusAttempt, focusMode, focusScroll,
+    container, documentSession, documentSessionRef, deletedDrafts, dirtyNotes, draftsRef, focusAttempt, focusMode, focusScroll,
     inlineNotes, locked, moreMenu, moreOpen, notesRail, pendingLeave, presetReadGeneration,
     presetsOpen, readerTab, readerWindow, selection, setColor, setError, setFallbackNotes,
     setFocusBusy, setFocusHint, setFocusMode, setMoreOpen, setNotesOpen, setPresets,
@@ -72,13 +72,13 @@ export function useReaderUI(
     focusAttempt.current++;
   }, []);
 
-  function cancelFocusAttempt() {
+  const cancelFocusAttempt = useCallback(() => {
     focusAttempt.current++;
     setFocusBusy(false);
     setFocusMode(false);
-  }
+  }, [focusAttempt, setFocusBusy, setFocusMode]);
 
-  function openNotes() {
+  const openNotes = useCallback(() => {
     cancelFocusAttempt();
     if (!supportsSidebar) { setNotesOpen((open) => !open); return; }
     setNotesOpen(true);
@@ -91,7 +91,7 @@ export function useReaderUI(
       if (!sidebarAttachedRef.current) setFallbackNotes(true);
       setError(t("侧栏暂时无法打开，请重试或点击工具栏 Web Ink。", "The sidebar could not open. Retry or click Web Ink in the toolbar."));
     });
-  }
+  }, [cancelFocusAttempt, supportsSidebar, setNotesOpen, readerTab, setError, t, setFallbackNotes, sidebarAttachedRef]);
 
   useLayoutEffect(() => {
     if (inlineNotes && deletedDrafts.length && !pendingLeave && !sourceOpen)
@@ -172,8 +172,8 @@ export function useReaderUI(
     return () => media.removeEventListener("change", apply);
   }, [settings]);
 
-  async function enterFocus() {
-    if (locked || dirtyNotes || presetsOpen) return;
+  const enterFocus = useCallback(async () => {
+    if (documentSession !== documentSessionRef.current || locked || dirtyNotes || presetsOpen) return;
     const attempt = ++focusAttempt.current;
     setFocusBusy(true);
     let hint = supportsSidebar;
@@ -184,7 +184,7 @@ export function useReaderUI(
         hint = false;
       }
     } catch { /* The visible manual-close hint is the older-browser/failure fallback. */ }
-    if (attempt !== focusAttempt.current) return;
+    if (documentSession !== documentSessionRef.current || attempt !== focusAttempt.current) return;
     setFocusBusy(false);
     if (Object.values(draftsRef.current).some(dirtyDraft)) return;
     focusScroll.current = container.current?.scrollTop;
@@ -192,17 +192,21 @@ export function useReaderUI(
     setMoreOpen(false);
     setFocusHint(hint);
     setFocusMode(true);
-  }
+  }, [
+    documentSession, documentSessionRef, locked, dirtyNotes, presetsOpen, focusAttempt,
+    setFocusBusy, supportsSidebar, readerWindow, draftsRef, focusScroll, container, setNotesOpen,
+    setMoreOpen, setFocusHint, setFocusMode,
+  ]);
 
-  function exitFocus() {
+  const exitFocus = useCallback(() => {
     cancelFocusAttempt();
     focusScroll.current = container.current?.scrollTop;
     container.current?.focus({ preventScroll: true });
-  }
+  }, [cancelFocusAttempt, focusScroll, container]);
 
-  function choosePreset(preset: AnnotationPreset) {
+  const choosePreset = useCallback((preset: AnnotationPreset) => {
     const current = getSelection();
-    if (!selection || locked || presetsOpen || !current?.rangeCount || current.isCollapsed) return false;
+    if (documentSession !== documentSessionRef.current || !selection || locked || presetsOpen || !current?.rangeCount || current.isCollapsed) return false;
     const range = current.getRangeAt(0);
     const layer = container.current?.querySelector(`[data-page="${selection.target.pageNumber}"] .textLayer`);
     if (!layer || !layer.contains(range.startContainer) || !layer.contains(range.endContainer) || current.toString().trim() !== selection.target.exact) return false;
@@ -213,14 +217,14 @@ export function useReaderUI(
     setColor(preset.color);
     actions.current.mark(selection.target, "pdf-text", preset.color, false, [preset.label]);
     return true;
-  }
+  }, [documentSession, documentSessionRef, selection, locked, presetsOpen, container, setColor, actions]);
 
-  function dialogKeys(event: React.KeyboardEvent<HTMLElement>) {
+  const dialogKeys = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Tab") return;
     const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')];
     const first = controls[0], last = controls.at(-1);
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
     if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
-  }
+  }, []);
   return { cancelFocusAttempt, openNotes, enterFocus, exitFocus, choosePreset, dialogKeys };
 }

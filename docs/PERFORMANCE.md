@@ -1,5 +1,163 @@
 # v0.3 performance evidence
 
+## v0.3.14 refactor verification (2026-10-26)
+
+The refactor preserves the annotation database, JSON format, extension identity,
+permissions and runtime dependencies. Compared with the pre-refactor source
+`301819d`, the three entry files are now 30 lines (`controller.ts`), 188 lines
+(`PdfReader.tsx`) and 238 lines (`ManagementApp.tsx`). The content engine has eight
+classes, the reader has 11 custom hooks and 13 UI components, and management has
+three screens. These are ownership boundaries; line counts alone do not measure
+maintainability. A source traversal found no cycles among static runtime imports.
+
+PDF callbacks increased from 3 to 26, and memoized derived values from 6 to 9.
+The counts come from parsed call expressions, rather than comments or string
+matches. Stable actions retain session/intent checks; a callback from an old
+document cannot write to a new session, including one with the same content hash.
+`PdfPage` and `PdfNote` use React's default shallow memo comparison. Per-note
+bindings stay stable without ignoring changed records, callbacks or revisions.
+
+The render tests invoke real production component functions and hooks in jsdom;
+only external browser/message boundaries are faked. Counts exclude mounting.
+
+| Tested update | Before | After |
+| --- | ---: | ---: |
+| Open notes: PDF page executions (`301819d`) | 2 | 0 |
+| Edit a draft: PDF page executions (`301819d`) | 1 | 0 |
+| Change native-note filter: PDF page executions (`301819d`) | 2 | 0 |
+| Show a notice: PDF page executions (`301819d`) | 1 | 0 |
+| Edit one of three notes: note executions (`4dd631d`) | 3 | 1 |
+| Type in that note: note executions (`4dd631d`) | 3 | 1 |
+| Change theme: unrelated library executions (`4dd631d`) | 1 | 0 |
+| Type a library draft: unrelated settings executions (`4dd631d`) | 1 | 0 |
+| Display then dismiss export failure: unrelated library/settings executions (`4dd631d`) | 2 each | 0 each |
+| Change tag filter: runtime listener registrations (`4dd631d`) | 4 → 5 | 4 → 4 |
+
+These deterministic workloads demonstrate fewer redundant executions. Single-run
+jsdom elapsed times do not establish a browser latency improvement. Reproduce the
+counts with `npm test -- tests/pdf-reader-ui.test.ts
+tests/management-dependencies.test.ts --silent=false`.
+
+### Management dependency audit
+
+The original planning estimate of 68 hooks was inaccurate. The parsed
+`301819d:src/ui/ManagementApp.tsx` has 65 calls: 35 state, 16 ref, seven effect,
+two layout-effect, four callback and one custom query-hook call. Thirteen sites
+have dependency arrays. The table maps every original site to its current owner;
+paths below are relative to `src/ui`.
+
+| Original line and role | Current owner | Dependency and lifecycle contract |
+| --- | --- | --- |
+| 141, selection preference listener | `hooks/useManagementSettings.ts` | Mount once; version/inactive guards reject late reads; remove storage listener. |
+| 162, preset leave guard | `screens/SettingsScreen.tsx` | Mount once; read current dirty/saving refs; remove beforeunload handler. Hidden screens stay mounted. |
+| 170, theme layout | `hooks/useManagementSettings.ts` | React only to theme; no subscription. |
+| 190, document observer | `hooks/useTabObserver.ts` | Stable callback reads/writes current document ref and increments document version. |
+| 200, page-state callback | `hooks/useTabObserver.ts` | Mode dependency; explicit tab/URL plus request/version guards reject stale replies. |
+| 240, page-state effect | `hooks/useTabObserver.ts` | Current mode, URL, tab, manual-selection policy and page-state callback. |
+| 244, context refresh | `hooks/useTabObserver.ts` | Mode and stable context/settings callbacks; request ID rejects superseded async results. |
+| 295, initial context effect | `hooks/useTabObserver.ts` | Refresh callback dependency; same async guards. |
+| 298, close menu | `screens/PageScreen.tsx` | Stable callback restores focus using the current trigger ref. |
+| 302, menu listeners | `screens/PageScreen.tsx` | Menu state and close callback; remove Escape/outside-pointer listeners. |
+| 319, tab listeners | `hooks/useTabObserver.ts` | Mode and document/context callbacks; current tab ref filters events; remove both listeners. |
+| 344, combined runtime listener | Four controller hooks | Settings: stable receiver and pending-write refs. PDF progress: current mode/tab and pending ref. Context: current mode/tab/URL and refresh callbacks. Annotations: stable query callbacks and latest filter ref. Each branch removes its listener. |
+| 778, detail scroll restoration | `screens/LibraryScreen.tsx` | Detail state; consume and clear the captured scroll position. |
+
+The combined listener now occupies four dependency sites, so these mappings cover
+16 current sites. Two existing extracted sites cover the stable settings receiver
+and document-version error reset. Seven new memo factories cover the four hook
+snapshots and three context values. Each lists its captured state/callback inputs;
+root error/notice state is excluded from library/settings contexts. React setters
+and refs retain their stable identities. This yields 25 arrays in the extracted
+management tree. The unchanged `management/useAnnotationQuery.ts` adds three:
+stable cancellation, ref-backed loading and a key/cancel/load layout effect with
+debounce cancellation. All 28 arrays were audited.
+
+`tests/management-dependencies.test.ts` checks current filters after notifications,
+new tab/URL identity, listener counts, single PDF-sidebar ownership and unmount
+cleanup. Existing management tests retain drafts, expected-revision conflict
+handling, pending settings writes and stale-context rejection.
+
+### Coverage, malformed files and performance gates
+
+The full source/entrypoint coverage run passes with 87.48% lines, 84.40%
+statements, 84.67% functions and 78.75% branches. CI now requires at least 85%
+line coverage; the other gates are unchanged. Ten small, authored PDF files cover
+independent catalog, page-tree, object-header, stream-length and xref defects.
+Seven must fail visibly; three must safely recover their expected text. Unit
+tests use real PDF.js, and browser regressions use the reader, verify annotation
+state and open a healthy file afterwards. Password-protected files remain a
+separate case and are not counted among the ten corruption samples.
+
+`npm run test:benchmark` retains at least 30 post-warmup samples per producer run
+and the canvas/worker checks. With `WEB_INK_BENCHMARK_BASELINE` set, it runs the
+baseline and candidate in the fixed order A → B → B → A. Both independent rounds
+contribute all their samples, giving 60 samples per version and metric, without
+trimming, choosing the fastest round or retrying a failing metric. Each P95 may
+increase by at most the larger of 20% or 2 ms. It rejects different browsers,
+fixtures, query API/count workloads, PDF sizes/pages and sample counts. Resource
+limits apply to every round. Raw synthetic reports are printed before validation
+so a failed gate retains the underlying samples. CI builds the pinned
+pre-refactor `301819d` and uses the current producer for both versions.
+The latency gate evaluates the pooled distribution; a passing aggregate does not
+establish that each round's separate P95 met the same limit.
+
+The initial A → B CI protocol failed at capture/save (12.30 ms versus a 12.12 ms
+limit) and, on one unchanged-commit retest, absent search (222.80 ms versus
+191.64 ms). No source-level cause was established. The fixed-order runs did not
+retain raw samples on failure. Counterbalancing and preserving samples correct
+those measurement limitations; they do not establish a runtime speedup or remove
+all shared-host variation. The thresholds remain unchanged, and the extra rounds
+roughly double benchmark work. Tool tests still reject genuine aggregate timing
+regressions, mismatched workloads and a resource violation in either round.
+
+The first ABBA CI run passed the webpage gates but failed the 500-page jump
+(30.40 ms against a 29.28 ms limit). Inspection then found a separate benchmark
+error: repeated opens could restore the last-page position, and the jump check
+accepted a target that was already rendered. A 12-iteration diagnostic for both
+long documents and both builds reproduced that mixture. Explicit `page=1`
+removed it in the controlled comparison. This does not identify the cause of
+the CI overrun; it establishes that those samples did not consistently measure
+the intended first-page-to-last-page operation.
+
+PDF iterations now explicitly open page 1 and include page-1 readiness in the
+open interval. Immediately before starting the jump timer, they record and
+assert page 1 ready, toolbar page 1, and an unmounted, unready last-page target.
+The actual page-number input and target rendering remain inside the interval.
+Every long-document round retains 30 `jumpInitialStates`; the pooled result
+retains all 60 and rejects restored-page or already-mounted-target samples.
+Earlier refactor PDF timings in this section are superseded by the controlled
+measurements below. Chrome 125/120 checks precede performance in CI so an
+independent performance failure no longer skips compatibility evidence; every
+gate remains required with the same job timeout.
+
+The local counterbalanced run used Chromium 153.0.8010.12, Node 26.5.0 and the
+same Apple M4 Pro described below. Each row pools 60 measured samples per version,
+after each producer's warmups. Runtime source is unchanged since `e70096b`;
+subsequent fixture assertions, benchmark tooling and this section do not change
+runtime behavior. All rows pass the relative budget. Long-document startup and
+jumps are slower in this run; no PDF speedup is claimed.
+
+| P95, milliseconds | `301819d` | Refactored runtime |
+| --- | ---: | ---: |
+| Restore 200 webpage annotations | 32.9 | 31.5 |
+| Selection to saved highlight | 6.6 | 7.0 |
+| Library first paint / first-page query | 46.9 / 1.3 | 42.4 / 1.2 |
+| Sparse / absent / tag search | 31.9 / 66.0 / 34.6 | 31.7 / 60.7 / 33.0 |
+| 20 MiB PDF open | 282.3 | 281.9 |
+| 50 MiB PDF open | 529.9 | 534.2 |
+| 500-page PDF open / last-page jump | 132.5 / 32.3 | 134.1 / 35.2 |
+| 1,000-page PDF open / last-page jump | 133.7 / 32.0 | 138.6 / 37.2 |
+
+The PDF runs retain at most three visible canvases and observe zero page workers
+after reader teardown. Main-page retained JS heap stays within about 2.68 MB at
+P95 in these samples. This is a repeated-navigation page-resource check, excluding
+worker-process, GPU and whole-browser memory; it does not prove absence of all
+leaks. Reproduce with a separately built `301819d` runtime:
+
+```bash
+WEB_INK_BENCHMARK_BASELINE=/path/to/baseline/chrome-mv3 npm run test:benchmark
+```
+
 ## PDF remote startup follow-up (2026-10-11)
 
 Baseline `4e74a0f` and the source hashes in

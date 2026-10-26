@@ -1,4 +1,5 @@
-import { PdfNote } from "../PdfNote";
+import { useCallback, type ComponentProps } from "react";
+import { PdfNote, type PdfNoteDraft } from "../PdfNote";
 import { NativePdfNote, PdfAnnotationFilters } from "../../ui/PdfSidebar";
 import { errorText } from "../types";
 import { Icon } from "../../ui/management/helpers";
@@ -20,6 +21,22 @@ type Props = {
     "updateDraft"
   >;
 };
+
+// Bind row-specific arguments where React can preserve their identity. PdfNote
+// uses normal memo comparison, so a changed callback still reaches its editor.
+type InlineNoteProps = Omit<ComponentProps<typeof PdfNote>, "onJump" | "onSave" | "onDraft" | "onClearDraft"> &
+  Pick<Props["actions"], "jump" | "saveNote" | "updateDraft">;
+
+function InlinePdfNote({ record, jump, saveNote, updateDraft, ...props }: InlineNoteProps) {
+  const onJump = useCallback(() => jump(record.target.pageNumber), [jump, record.target.pageNumber]);
+  const onSave = useCallback((draft: PdfNoteDraft) => saveNote(record.id, draft), [saveNote, record.id]);
+  const onDraft = useCallback(
+    (draft: PdfNoteDraft, resolveConflict?: boolean) => updateDraft(record.id, draft, resolveConflict),
+    [updateDraft, record.id],
+  );
+  const onClearDraft = useCallback(() => updateDraft(record.id), [updateDraft, record.id]);
+  return <PdfNote {...props} record={record} onJump={onJump} onSave={onSave} onDraft={onDraft} onClearDraft={onClearDraft} />;
+}
 
 export function PdfInlineNotesPanel({ state, actions }: Props) {
   const {
@@ -46,12 +63,12 @@ export function PdfInlineNotesPanel({ state, actions }: Props) {
       {!nativeLoading && nativeProgress && nativeProgress.completed < nativeProgress.total &&
         <button onClick={() => void scanOriginalNotes()}>{t("继续读取原文件标注", "Continue reading original annotations")}</button>}
     </>}
-    {nativeFilter !== "original" && [...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <PdfNote key={record.id} record={record} language={language}
-      onJump={() => jump(record.target.pageNumber)} onSave={(draft) => saveNote(record.id, draft)} onRemove={remove}
+    {nativeFilter !== "original" && [...deletedDrafts.map((draft) => draft.base), ...sortedNotes.slice(0, notesLimit)].map((record) => <InlinePdfNote key={record.id} record={record} language={language}
+      jump={jump} saveNote={saveNote} updateDraft={updateDraft} onRemove={remove}
       removing={removing} saving={noteSaving === record.id} conflict={noteConflicts[record.id] === true}
       locked={leaving || guardSaving || writeCount > 0 || !!unsaved} draft={noteDrafts[record.id]}
       deleted={!savedIds.has(record.id)}
-      onDraft={(draft, resolveConflict) => updateDraft(record.id, draft, resolveConflict)} onClearDraft={() => updateDraft(record.id)} />)}
+      />)}
     {nativeFilter !== "web-ink" && nativeWindow.records.map((record) => <NativePdfNote key={record.key} record={record} language={language}
       onJump={() => void focusOriginalNote(record).catch((cause) => setNativeError(errorText(cause)))} />)}
     {nativeFilter !== "web-ink" && <div className="pdf-annotation-filters">
