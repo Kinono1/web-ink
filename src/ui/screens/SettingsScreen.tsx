@@ -4,12 +4,12 @@ import { request } from "../../core/client";
 import type { BackupEnvelope, ImportPreview } from "../../core/model";
 import { readAnnotationPresets, saveAnnotationPresets, type AnnotationPreset } from "../../core/annotation-presets";
 import { AnnotationPresetEditor } from "../AnnotationPresets";
-import { useManagementContext } from "../contexts/ManagementContext";
+import { useSettingsContext } from "../contexts/ManagementContext";
 import { SettingsView } from "../management/components";
 import { download } from "../management/helpers";
 
 export function SettingsScreen({ visible }: { visible: boolean }) {
-  const { preferences, annotations: { loadRecords }, setError, setNotice } = useManagementContext();
+  const { preferences, loadRecords, setError, setNotice } = useSettingsContext();
   const { settings, language, t, saveSettings, selectionToolbarEnabled,
     selectionToolbarSaving, toggleSelectionToolbar } = preferences;
   const [presetEditor, setPresetEditor] = useState<AnnotationPreset[]>();

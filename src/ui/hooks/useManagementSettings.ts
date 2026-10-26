@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useMemo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { request, releaseChromeListener } from "../../core/client";
 import { DEFAULT_SETTINGS, type Settings } from "../../core/model";
 import {
@@ -66,63 +66,65 @@ export function useManagementSettings(setError: (message: string) => void) {
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
   }, [receiveSettings]);
-  const saveSettings = (patch: Partial<Settings>) => {
-    const next = { ...settingsRef.current, ...patch };
-    const version = ++settingsVersion.current;
-    settingsRef.current = next;
-    pendingSettings.current++;
-    setSettings(next);
-    settingsQueue.current = settingsQueue.current
-      .catch(() => undefined)
-      .then(async () => {
-        try {
-          const saved = await request<Settings>({
-            type: "settings.put",
-            settings: next,
-          });
-          if (version === settingsVersion.current) {
-            settingsRef.current = saved;
-            setSettings(saved);
+  return useMemo(() => {
+    const saveSettings = (patch: Partial<Settings>) => {
+      const next = { ...settingsRef.current, ...patch };
+      const version = ++settingsVersion.current;
+      settingsRef.current = next;
+      pendingSettings.current++;
+      setSettings(next);
+      settingsQueue.current = settingsQueue.current
+        .catch(() => undefined)
+        .then(async () => {
+          try {
+            const saved = await request<Settings>({
+              type: "settings.put",
+              settings: next,
+            });
+            if (version === settingsVersion.current) {
+              settingsRef.current = saved;
+              setSettings(saved);
+            }
+          } catch (cause) {
+            if (version === settingsVersion.current)
+              setError(cause instanceof Error ? cause.message : String(cause));
+          } finally {
+            pendingSettings.current--;
           }
-        } catch (cause) {
-          if (version === settingsVersion.current)
-            setError(cause instanceof Error ? cause.message : String(cause));
-        } finally {
-          pendingSettings.current--;
-        }
-      });
-  };
-  const toggleSelectionToolbar = async () => {
-    if (selectionToolbarSaving) return;
-    const next = !selectionToolbarEnabled;
-    const version = ++selectionToolbarVersion.current;
-    setSelectionToolbarSaving(true);
-    try {
-      await writeSelectionToolbarEnabled(next);
-      if (version === selectionToolbarVersion.current)
-        setSelectionToolbarEnabled(next);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSelectionToolbarSaving(false);
-    }
-  };
-  const setOriginPaused = (origin: string | undefined, paused: boolean) => {
-    const origins = settingsRef.current.disabledOrigins;
-    const disabledOrigins = paused
-      ? (origin ? [...origins, origin] : origins)
-      : origins.filter((item) => item !== origin);
-    saveSettings({ disabledOrigins });
-  };
-  return {
-    settings,
-    language: settings.language,
-    t: COPY[settings.language],
-    receiveSettings,
-    saveSettings,
-    setOriginPaused,
-    selectionToolbarEnabled,
-    selectionToolbarSaving,
-    toggleSelectionToolbar,
-  };
+        });
+    };
+    const toggleSelectionToolbar = async () => {
+      if (selectionToolbarSaving) return;
+      const next = !selectionToolbarEnabled;
+      const version = ++selectionToolbarVersion.current;
+      setSelectionToolbarSaving(true);
+      try {
+        await writeSelectionToolbarEnabled(next);
+        if (version === selectionToolbarVersion.current)
+          setSelectionToolbarEnabled(next);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        setSelectionToolbarSaving(false);
+      }
+    };
+    const setOriginPaused = (origin: string | undefined, paused: boolean) => {
+      const origins = settingsRef.current.disabledOrigins;
+      const disabledOrigins = paused
+        ? (origin ? [...origins, origin] : origins)
+        : origins.filter((item) => item !== origin);
+      saveSettings({ disabledOrigins });
+    };
+    return {
+      settings,
+      language: settings.language,
+      t: COPY[settings.language],
+      receiveSettings,
+      saveSettings,
+      setOriginPaused,
+      selectionToolbarEnabled,
+      selectionToolbarSaving,
+      toggleSelectionToolbar,
+    };
+  }, [settings, selectionToolbarEnabled, selectionToolbarSaving, receiveSettings, setError]);
 }

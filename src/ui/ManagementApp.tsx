@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from "react";
+import { memo, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
 import { formatIeeeDiagnostic } from "../pdf/ieee-status";
 import { installPageTheme } from "./page-theme";
@@ -6,7 +6,7 @@ import { useAnnotationSync } from "./hooks/useAnnotationSync";
 import { useManagementSettings } from "./hooks/useManagementSettings";
 import { usePdfActions, type PdfActions } from "./hooks/usePdfActions";
 import { isPdfSurface, useTabObserver } from "./hooks/useTabObserver";
-import { ManagementContext, useManagementContext } from "./contexts/ManagementContext";
+import { ManagementContext, LibraryContext, SettingsContext, useManagementContext } from "./contexts/ManagementContext";
 import { TabContext, useTabContext } from "./contexts/TabContext";
 import { LibraryScreen } from "./screens/LibraryScreen";
 import { PageScreen } from "./screens/PageScreen";
@@ -24,6 +24,10 @@ export function mountManagementApp(root: HTMLElement, mode: Mode): void {
   createRoot(root).render(<ManagementApp mode={mode} />);
 }
 
+const MemoLibraryScreen = memo(LibraryScreen);
+const MemoSettingsScreen = memo(SettingsScreen);
+const MemoPageScreen = memo(PageScreen);
+
 export function ManagementApp({ mode }: { mode: Mode }) {
   const [screen, setScreen] = useState<Screen>("library");
   const [error, setError] = useState<string>();
@@ -34,11 +38,21 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const { tab, pdfContext, pageUrl, activeDocument, documentVersion } = observer;
   const annotations = useAnnotationSync({ mode, pageUrl, language, setError, setNotice });
   const pdf = usePdfActions({ mode, tab, pdfContext, activeDocument, documentVersion, language, setError });
+  const management = useMemo(() => ({ mode, preferences, annotations, setError, setNotice }),
+    [mode, preferences, annotations]);
+  const library = useMemo(() => ({ language, t: preferences.t, annotations }),
+    [language, preferences.t, annotations]);
+  const settings = useMemo(() => ({ preferences, loadRecords: annotations.loadRecords, setError, setNotice }),
+    [preferences, annotations.loadRecords]);
   return (
-    <ManagementContext.Provider value={{ mode, preferences, annotations, setError, setNotice }}>
-      <TabContext.Provider value={observer}>
-        <ManagementLayout screen={screen} setScreen={setScreen} error={error} notice={notice} pdf={pdf} />
-      </TabContext.Provider>
+    <ManagementContext.Provider value={management}>
+      <LibraryContext.Provider value={library}>
+        <SettingsContext.Provider value={settings}>
+          <TabContext.Provider value={observer}>
+            <ManagementLayout screen={screen} setScreen={setScreen} error={error} notice={notice} pdf={pdf} />
+          </TabContext.Provider>
+        </SettingsContext.Provider>
+      </LibraryContext.Provider>
     </ManagementContext.Provider>
   );
 }
@@ -212,11 +226,11 @@ function ManagementLayout({ screen, setScreen, error, notice, pdf }: {
         />
       ) : null}
       {mode === "sidepanel" ? (
-        <PageScreen visible={hasPermission || isPdfSurface(pdfContext)} pdf={pdf} />
+        <MemoPageScreen visible={hasPermission || isPdfSurface(pdfContext)} pdf={pdf} />
       ) : (
         <>
-          <LibraryScreen visible={hasPermission && screen === "library"} openPdf={openPdf} />
-          <SettingsScreen visible={hasPermission && screen === "settings"} />
+          <MemoLibraryScreen visible={hasPermission && screen === "library"} openPdf={openPdf} />
+          <MemoSettingsScreen visible={hasPermission && screen === "settings"} />
         </>
       )}
     </main>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { RequestError, request, releaseChromeListener } from "../../core/client";
 import type { AnchorState, Language, PageMode, PdfTabContext, Settings } from "../../core/model";
 import { isWebPage, pageKey } from "../../core/url";
@@ -196,66 +196,68 @@ export function useTabObserver({
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
   }, [mode, pageState, pageUrl, refreshContext, tab.id]);
-  const enablePermissions = async () => {
-    try {
-      const granted = await chrome.permissions.request({
-        origins: ["http://*/*", "https://*/*"],
-      });
-      if (!granted)
-        throw new Error(
-          language === "zh-CN"
-            ? "未授予网页访问权限。"
-            : "Page access was not granted.",
-        );
-      await request<boolean>({ type: "permissions.enable" });
-      await refreshContext();
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  const pageAction = async (
-    action: "focus" | "rebind",
-    id?: string,
-  ) => {
-    if (tab.id === undefined) {
-      setError(t.actionUnavailable);
-      return;
-    }
-    try {
-      await request<boolean>({
-        type: "page.action",
-        tabId: tab.id,
-        action,
-        ...(id ? { id } : {}),
-      });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  const toggleCurrentPage = async () => {
-    if (!pageUrl) return;
-    try {
-      await request({ type: "page.mode.put", pageUrl, enabled: !pageEnabled });
-      await pageState(tab.id, pageUrl, contextRequest.current);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    }
-  };
-  return {
-    tab,
-    pdfContext,
-    hasPermission,
-    contextError,
-    setContextError,
-    states,
-    pageEnabled,
-    pageUrl,
-    selectionConnectionVersion,
-    activeDocument,
-    documentVersion,
-    refreshContext,
-    enablePermissions,
-    pageAction,
-    toggleCurrentPage,
-  };
+  return useMemo(() => {
+    const enablePermissions = async () => {
+      try {
+        const granted = await chrome.permissions.request({
+          origins: ["http://*/*", "https://*/*"],
+        });
+        if (!granted)
+          throw new Error(
+            language === "zh-CN"
+              ? "未授予网页访问权限。"
+              : "Page access was not granted.",
+          );
+        await request<boolean>({ type: "permissions.enable" });
+        await refreshContext();
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    const pageAction = async (
+      action: "focus" | "rebind",
+      id?: string,
+    ) => {
+      if (tab.id === undefined) {
+        setError(t.actionUnavailable);
+        return;
+      }
+      try {
+        await request<boolean>({
+          type: "page.action",
+          tabId: tab.id,
+          action,
+          ...(id ? { id } : {}),
+        });
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    const toggleCurrentPage = async () => {
+      if (!pageUrl) return;
+      try {
+        await request({ type: "page.mode.put", pageUrl, enabled: !pageEnabled });
+        await pageState(tab.id, pageUrl, contextRequest.current);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    };
+    return {
+      tab,
+      pdfContext,
+      hasPermission,
+      contextError,
+      setContextError,
+      states,
+      pageEnabled,
+      pageUrl,
+      selectionConnectionVersion,
+      activeDocument,
+      documentVersion,
+      refreshContext,
+      enablePermissions,
+      pageAction,
+      toggleCurrentPage,
+    };
+  }, [tab, pdfContext, hasPermission, contextError, states, pageEnabled, pageUrl, selectionConnectionVersion, documentVersion, refreshContext, pageState, mode, language, setError]);
 }

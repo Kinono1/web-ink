@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from "react";
-import { useManagementContext } from "../contexts/ManagementContext";
+import { useLibraryContext } from "../contexts/ManagementContext";
 import { AnnotationBrowser, Empty, FilterPopover } from "../management/components";
 import { Icon } from "../management/helpers";
 import type { PdfActions } from "../hooks/usePdfActions";
@@ -8,8 +8,7 @@ export function LibraryScreen({ visible, openPdf }: {
   visible: boolean;
   openPdf: PdfActions["openPdf"];
 }) {
-  const { preferences, annotations } = useManagementContext();
-  const { language, t } = preferences;
+  const { language, t, annotations } = useLibraryContext();
   const { records, nextCursor, loading, loadRecords, query, setQuery, kind, setKind,
     color, setColor, tag, setTag, filterOpen, setFilterOpen, filterCount,
     selectedId, setSelectedId, editing, setEditing, drafts, conflicts,
