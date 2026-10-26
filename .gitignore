@@ -50,6 +50,8 @@ web-ink-annotations*.md
 
 # User source documents are never release source
 *.pdf
+# Only the small authored corruption fixtures are source-controlled PDFs.
+!tests/fixtures/pdfs/corrupt/*.pdf
 
 # Generated reproducible build identity
 /public/build-info.json
