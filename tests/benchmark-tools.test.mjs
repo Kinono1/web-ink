@@ -5,6 +5,9 @@ import { aggregateBenchmarkReports, runBenchmarkChecks, validateBenchmark } from
 const samples = () => Array.from({ length: 30 }, (_, i) => i + 1);
 const querySamples = (api = "annotations.query", count = 50) =>
   Array.from({ length: 30 }, (_, i) => ({ ms: i + 1, api, count }));
+const jumpInitialStates = targetPage => Array.from({ length: 30 }, () => ({
+  page: 1, page1Ready: true, targetPage, targetMounted: false, targetReady: false,
+}));
 const webpage = () => ({
   browser: "153.0.8010.12",
   fixture: { characters: 100000, annotations: 200, libraryRecords: 10000 },
@@ -14,8 +17,8 @@ const webpage = () => ({
 const pdf = () => ({ browser: "153.0.8010.12", fixture: "Authored PDF workload", cases: [
   { name: "20MiB", bytes: 20 * 1024 * 1024, pages: 1, open: samples(), maxCanvas: 1, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
   { name: "50MiB", bytes: 50 * 1024 * 1024, pages: 1, open: samples(), maxCanvas: 1, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
-  { name: "500pages", bytes: 50000, pages: 500, open: samples(), jump: samples(), maxCanvas: 3, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
-  { name: "1000pages", bytes: 100000, pages: 1000, open: samples(), jump: samples(), maxCanvas: 3, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
+  { name: "500pages", bytes: 50000, pages: 500, open: samples(), jump: samples(), jumpInitialStates: jumpInitialStates(500), maxCanvas: 3, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
+  { name: "1000pages", bytes: 100000, pages: 1000, open: samples(), jump: samples(), jumpInitialStates: jumpInitialStates(1000), maxCanvas: 3, maxWorkersAfterClose: 0, retainedMainHeapBytes: samples(), observedMainBackingBytes: 100 },
 ] });
 
 test("accepts complete large-document measurements and summarizes measured durations", () => {
@@ -285,4 +288,66 @@ test("rejects ambiguous PDF case names instead of silently selecting one sample 
   for (const report of [first, second])
     report.cases.push({ ...report.cases[0], open: Array(30).fill(100) });
   assert.throws(() => aggregateBenchmarkReports([first, second], "pdf"), /unique|duplicate/i);
+});
+
+test("rejects PDF jump samples starting from a restored page instead of ready page one", () => {
+  for (const mutate of [
+    state => { state.page = 500; },
+    state => { state.page1Ready = false; },
+    state => { state.page = "1"; },
+  ]) {
+    const report = pdf();
+    mutate(report.cases[2].jumpInitialStates[29]);
+    assert.throws(() => validateBenchmark(report, "pdf"), /initial|page 1/i);
+    assert.throws(() => aggregateBenchmarkReports([pdf(), report], "pdf"), /initial|page 1/i);
+  }
+});
+
+test("rejects a ready or mounted PDF jump target and a mismatched target page", () => {
+  for (const mutate of [
+    state => { state.targetReady = true; },
+    state => { state.targetMounted = true; },
+    state => { state.targetPage = 500; },
+    state => { delete state.targetReady; },
+  ]) {
+    const report = pdf();
+    mutate(report.cases[3].jumpInitialStates[0]);
+    assert.throws(() => aggregateBenchmarkReports([pdf(), report], "pdf"), /initial|target/i);
+  }
+});
+
+test("ABBA requires every PDF jump initial state while legacy standalone reports remain readable", () => {
+  for (const mutate of [
+    item => { delete item.jumpInitialStates; },
+    item => { item.jumpInitialStates.pop(); },
+    item => { item.jumpInitialStates.push({ ...item.jumpInitialStates[0] }); },
+  ]) {
+    const report = pdf();
+    mutate(report.cases[2]);
+    assert.throws(() => aggregateBenchmarkReports([report, pdf()], "pdf"), /initial.*(30|sample)|30.*initial/i);
+  }
+  const legacy = pdf();
+  for (const item of legacy.cases) delete item.jumpInitialStates;
+  assert.equal(validateBenchmark(legacy, "pdf")["500pages"].jump.samples, 30);
+});
+
+test("PDF pooling preserves all sixty initial-state observations in round order", () => {
+  const first = pdf(), second = pdf();
+  first.cases[2].jumpInitialStates[0].evidenceMarker = "first";
+  second.cases[2].jumpInitialStates[29].evidenceMarker = "last";
+  const pooled = aggregateBenchmarkReports([first, second], "pdf");
+  const states = pooled.cases[2].jumpInitialStates;
+  assert.equal(states.length, 60);
+  assert.equal(states[0].evidenceMarker, "first");
+  assert.equal(states[59].evidenceMarker, "last");
+  for (const state of states) {
+    assert.equal(state.page, 1);
+    assert.equal(state.page1Ready, true);
+    assert.equal(state.targetPage, 500);
+    assert.equal(state.targetMounted, false);
+    assert.equal(state.targetReady, false);
+  }
+  assert.deepEqual(validateBenchmark(pooled, "pdf")["500pages"].jumpInitialStates, states);
+  assert.equal(first.cases[2].jumpInitialStates.length, 30);
+  assert.equal(second.cases[2].jumpInitialStates.length, 30);
 });

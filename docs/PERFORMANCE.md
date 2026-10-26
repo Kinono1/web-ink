@@ -110,26 +110,46 @@ all shared-host variation. The thresholds remain unchanged, and the extra rounds
 roughly double benchmark work. Tool tests still reject genuine aggregate timing
 regressions, mismatched workloads and a resource violation in either round.
 
+The first ABBA CI run passed the webpage gates but failed the 500-page jump
+(30.40 ms against a 29.28 ms limit). Inspection then found a separate benchmark
+error: repeated opens could restore the last-page position, and the jump check
+accepted a target that was already rendered. A 12-iteration diagnostic for both
+long documents and both builds reproduced that mixture. Explicit `page=1`
+removed it in the controlled comparison. This does not identify the cause of
+the CI overrun; it establishes that those samples did not consistently measure
+the intended first-page-to-last-page operation.
+
+PDF iterations now explicitly open page 1 and include page-1 readiness in the
+open interval. Immediately before starting the jump timer, they record and
+assert page 1 ready, toolbar page 1, and an unmounted, unready last-page target.
+The actual page-number input and target rendering remain inside the interval.
+Every long-document round retains 30 `jumpInitialStates`; the pooled result
+retains all 60 and rejects restored-page or already-mounted-target samples.
+Earlier refactor PDF timings in this section are superseded by the controlled
+measurements below. Chrome 125/120 checks precede performance in CI so an
+independent performance failure no longer skips compatibility evidence; every
+gate remains required with the same job timeout.
+
 The local counterbalanced run used Chromium 153.0.8010.12, Node 26.5.0 and the
 same Apple M4 Pro described below. Each row pools 60 measured samples per version,
 after each producer's warmups. Runtime source is unchanged since `e70096b`;
 subsequent fixture assertions, benchmark tooling and this section do not change
-runtime behavior. All rows pass the relative budget. The 500-page startup is
-slower in this run; no PDF startup speedup is claimed.
+runtime behavior. All rows pass the relative budget. Long-document startup and
+jumps are slower in this run; no PDF speedup is claimed.
 
 | P95, milliseconds | `301819d` | Refactored runtime |
 | --- | ---: | ---: |
-| Restore 200 webpage annotations | 31.7 | 31.8 |
-| Selection to saved highlight | 7.2 | 6.5 |
-| Library first paint / first-page query | 43.4 / 1.3 | 44.6 / 1.2 |
-| Sparse / absent / tag search | 31.7 / 60.0 / 32.3 | 31.8 / 63.1 / 32.7 |
-| 20 MiB PDF open | 282.6 | 282.6 |
-| 50 MiB PDF open | 532.8 | 524.2 |
-| 500-page PDF open / last-page jump | 127.3 / 5.8 | 135.0 / 6.6 |
-| 1,000-page PDF open / last-page jump | 136.4 / 7.1 | 137.0 / 3.9 |
+| Restore 200 webpage annotations | 32.9 | 31.5 |
+| Selection to saved highlight | 6.6 | 7.0 |
+| Library first paint / first-page query | 46.9 / 1.3 | 42.4 / 1.2 |
+| Sparse / absent / tag search | 31.9 / 66.0 / 34.6 | 31.7 / 60.7 / 33.0 |
+| 20 MiB PDF open | 282.3 | 281.9 |
+| 50 MiB PDF open | 529.9 | 534.2 |
+| 500-page PDF open / last-page jump | 132.5 / 32.3 | 134.1 / 35.2 |
+| 1,000-page PDF open / last-page jump | 133.7 / 32.0 | 138.6 / 37.2 |
 
 The PDF runs retain at most three visible canvases and observe zero page workers
-after reader teardown. Main-page retained JS heap stays within about 2.74 MB at
+after reader teardown. Main-page retained JS heap stays within about 2.68 MB at
 P95 in these samples. This is a repeated-navigation page-resource check, excluding
 worker-process, GPU and whole-browser memory; it does not prove absence of all
 leaks. Reproduce with a separately built `301819d` runtime:

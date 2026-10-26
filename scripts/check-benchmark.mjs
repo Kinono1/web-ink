@@ -62,9 +62,19 @@ function measureBenchmark(report, mode) {
       throw Error(`${item.name}: canvas count exceeds the virtual-page resource bound`);
     if (item.maxWorkersAfterClose !== 0)
       throw Error(`${item.name}: PDF worker retained after closing the document`);
+    if (item.jumpInitialStates !== undefined) {
+      if (!Array.isArray(item.jumpInitialStates) || item.jumpInitialStates.length !== item.jump?.length)
+        throw Error(`${item.name}: PDF jump initial-state sample count must match jump samples`);
+      for (const state of item.jumpInitialStates) {
+        if (!state || state.page !== 1 || state.page1Ready !== true || state.targetPage !== item.pages ||
+            state.targetMounted !== false || state.targetReady !== false)
+          throw Error(`${item.name}: PDF jump initial state requires ready page 1 and an unmounted, unready target matching the fixture page count`);
+      }
+    }
     return [item.name, {
       open: summarize(item.open, `${item.name}.open`),
       ...(item.pages > 1 ? { jump: summarize(item.jump, `${item.name}.jump`) } : {}),
+      ...(item.jumpInitialStates !== undefined ? { jumpInitialStates: item.jumpInitialStates } : {}),
       maxCanvas: item.maxCanvas,
       maxWorkersAfterClose: item.maxWorkersAfterClose,
       retainedMainHeapBytes: summarize(item.retainedMainHeapBytes, `${item.name}.retainedMainHeapBytes`),
@@ -107,6 +117,8 @@ export function aggregateBenchmarkReports(reports, mode) {
       Object.values(measurements).flatMap(item => [item.open, item.jump, item.retainedMainHeapBytes].filter(Boolean));
     if (summaries.some(summary => summary.samples !== 30))
       throw Error("Each independent report must contain exactly 30 post-warmup samples per metric");
+    if (mode === "pdf" && report.cases.some(item => item.pages > 1 && item.jumpInitialStates === undefined))
+      throw Error("Each independent PDF jump report requires 30 initial-state samples");
   }
   const pooled = { browser: first.browser, fixture: first.fixture };
   if (mode === "v03") {
@@ -120,7 +132,10 @@ export function aggregateBenchmarkReports(reports, mode) {
       return {
         name, pages, bytes,
         open: rounds.flatMap(item => item.open),
-        ...(pages > 1 ? { jump: rounds.flatMap(item => item.jump) } : {}),
+        ...(pages > 1 ? {
+          jump: rounds.flatMap(item => item.jump),
+          jumpInitialStates: rounds.flatMap(item => item.jumpInitialStates),
+        } : {}),
         retainedMainHeapBytes: rounds.flatMap(item => item.retainedMainHeapBytes),
         maxCanvas: Math.max(...rounds.map(item => item.maxCanvas)),
         maxWorkersAfterClose: Math.max(...rounds.map(item => item.maxWorkersAfterClose)),
