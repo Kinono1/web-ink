@@ -11,7 +11,13 @@ beforeAll(async () => {
   api = await import("pdfjs-dist/legacy/build/pdf.mjs");
 });
 
-async function readFirstPageText(bytes: Uint8Array): Promise<string> {
+type PdfInspection =
+  | { stage: "load" | "page" | "text"; message: string }
+  | { stage: "recovered"; text: string };
+
+const messageFor = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
+
+async function inspectPdf(bytes: Uint8Array): Promise<PdfInspection> {
   const task = api.getDocument({
     data: new Uint8Array(bytes),
     stopAtErrors: true,
@@ -19,10 +25,24 @@ async function readFirstPageText(bytes: Uint8Array): Promise<string> {
     standardFontDataUrl: `${path.resolve("node_modules/pdfjs-dist/standard_fonts")}/`,
   });
   try {
-    const document = await task.promise;
-    const page = await document.getPage(1);
-    const text = await page.getTextContent();
-    return text.items.map(item => "str" in item ? item.str : "").join("");
+    let document: Awaited<typeof task.promise>;
+    try {
+      document = await task.promise;
+    } catch (cause) {
+      return { stage: "load", message: messageFor(cause) };
+    }
+    let page: Awaited<ReturnType<typeof document.getPage>>;
+    try {
+      page = await document.getPage(1);
+    } catch (cause) {
+      return { stage: "page", message: messageFor(cause) };
+    }
+    try {
+      const text = await page.getTextContent();
+      return { stage: "recovered", text: text.items.map(item => "str" in item ? item.str : "").join("") };
+    } catch (cause) {
+      return { stage: "text", message: messageFor(cause) };
+    }
   } finally {
     await task.destroy();
   }
@@ -44,10 +64,13 @@ describe("authored corrupt PDF fixtures", () => {
   for (const fixture of corruptPdfCases) {
     it(`has the declared PDF.js ${fixture.outcome} outcome for ${fixture.id}`, async () => {
       const bytes = await readCorruptPdfFixture(fixture);
+      const observed = await inspectPdf(bytes);
       if (fixture.outcome === "reject") {
-        await expect(readFirstPageText(bytes)).rejects.toBeInstanceOf(Error);
+        expect(observed.stage).toBe(fixture.failure.stage);
+        expect(observed).not.toHaveProperty("text");
+        if ("message" in observed) expect(observed.message).toMatch(fixture.failure.diagnostic);
       } else {
-        await expect(readFirstPageText(bytes)).resolves.toContain(fixture.expectedText);
+        expect(observed).toEqual({ stage: "recovered", text: expect.stringContaining(fixture.expectedText) });
       }
     });
   }
