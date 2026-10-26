@@ -1,4 +1,5 @@
 import "./notes.css";
+import { memo } from "react";
 import type { Settings } from "../core/model";
 import type { PdfAnnotation } from "./types";
 export type PdfNoteDraft = {
@@ -8,7 +9,7 @@ export type PdfNoteDraft = {
   base: PdfAnnotation;
   editing: boolean;
 };
-export function PdfNote({
+export const PdfNote = memo(function PdfNote({
   record,
   language,
   onJump,
@@ -153,4 +154,4 @@ export function PdfNote({
       )}
     </article>
   );
-}
+});
