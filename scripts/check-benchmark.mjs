@@ -16,6 +16,29 @@ function summarize(values, label) {
   };
 }
 
+function summarizeLibraryQuery(measurements, label) {
+  if (!Array.isArray(measurements) || measurements.length < 30)
+    throw Error(`${label}: at least 30 post-warmup samples required`);
+  for (const measurement of measurements) {
+    if (!measurement || typeof measurement !== "object" || Array.isArray(measurement))
+      throw Error(`${label}: each sample must include duration, API, and count`);
+    if (typeof measurement.ms !== "number" || !Number.isFinite(measurement.ms) || measurement.ms < 0)
+      throw Error(`${label}: durations must be finite nonnegative numbers`);
+    if (!Number.isInteger(measurement.count))
+      throw Error(`${label}: record counts must be integers`);
+    if (measurement.api === "annotations.query") {
+      if (measurement.count !== 50)
+        throw Error(`${label}: annotations.query must return exactly 50 records`);
+    } else if (measurement.api === "annotations.list") {
+      if (measurement.count < 5000)
+        throw Error(`${label}: annotations.list must return at least 5000 records`);
+    } else {
+      throw Error(`${label}: API must be annotations.query or annotations.list`);
+    }
+  }
+  return summarize(measurements.map(measurement => measurement.ms), label);
+}
+
 export function validateBenchmark(report, mode) {
   if (mode === "v03") {
     if (!(report.fixture?.libraryRecords >= 5000))
@@ -23,7 +46,8 @@ export function validateBenchmark(report, mode) {
     if (!(report.fixture?.annotations >= 200) || !(report.fixture?.characters >= 100000))
       throw Error("Webpage benchmark requires 200 anchors on at least 100000 characters");
     return Object.fromEntries([
-      ...["restore", "captureSave", "libraryQuery", "libraryPaint"].map(key => [key, summarize(report[key], key)]),
+      ...["restore", "captureSave", "libraryPaint"].map(key => [key, summarize(report[key], key)]),
+      ["libraryQuery", summarizeLibraryQuery(report.libraryQuery, "libraryQuery")],
       ...["rare", "absent", "tag"].map(key => [`search.${key}`, summarize(report.search?.[key], `search.${key}`)]),
     ]);
   }
