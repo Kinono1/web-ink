@@ -15,7 +15,7 @@ const archiveFiles = Object.fromEntries(Object.entries(files).map(([name, bytes]
 const bytes = await packFiles(archiveFiles);
 verifyArchive(bytes, archiveFiles);
 const name = `web-ink-${pkg.version}-chrome.zip`;
-const releasesDirectory = '.build-output/releases';
+const releasesDirectory = 'releases';
 await mkdir(releasesDirectory, { recursive: true });
 await writeFile(`${releasesDirectory}/${name}`, bytes);
 await writeFile(`${releasesDirectory}/${name}.sha256`, `${digest(bytes)}  ${name}\n`);

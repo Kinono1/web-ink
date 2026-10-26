@@ -43,6 +43,7 @@ web-ink-annotations*.md
 # Distribution binaries belong in GitHub Releases, not the source tree
 *.zip
 *.crx
+/releases/
 
 # Generated PDF.js runtime assets (reproduced from package-lock)
 /public/pdfjs/
