@@ -2,14 +2,14 @@ import { createHash } from 'node:crypto';
 import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const outputDirectory = '.build-output/releases';
+const outputDirectory = 'releases';
 const entries = await readdir(outputDirectory, { withFileTypes: true });
 const archives = entries
   .filter((entry) => entry.isFile() && entry.name.endsWith('.zip'))
   .map((entry) => entry.name)
   .sort((left, right) => left.localeCompare(right));
 
-if (!archives.length) throw new Error('No .build-output/releases/*.zip archive found. Run npm run zip first.');
+if (!archives.length) throw new Error('No releases/*.zip archive found. Run npm run zip first.');
 
 for (const archive of archives) {
   const bytes = await readFile(join(outputDirectory, archive));

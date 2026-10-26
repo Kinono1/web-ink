@@ -1382,3 +1382,153 @@ describe("management UI", () => {
     });
   });
 });
+
+for (const delayed of ["tab query", "PDF context"] as const) {
+  for (const trigger of ["activation", "manual refresh"] as const) {
+    it(`ignores a delayed ${delayed} after a newer ${trigger}`, async () => {
+      const first = { id: 7, windowId: 1, url: "https://example.test/old", title: "Old document" };
+      const latest = { id: 8, windowId: 1, url: "https://example.test/current", title: "Current document" };
+      let activated: TabActivatedListener | undefined;
+      let finish!: (value: unknown) => void;
+      let contextReads = 0;
+      installChrome(message => {
+        if (message.type === "settings.get") return { ok: true, data: settings };
+        if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+        if (message.type === "pdf.context.get") {
+          if (delayed === "PDF context" && ++contextReads === 1)
+            return new Promise(resolve => { finish = resolve; });
+          return { ok: true, data: { tabId: message.tabId, kind: "unavailable", currentReader: false, candidates: [] } };
+        }
+        if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+        if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+        return { ok: true, data: true };
+      }, first, undefined, undefined, listener => { activated = listener; });
+      let tabReads = 0;
+      Object.assign(chrome.tabs, { query: async () => {
+        if (delayed === "tab query" && ++tabReads === 1)
+          return new Promise(resolve => { finish = resolve; });
+        return [delayed === "PDF context" && contextReads === 0 ? first : latest];
+      } });
+      const host = await mount("sidepanel");
+      await act(async () => {
+        if (trigger === "activation") activated!({ tabId: 8, windowId: 1 });
+        else host.querySelector<HTMLButtonElement>('[aria-label="刷新"]')!.click();
+      });
+      expect(host.textContent).toContain("Current document");
+      await act(async () => finish(delayed === "tab query" ? [first] : {
+        ok: true,
+        data: { tabId: 7, url: first.url, kind: "embedded", currentReader: false,
+          candidates: [{ url: "https://example.test/stale.pdf", via: "iframe" }] },
+      }));
+      expect(host.textContent).toContain("Current document");
+      expect(host.textContent).not.toContain("Old document");
+      expect(host.querySelector(".pdf-handoff")).toBeNull();
+    });
+  }
+}
+
+it("reconnects manual selection on refresh while retaining the unsaved note draft", async () => {
+  type PortFixture = { receive?: (message: unknown) => void; disconnect: ReturnType<typeof vi.fn>; posted: Array<{ requestId: string }> };
+  const ports: PortFixture[] = [];
+  const sent = installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
+    if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+    if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+    if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+    return { ok: true, data: true };
+  });
+  Object.assign(chrome.tabs, { connect: () => {
+    const port: PortFixture = { disconnect: vi.fn(), posted: [] };
+    ports.push(port);
+    return {
+      onMessage: { addListener: (listener: (message: unknown) => void) => { port.receive = listener; }, removeListener: () => {} },
+      onDisconnect: { addListener: () => {}, removeListener: () => {} },
+      postMessage: (message: { requestId: string }) => port.posted.push(message),
+      disconnect: port.disconnect,
+    };
+  } });
+  const host = await mount("sidepanel");
+  const selection = { type: "selection", pageUrl: record.pageUrl, status: "ready", token: "first-token", text: "First selection" };
+  await act(async () => ports[0]!.receive!(selection));
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="添加笔记"]')!.click());
+  await act(async () => ports[0]!.receive!({ type: "saved", requestId: ports[0]!.posted[0]!.requestId, annotation: record }));
+  const editor = host.querySelector<HTMLTextAreaElement>("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "Unsaved local note");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="刷新"]')!.click());
+  expect(ports).toHaveLength(2);
+  expect(ports[0]!.disconnect).toHaveBeenCalledOnce();
+  expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Unsaved local note");
+  await act(async () => ports[0]!.receive!({ ...selection, text: "Stale selection" }));
+  expect(host.querySelector(".web-selection")?.textContent).not.toContain("Stale selection");
+  await act(async () => ports[1]!.receive!({ ...selection, token: "fresh-token", text: "Fresh selection" }));
+  expect(host.querySelector(".web-selection")?.textContent).toContain("Fresh selection");
+  expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Unsaved local note");
+  expect(sent.mock.calls.some(([message]) => message.type === "annotations.put")).toBe(false);
+});
+
+it("retains library detail and its unsaved draft across Settings without reading hidden statistics", async () => {
+  const sent = installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
+    if (message.type === "storage.stats") return { ok: false, error: "Fixture unavailable" };
+    return { ok: true, data: true };
+  });
+  const host = await mount("library");
+  expect(sent.mock.calls.some(([message]) => message.type === "storage.stats")).toBe(false);
+  await act(async () => host.querySelector<HTMLButtonElement>(".annotation-row")!.click());
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")].find(button => button.textContent === "笔记")!.click());
+  const editor = host.querySelector<HTMLTextAreaElement>("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "Keep this library draft");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".segmented-control button")].find(button => button.textContent === "设置与数据")!.click());
+  expect(host.querySelector(".library-shell")).toBeNull();
+  expect(sent.mock.calls.some(([message]) => message.type === "storage.stats")).toBe(true);
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".segmented-control button")].find(button => button.textContent === "资料库")!.click());
+  expect(host.querySelector(".annotation-browser.detail-open")).not.toBeNull();
+  expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("Keep this library draft");
+  expect(sent.mock.calls.some(([message]) => message.type === "annotations.put")).toBe(false);
+});
+
+it("retains a conflicting revision-bound draft until the reader explicitly loads the latest base", async () => {
+  let stored: Annotation = record;
+  const sent = installChrome(message => {
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [stored] } };
+    if (message.type === "annotations.put") {
+      if (message.expectedRevision !== stored.revision)
+        return { ok: false, code: "CONFLICT", error: "Changed in another tab" };
+      stored = { ...message.annotation as Annotation, revision: stored.revision + 1 };
+      return { ok: true, data: stored };
+    }
+    return { ok: true, data: true };
+  });
+  const host = await mount("library");
+  await act(async () => host.querySelector<HTMLButtonElement>(".annotation-row")!.click());
+  await act(async () => [...host.querySelectorAll<HTMLButtonElement>(".detail-actions button")].find(button => button.textContent === "笔记")!.click());
+  const editor = host.querySelector<HTMLTextAreaElement>("textarea")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(editor, "My unsaved note");
+    editor.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  stored = { ...record, note: "External note", revision: 2 };
+  const save = () => [...host.querySelectorAll<HTMLButtonElement>(".editor button")].find(button => button.textContent === "保存")!.click();
+  await act(async () => save());
+  expect(host.querySelector(".draft-conflict")).not.toBeNull();
+  expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My unsaved note");
+  expect(stored.note).toBe("External note");
+  expect(sent).toHaveBeenCalledWith(expect.objectContaining({ type: "annotations.put", expectedRevision: 1 }));
+  await act(async () => host.querySelector<HTMLButtonElement>(".draft-conflict button")!.click());
+  expect(host.querySelector(".draft-conflict")).toBeNull();
+  expect(host.querySelector<HTMLTextAreaElement>("textarea")!.value).toBe("My unsaved note");
+  await act(async () => save());
+  expect(sent).toHaveBeenLastCalledWith(expect.objectContaining({ type: "annotations.put", expectedRevision: 2 }));
+  expect(host.querySelector(".editor")).toBeNull();
+  expect(stored.note).toBe("My unsaved note");
+  expect(stored.revision).toBe(3);
+});

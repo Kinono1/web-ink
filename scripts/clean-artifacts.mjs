@@ -2,7 +2,7 @@
 import { lstat, readdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const releasesDirectory = '.build-output/releases';
+const releasesDirectory = 'releases';
 const releaseArtifactPattern = /^web-ink-\d+\.\d+\.\d+-chrome\.zip(?:\.sha256)?$/;
 const maxAgeDays = 7;
 const cutoffTime = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
@@ -10,10 +10,6 @@ const dryRun = process.argv.includes('--dry-run');
 
 let entries;
 try {
-  const buildOutput = await lstat('.build-output');
-  if (!buildOutput.isDirectory()) {
-    throw new Error('Refusing non-directory build output path');
-  }
   const releases = await lstat(releasesDirectory);
   if (!releases.isDirectory()) throw new Error('Refusing non-directory release path');
   entries = await readdir(releasesDirectory, { withFileTypes: true });

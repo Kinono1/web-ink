@@ -233,7 +233,7 @@ test('sharing ZIP extracts into a stable web-ink folder with the complete tested
   const script = fileURLToPath(new URL('../scripts/package-release.mjs', import.meta.url));
   const result = spawnSync(process.execPath, [script], { cwd: repo, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
-  const archive = unpackFiles(await readFile(path.join(repo, '.build-output/releases/web-ink-0.3.1-chrome.zip')));
+  const archive = unpackFiles(await readFile(path.join(repo, 'releases/web-ink-0.3.1-chrome.zip')));
   assert.ok(archive['web-ink/manifest.json'], 'manifest must live in the stable extracted folder');
   assert.ok(Object.keys(archive).every(name => name.startsWith('web-ink/')));
   const contents = Object.fromEntries(Object.entries(archive).map(([name, bytes]) => [name.slice('web-ink/'.length), bytes]));
@@ -287,7 +287,7 @@ test('sealing refuses missing direct and transitive references instead of blessi
 
 test('packaging CLI refuses an incomplete build before overwriting an existing archive', async t => {
   const repo = await fixture(t);
-  const archive = path.join(repo, '.build-output/releases/web-ink-0.3.1-chrome.zip');
+  const archive = path.join(repo, 'releases/web-ink-0.3.1-chrome.zip');
   await mkdir(path.dirname(archive), { recursive: true });
   await writeFile(archive, 'previous verified archive');
   const script = fileURLToPath(new URL('../scripts/package-release.mjs', import.meta.url));
@@ -513,9 +513,9 @@ test('skip-build accepts only a clean matching candidate and leaves the installa
 
 test('artifact cleanup deletes only stale staged archives and preserves installs, backups and profiles', async t => {
   const repo = await fixture(t);
-  const preserved = ['.output/install-backups/keep', '.local-install/backups/keep', '.build-output/releases/notes.txt',
-    '.build-output/native-profile-old/keep', '.build-output/releases/web-ink-0.3.2-chrome.zip'];
-  const stale = ['.build-output/releases/web-ink-0.3.0-chrome.zip', '.build-output/releases/web-ink-0.3.0-chrome.zip.sha256'];
+  const preserved = ['.output/install-backups/keep', '.local-install/backups/keep', 'releases/notes.txt', '.build-output/releases/legacy-keep',
+    '.build-output/native-profile-old/keep', 'releases/web-ink-0.3.2-chrome.zip'];
+  const stale = ['releases/web-ink-0.3.0-chrome.zip', 'releases/web-ink-0.3.0-chrome.zip.sha256'];
   for (const name of [...preserved, ...stale]) {
     await mkdir(path.dirname(path.join(repo, name)), { recursive: true });
     await writeFile(path.join(repo, name), 'keep or intentionally expired');
@@ -582,4 +582,19 @@ test('invalid recovery journal is refused without modifying the installation', a
     await assert.rejects(installRuntime(repo, identity), /journal|changed outside|recovery/i);
     assert.deepEqual(await hashes(target), before);
   }
+});
+
+
+test('checksum CLI verifies the current shared release directory', async t => {
+  const repo = await fixture(t);
+  const directory = path.join(repo, 'releases');
+  await mkdir(directory, { recursive: true });
+  const bytes = Buffer.from('synthetic verified archive');
+  await writeFile(path.join(directory, 'web-ink-0.3.1-chrome.zip'), bytes);
+  const script = fileURLToPath(new URL('../scripts/checksum.mjs', import.meta.url));
+  const result = spawnSync(process.execPath, [script], { cwd: repo, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  const { createHash } = await import('node:crypto');
+  assert.equal(await readFile(path.join(directory, 'web-ink-0.3.1-chrome.zip.sha256'), 'utf8'),
+    `${createHash('sha256').update(bytes).digest('hex')}  web-ink-0.3.1-chrome.zip\n`);
 });

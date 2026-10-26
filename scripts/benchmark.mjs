@@ -132,6 +132,10 @@ async function benchmarkWebpage(temp) {
   const manager = await context.newPage();
   await manager.goto(`chrome-extension://${id}/library.html`);
   await rpc(manager, { type: "permissions.enable" });
+  // Selection tools are opt-in; make the benchmark's capture path explicit.
+  await manager.evaluate(() => chrome.storage.local.set({
+    "ui.selectionToolbarEnabled": true,
+  }));
   await rpc(manager, {
     type: "backup.import",
     backup: {
@@ -513,9 +517,11 @@ async function benchmarkPdf(temp) {
       r.fulfill({ contentType: "application/pdf", body: bytes }),
     );
     const times = [],
-      jumps = [];
+      jumps = [],
+      retainedMainHeapBytes = [];
     let peakBacking = 0,
-      maxCanvas = 0;
+      maxCanvas = 0,
+      maxWorkersAfterClose = 0;
     for (let i = 0; i < 33; i++) {
       await page.getByLabel("公开 PDF 网址").fill(url);
       await page.evaluate(() => {
@@ -552,6 +558,10 @@ async function benchmarkPdf(temp) {
       );
       // Each navigation closes the reader/worker; browser module cache remains warm.
       await page.goto(`chrome-extension://${id}/pdf.html`);
+      maxWorkersAfterClose = Math.max(maxWorkersAfterClose, page.workers().length);
+      await cdp.send("HeapProfiler.collectGarbage");
+      if (i >= 3)
+        retainedMainHeapBytes.push((await cdp.send("Runtime.getHeapUsage")).usedSize);
     }
     report.cases.push({
       name,
@@ -561,6 +571,8 @@ async function benchmarkPdf(temp) {
       openSummary: percentiles(times),
       ...(jumps.length ? { jump: jumps, jumpSummary: percentiles(jumps) } : {}),
       maxCanvas,
+      maxWorkersAfterClose,
+      retainedMainHeapBytes,
       observedMainBackingBytes: peakBacking,
     });
   }

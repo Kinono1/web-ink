@@ -27,7 +27,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run check
-      - run: npm run test
+      - run: npm run test:coverage
       - run: npm run test:skill
       - name: Run bulk correctness tests
         shell: bash
@@ -37,6 +37,7 @@ jobs:
           npm run test:bulk 2>&1 | tee "$RUNNER_TEMP/web-ink-ci-logs/bulk.log"
       - run: npm run build
       - run: npm run test:release
+      - run: npm run test:benchmark:tools
       - run: npx playwright install --with-deps chromium
       - name: Prepare checksum-verified upgrade baseline
         shell: bash
@@ -72,6 +73,7 @@ jobs:
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
+      - run: npm run test:benchmark
       - name: Verify minimum PDF browser (Chrome 125)
         shell: bash
         run: |
@@ -92,7 +94,7 @@ jobs:
       - run: npm run zip
       - run: node scripts/checksum.mjs
       - name: Verify release checksums
-        working-directory: .build-output/releases
+        working-directory: releases
         run: sha256sum -c *.zip.sha256
       - name: Upload failure diagnostics
         if: failure()
@@ -113,5 +115,5 @@ jobs:
           # Only these two explicit patterns are uploaded; other hidden files stay out.
           include-hidden-files: true
           path: |
-            .build-output/releases/web-ink-*-chrome.zip
-            .build-output/releases/web-ink-*-chrome.zip.sha256
+            releases/web-ink-*-chrome.zip
+            releases/web-ink-*-chrome.zip.sha256

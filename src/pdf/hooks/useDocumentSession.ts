@@ -1,0 +1,387 @@
+import { NativePdfAnnotations } from "../native-annotations";
+import { errorText, type OpenDocument } from "../types";
+import { useEffect, useRef, useState } from "react";
+import { request } from "../../core/client";
+import { type Annotation, type AnnotationPage, type PdfHandoff } from "../../core/model";
+import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "../source";
+import { ieeeSourceUrl, IeeePdfError } from "../ieee";
+import { readPreparedPdf } from "../prepared";
+import { isIeeeSessionPage, isIeeePdfWrapper } from "../context";
+import { pdfDisplayName, pdfDoi } from "../metadata";
+import { doiUrl, learnPdfPaperIdentity } from "../paper-identity";
+import { readPdfPaperReopen } from "../paper-reopen";
+import { PdfSession } from "../session";
+import { readPdfReadingPosition, createPdfReadingPositionWriter } from "../reading-position";
+import { isPdf, type PositionSession, safeSource, ieeeRecordSource } from "./reader-utils";
+import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+
+export function useDocumentSessionState() {
+  const [initialParams] = useState(() => new URLSearchParams(location.search));
+  const localFileEntry = initialParams.get("open") === "local";
+  const handoffToken = initialParams.get("handoff");
+  const autoOpenAttempted = useRef(false);
+  const [source, setSource] = useState(initialParams.get("source") || "");
+  const [opened, setOpened] = useState<OpenDocument>();
+  const [paperDoi, setPaperDoi] = useState<string>();
+  const [previousHash, setPreviousHash] = useState<string>();
+  const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
+  const [handoffReady, setHandoffReady] = useState(!handoffToken);
+  const [ieeeRecovery, setIeeeRecovery] = useState<"permission" | "retry" | "return">();
+  const [busy, setBusy] = useState(false);
+  const [documentSession, setDocumentSession] = useState(0);
+  const session = useRef(new PdfSession());
+  const documentSessionRef = useRef(0);
+  return {
+    initialParams, localFileEntry, handoffToken, autoOpenAttempted, source, setSource, opened,
+    setOpened, paperDoi, setPaperDoi, previousHash, setPreviousHash, handoff, setHandoff,
+    handoffReady, setHandoffReady, ieeeRecovery, setIeeeRecovery, busy, setBusy, documentSession,
+    setDocumentSession, session, documentSessionRef,
+  };
+}
+
+type Inputs = Pick<ReaderSnapshot,
+  "autoOpenAttempted" | "dimensions" | "documentSessionRef" | "draftsRef" |
+  "exportController" | "focusAttempt" | "handoff" | "handoffReady" | "handoffToken" |
+  "initialParams" | "intentEpoch" | "intrinsicDimensions" | "nativeFocus" | "nativeHistory" |
+  "nativeScan" | "originalNotes" | "pendingSearchPosition" | "positionSession" | "session" |
+  "setArea" | "setBusy" | "setDocumentSession" | "setError" | "setExportStage" |
+  "setFitWidth" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setHandoff" |
+  "setHandoffReady" | "setIeeeRecovery" | "setNativeError" | "setNativeFilter" |
+  "setNativeLoading" | "setNativeOffset" | "setNativeProgress" | "setNativeRecords" |
+  "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" | "setNotice" | "setOpened" |
+  "setPageNumber" | "setPageWindow" | "setPaperDoi" | "setPicked" | "setPositionEpoch" |
+  "setPositionError" | "setPreviousHash" | "setRotation" | "setSearchMatch" | "setSelection" |
+  "setShowMarks" | "setSource" | "setSourceOpen" | "setUndoRecord" | "setZoom" |
+  "settingsReady" | "source" | "t"
+>;
+
+export function useDocumentSession(
+  state: Inputs,
+  actions: ReaderActionsRef<"updateRecords">,
+) {
+  const {
+    autoOpenAttempted, dimensions, documentSessionRef, draftsRef, exportController,
+    focusAttempt, handoff, handoffReady, handoffToken, initialParams, intentEpoch,
+    intrinsicDimensions, nativeFocus, nativeHistory, nativeScan, originalNotes,
+    pendingSearchPosition, positionSession, session, setArea, setBusy, setDocumentSession,
+    setError, setExportStage, setFitWidth, setFocusBusy, setFocusHint, setFocusMode,
+    setHandoff, setHandoffReady, setIeeeRecovery, setNativeError, setNativeFilter,
+    setNativeLoading, setNativeOffset, setNativeProgress, setNativeRecords, setNoteConflicts,
+    setNoteDrafts, setNotesOpen, setNotice, setOpened, setPageNumber, setPageWindow,
+    setPaperDoi, setPicked, setPositionEpoch, setPositionError, setPreviousHash, setRotation,
+    setSearchMatch, setSelection, setShowMarks, setSource, setSourceOpen, setUndoRecord,
+    setZoom, settingsReady, source, t,
+  } = state;
+
+  useEffect(() => () => {
+    documentSessionRef.current++;
+    void session.current.dispose();
+  }, []);
+
+  useEffect(() => {
+    if (!handoffToken) return;
+    let dead = false;
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(handoffToken)) {
+      setHandoffReady(true);
+      return;
+    }
+    void request<PdfHandoff | null>({ type: "pdf.handoff.get", token: handoffToken })
+      .then((value) => { if (!dead) setHandoff(value?.token === handoffToken ? value : null); })
+      .catch(() => { if (!dead) setHandoff(null); })
+      .finally(() => { if (!dead) setHandoffReady(true); });
+    return () => { dead = true; };
+  }, [handoffToken]);
+
+  useEffect(() => {
+    if (!settingsReady || !handoffReady || autoOpenAttempted.current) return;
+    autoOpenAttempted.current = true;
+    const initialSource = initialParams.get("source");
+    const sessionSource = handoff?.accessMode === "site-session" &&
+      ((!initialParams.get("document") && !initialSource) || initialSource === ieeeRecordSource(handoff.returnUrl));
+    if (sessionSource && handoff) {
+      void loadPdf(undefined, true, handoff.returnUrl, true);
+    } else if (handoffToken && !handoff && initialSource && isIeeeSessionPage(initialSource)) {
+      setIeeeRecovery("return");
+      setError(t("登录读取授权已过期，请返回 IEEE 后重新打开。", "Sign-in access expired. Return to IEEE and open again."));
+    } else if (initialSource && safeSource(initialSource) && isIeeePdfWrapper(initialSource)) {
+      setIeeeRecovery("return");
+      setError(t("请返回 IEEE 原页面，选择「使用 IEEE 登录状态打开」。", "Return to the IEEE paper page and choose Open using IEEE sign-in."));
+    } else if (safeSource(initialParams.get("source") || undefined)) {
+      // A side-panel click starts this handoff. Never request site access from
+      // an effect: if needed, the reader's Open URL button supplies the gesture.
+      void loadPdf(undefined, true);
+    }
+  }, [settingsReady, handoffReady]);
+
+  async function claimIeeeGrant(): Promise<PdfHandoff> {
+    const grant = handoffToken ? await request<PdfHandoff | null>({ type: "pdf.handoff.get", token: handoffToken }) : null;
+    if (!grant || grant.token !== handoffToken || grant.accessMode !== "site-session" ||
+      grant.allowedOrigin !== "https://ieeexplore.ieee.org" || !Number.isFinite(grant.expiresAt) || grant.expiresAt! <= Date.now()) {
+      setIeeeRecovery("return");
+      throw Error(t("登录读取授权已过期，请返回 IEEE 后重新打开。", "Sign-in access expired. Return to IEEE and open again."));
+    }
+    ieeeSourceUrl(grant.returnUrl);
+    if (grant.sourceUrl) ieeeSourceUrl(grant.sourceUrl);
+    return grant;
+  }
+
+  async function loadPdf(file?: File, automatic = false, chosenSource = source, siteSession = false) {
+    const openingParams = new URLSearchParams(location.search);
+    const openingIntent = intentEpoch.current;
+    const chromeVersion = Number(
+      navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/)?.[1] || 0,
+    );
+    if (chromeVersion && chromeVersion < 125) {
+      setError(
+        t(
+          "PDF 阅读需要 Chrome 125 或更高版本。",
+          "PDF reading requires Chrome 125 or later.",
+        ),
+      );
+      return;
+    }
+    let token = 0,
+      signal: AbortSignal | undefined;
+    setError("");
+    setNotice("");
+    setPreviousHash(undefined);
+    setPaperDoi(undefined);
+    setIeeeRecovery(undefined);
+    setBusy(true);
+    // Invalidate every async callback from the currently displayed document
+    // before a new source read can complete.
+    documentSessionRef.current++;
+    exportController.current?.abort();
+    exportController.current = undefined;
+    setExportStage(undefined);
+    nativeScan.current?.abort();
+    nativeScan.current = undefined;
+    originalNotes.current?.dispose();
+    originalNotes.current = undefined;
+    nativeFocus.current = undefined;
+    setNativeRecords([]);
+    setNativeFilter("web-ink");
+    setNativeLoading(false);
+    setNativeProgress(undefined);
+    setNativeError("");
+    setNativeOffset(0);
+    nativeHistory.current = [];
+    positionSession.current?.writer.dispose();
+    positionSession.current = undefined;
+    setOpened(undefined);
+    setSearchMatch(undefined);
+    pendingSearchPosition.current = undefined;
+    setSelection(undefined);
+    setPicked(undefined);
+    setUndoRecord(undefined);
+    actions.current.updateRecords([]);
+    setNoteDrafts({});
+    draftsRef.current = {};
+    setNoteConflicts({});
+    setShowMarks(true);
+    setNotesOpen(false);
+    focusAttempt.current++;
+    setFocusMode(false);
+    setFocusBusy(false);
+    setFocusHint(false);
+    setSourceOpen(false);
+    setPositionError("");
+    setFitWidth(false);
+    intrinsicDimensions.current.clear();
+    setZoom(1);
+    setRotation(0);
+    setPageNumber(1);
+    dimensions.current.clear();
+    setPageWindow({ start: 0, end: 3 });
+    try {
+      const active = await session.current.begin();
+      token = active.token;
+      signal = active.signal;
+      if (!siteSession && handoff?.accessMode === "site-session" && handoffToken) {
+        await request({ type: "pdf.handoff.revoke", token: handoffToken });
+        if (!session.current.isCurrent(token)) return;
+        setHandoff({ ...handoff, expiresAt: 0, sourceUrl: undefined });
+      }
+      let remote: string | undefined;
+      let ieeeGrant: PdfHandoff | null = null;
+      if (!file && siteSession) {
+        ieeeGrant = await claimIeeeGrant();
+        if (!session.current.isCurrent(token)) return;
+        // Download tickets stay in session storage. Records keep only the
+        // observed paper page, with its article identifier when available.
+        remote = ieeeRecordSource(ieeeGrant.returnUrl);
+      }
+      if (!file) {
+        const url = pdfSourceUrl(remote ?? chosenSource.trim());
+        remote = url.href;
+        const origins = [`${url.origin}/*`];
+        if (!(await chrome.permissions.contains({ origins }))) {
+          if (automatic) {
+            if (siteSession) setIeeeRecovery("permission");
+            setNotice(siteSession
+              ? t("需要允许访问 IEEE。点击「允许访问 IEEE 并重试」继续。", "Grant IEEE access with Allow IEEE and retry.")
+              : t("链接已带入。点击「打开网址」授权并读取，或选择本地 PDF。", "Link ready. Click Open URL to grant access, or choose a local PDF."));
+            return;
+          }
+          if (!(await chrome.permissions.request({ origins }))) {
+            if (siteSession) setIeeeRecovery("permission");
+            throw Error(t("未授予网站访问权限。", "Site permission was not granted."));
+          }
+        }
+      }
+      if (ieeeGrant) {
+        // A permission dialog can remain open beyond the ten-minute grant.
+        ieeeGrant = await claimIeeeGrant();
+        if (!session.current.isCurrent(token)) return;
+      }
+      const [bytes, api] = await Promise.all([
+        file ? readLocalPdf(file) : ieeeGrant
+          ? readPreparedPdf(handoffToken!, message => request(message as import('../../core/model').Request), signal)
+          : readRemotePdf(remote!, signal),
+        import("pdfjs-dist/legacy/build/pdf.mjs"),
+      ]);
+      if (!session.current.isCurrent(token)) return;
+      const hash = await pdfHash(bytes);
+      if (!session.current.isCurrent(token)) return;
+      const positionRead = readPdfReadingPosition(hash);
+      api.GlobalWorkerOptions.workerSrc = chrome.runtime.getURL(
+        "/pdfjs/pdf.worker.min.mjs",
+      );
+      const task = api.getDocument({
+        data: bytes,
+        cMapUrl: chrome.runtime.getURL("/pdfjs/cmaps/"),
+        cMapPacked: true,
+        standardFontDataUrl: chrome.runtime.getURL("/pdfjs/standard_fonts/"),
+        wasmUrl: chrome.runtime.getURL("/pdfjs/wasm/"),
+        iccUrl: chrome.runtime.getURL("/pdfjs/iccs/"),
+        enableXfa: false,
+        // Font fallbacks are recoverable; page failures still reject and show an alert.
+        verbosity: api.VerbosityLevel.ERRORS,
+        stopAtErrors: true,
+        maxImageSize: 16777216,
+        canvasMaxAreaInBytes: 67108864,
+      });
+      session.current.setTask(token, task);
+      task.onPassword = () => {
+        if (!session.current.isCurrent(token)) return;
+        setError(
+          t(
+            "加密 PDF 暂不支持，请先解锁文件。",
+            "Encrypted PDFs are not supported; unlock the file first.",
+          ),
+        );
+        void session.current.disposeCurrent();
+      };
+      const pageUrl = `urn:web-ink:pdf:${hash}`;
+      // Read existing records during parsing, but publish only when both are
+      // ready: a faster first paint must not allow editing an incomplete list.
+      const [doc, all] = await Promise.all([
+        task.promise,
+        request<Annotation[]>({ type: "annotations.list", pageUrl }),
+      ]);
+      if (!session.current.isCurrent(token)) return;
+      const sourcePage = remote ? new URL(remote) : undefined;
+      const ieeeName = ieeeGrant && sourcePage?.pathname.toLowerCase() === "/stamp/stamp.jsp"
+        ? `IEEE-${sourcePage.searchParams.get("arnumber") || "paper"}.pdf` : undefined;
+      const fallbackName = file?.name || ieeeName || decodeURIComponent(sourcePage?.pathname.split("/").pop() || "Document.pdf");
+      const metadata = await doc.getMetadata().catch(() => ({}));
+      if (!session.current.isCurrent(token)) return;
+      const fileName = pdfDisplayName(metadata, fallbackName);
+      const doi = pdfDoi(metadata);
+      const tabId = await chrome.tabs.getCurrent().then(tab => tab?.id).catch(() => undefined);
+      const reopen = await readPdfPaperReopen(remote, doi, tabId);
+      if (!session.current.isCurrent(token)) return;
+      setPaperDoi(doi);
+      void learnPdfPaperIdentity(hash, metadata, remote);
+      // Keep the reader URL aligned with the successfully loaded document so
+      // a later library/source handoff cannot reuse a tab showing another PDF.
+      const readerLocation = new URL(location.href);
+      readerLocation.searchParams.set("document", hash);
+      readerLocation.searchParams.delete("open");
+      readerLocation.searchParams.delete("page");
+      if (remote) readerLocation.searchParams.set("source", remote);
+      else readerLocation.searchParams.delete("source");
+      history.replaceState(null, "", readerLocation.href);
+      setSource(remote ?? "");
+      const nativeAnnotations = new NativePdfAnnotations(doc, hash);
+      originalNotes.current = nativeAnnotations;
+      setOpened({
+        document: doc,
+        api,
+        hash,
+        fileName,
+        nativeAnnotations,
+        ...(remote ? { sourceUrl: remote } : {}),
+      });
+      documentSessionRef.current++;
+      setDocumentSession(documentSessionRef.current);
+      actions.current.updateRecords(all.filter(isPdf));
+      setArea(false);
+      const expected = openingParams.get("document") || reopen?.documentHash;
+      const requestedPage = openingParams.get("page") || (reopen ? String(reopen.pageNumber) : null);
+      const explicitPage = requestedPage && /^[1-9]\d*$/.test(requestedPage) && (!expected || expected === hash) && Number(requestedPage) <= doc.numPages
+        ? Number(requestedPage) : undefined;
+      const position: PositionSession = {
+        session: documentSessionRef.current, hash,
+        writer: createPdfReadingPositionWriter(hash), readReady: false, intent: openingIntent,
+      };
+      positionSession.current = position;
+      void positionRead.then((stored) => {
+        if (!session.current.isCurrent(token) || positionSession.current !== position) return;
+        position.readReady = true;
+        if (openingIntent === intentEpoch.current) {
+          const valid = stored && stored.pageNumber <= doc.numPages ? stored : undefined;
+          const target = explicitPage ? { version: 1 as const, pageNumber: explicitPage, pageOffsetRatio: 0,
+            zoom: valid?.zoom ?? 1, rotation: valid?.rotation ?? 0 } : valid;
+          if (target) {
+            position.pending = target;
+            setZoom(target.zoom);
+            setRotation(target.rotation);
+            setPageNumber(target.pageNumber);
+            setPageWindow({ start: Math.max(0, target.pageNumber - 2), end: Math.min(doc.numPages, target.pageNumber + 2) });
+          }
+        }
+        setPositionEpoch((epoch) => epoch + 1);
+      });
+      let changed = !!expected && expected !== hash;
+      let earlierHash: string | undefined;
+      if (remote && !changed) {
+        const citation = doiUrl(doi) || remote;
+        const earlier = await request<AnnotationPage>({
+          type: "annotations.query",
+          query: { text: citation, limit: 50 },
+        });
+        const previous = earlier.items.find(
+          (r) =>
+            isPdf(r) &&
+            (r.target.sourceUrl === citation || r.target.sourceUrl === remote) &&
+            r.target.documentHash !== hash,
+        );
+        if (previous && isPdf(previous)) { changed = true; earlierHash = previous.target.documentHash; }
+      }
+      if (session.current.isCurrent(token) && changed) {
+        const oldHash = expected || earlierHash;
+        if (oldHash && /^[a-f0-9]{64}$/.test(oldHash)) setPreviousHash(oldHash);
+        setNotice(
+          t(
+            "文档版本已变化：旧标注已保留，没有套用到这份文件。",
+            "Document changed: previous annotations are preserved and were not applied to this file.",
+          ),
+        );
+      }
+    } catch (cause) {
+      if (token && session.current.isCurrent(token) && !signal?.aborted) {
+        if (siteSession) {
+          let recovery: "permission" | "retry" | "return" = "return";
+          if (cause instanceof IeeePdfError && cause.reason === "site-permission") recovery = "permission";
+          setIeeeRecovery(recovery);
+        }
+        setError(errorText(cause));
+        await session.current.disposeCurrent();
+      }
+    } finally {
+      if (token && session.current.isCurrent(token)) setBusy(false);
+    }
+  }
+  return { claimIeeeGrant, loadPdf };
+}

@@ -174,7 +174,18 @@ async function openThroughSidepanel(ieee: Page): Promise<void> {
   await expect(action).toBeVisible();
   await expect(action).toHaveText("用 Web Ink 标注当前 PDF");
   await action.click();
-  await expect(ieee).toHaveURL(new RegExp(`^chrome-extension://${extensionId}/pdf\\.html\\?`));
+  try {
+    await expect(ieee).toHaveURL(new RegExp(`^chrome-extension://${extensionId}/pdf\\.html\\?`));
+  } catch (cause) {
+    // Synthetic fixture evidence only. Strip all queries and omit headers/body
+    // so a handoff failure can be located without logging signed source data.
+    console.error("IEEE_HANDOFF_DIAGNOSTIC", JSON.stringify({
+      sourcePath: new URL(ieee.url()).pathname,
+      alerts: await control.locator('[role="alert"]').allTextContents().catch(() => []),
+      requests: requests.map(item => ({ path: new URL(item.url).pathname, type: item.resourceType })),
+    }));
+    throw cause;
+  }
   await expect(ieee.locator(".pdf-page[data-ready=true]").first()).toBeVisible();
 }
 
