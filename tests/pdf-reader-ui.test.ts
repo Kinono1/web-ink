@@ -1,9 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, createElement } from "react";
+import { act, createElement, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DEFAULT_SETTINGS, type Annotation, type PdfHandoff, type Request } from "../src/core/model";
 import type { PdfReadingPosition } from "../src/pdf/reading-position";
 import { rememberPdfPaperReopen } from "../src/pdf/paper-reopen";
+
+import type { PdfPage as PdfPageComponent } from "../src/pdf/PdfPage";
+
+type PdfPageProps = ComponentProps<typeof PdfPageComponent>;
 
 const io = vi.hoisted(() => ({
   hash: "a".repeat(64),
@@ -30,6 +34,29 @@ const exportIo = vi.hoisted(() => ({
 }));
 vi.mock("../src/pdf/export-client", () => ({ exportPdfInWorker: exportIo.writer }));
 vi.mock("../src/pdf/export-verify", () => ({ verifyPdfExport: exportIo.verify }));
+const pageRenderMetrics = vi.hoisted(() => ({
+  renders: [] as Array<{ page: number }>,
+}));
+// PERF HARNESS: invokes the real PdfPage render function directly. If a
+// candidate exports React.memo(PdfPage, compare), re-wrap this counter with
+// the identical comparator so a memo bailout does not increment the metric.
+vi.mock("../src/pdf/PdfPage", async (original) => {
+  const actual = await original<typeof import("../src/pdf/PdfPage")>();
+  const React = await import("react");
+  const exported = actual.PdfPage as unknown as {
+    type?: (props: PdfPageProps) => ReactNode;
+    compare?: ((previous: Readonly<PdfPageProps>, next: Readonly<PdfPageProps>) => boolean) | null;
+  };
+  const render = exported.type ?? actual.PdfPage;
+  function MeasuredPdfPage(props: PdfPageProps) {
+    pageRenderMetrics.renders.push({ page: props.number });
+    return render(props);
+  }
+  const PdfPage = exported.type
+    ? React.memo(MeasuredPdfPage, exported.compare ?? undefined)
+    : MeasuredPdfPage;
+  return { ...actual, PdfPage };
+});
 vi.mock('../src/pdf/ieee', async (original) => {
   const actual = await original<typeof import('../src/pdf/ieee')>();
   return { ...actual, readIeeePdf: async (input: { pageUrl: string; sourceUrl?: string }) => {
@@ -153,6 +180,7 @@ const baseRecord = () => ({
 });
 
 beforeEach(() => {
+  pageRenderMetrics.renders.length = 0;
   host = document.createElement("div");
   document.body.append(host);
   history.replaceState(null, "", "/pdf.html");
@@ -452,6 +480,54 @@ async function selectPage(number = 1) {
   await settle();
 }
 function puts() { return messages.filter((message) => message.type === "annotations.put"); }
+function takePageRenderMetric() {
+  const renders = pageRenderMetrics.renders.splice(0);
+  return {
+    renderInvocations: renders.length,
+    pages: [...new Set(renders.map((render) => `PdfPage:${render.page}`))].sort(),
+  };
+}
+
+it("[perf] reports real PdfPage render invocations for unrelated reader UI and draft updates", async () => {
+  // One visible page keeps the metric stable while retaining the production
+  // PdfPage source, PDF.js mock, rendering, and native-annotation path.
+  io.pageCount = 1;
+  records = [baseRecord()];
+  await mount();
+  const initial = takePageRenderMetric();
+  expect(initial.renderInvocations).toBeGreaterThan(0);
+
+  await openNotes();
+  const notesOpened = takePageRenderMetric();
+
+  await click("编辑");
+  const noteInput = host.querySelector<HTMLTextAreaElement>(".pdf-note-editor textarea")!;
+  await act(async () => {
+    noteInput.value = "Draft-only update";
+    noteInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+  const draftChanged = takePageRenderMetric();
+
+  await click("原文件");
+  const nativeFilterChanged = takePageRenderMetric();
+
+  const zoomInput = host.querySelector<HTMLInputElement>(".pdf-zoom")!;
+  await act(async () => {
+    zoomInput.value = "999%";
+    zoomInput.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+  takePageRenderMetric(); // Input editing is not the notice stage.
+  await act(async () => zoomInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+  await settle();
+  expect(host.textContent).toContain("请输入 10%～500% 的缩放比例。");
+  const noticeShown = takePageRenderMetric();
+
+  const metric = { initial, notesOpened, draftChanged, nativeFilterChanged, noticeShown };
+  process.stdout.write(`PDF_RENDER_BASELINE ${JSON.stringify(metric)}\n`);
+});
+
 it("uses PDF metadata for the reader and new annotations without renaming old records", async () => {
   io.metadataTitle = "A scientific paper";
   io.metadataDoi = "10.1109/TII.2026.3716639";
@@ -1228,6 +1304,50 @@ describe("PDF reader workspace", () => {
     expect(failed.conflicts["saved-highlight"]).toBe(true);
     expect(records[0]!.note).toBe("");
     expect(unloadBlocked()).toBe(true);
+  });
+
+  it("rejects every old-session command after reopening the same PDF bytes", async () => {
+    records = [baseRecord()];
+    const outgoing: any[] = [];
+    const listeners = new Set<(message: any) => void>();
+    Object.assign(chrome.runtime, { id: "test", connect: () => ({
+      postMessage: (message: any) => outgoing.push(message),
+      onMessage: { addListener: (listener: (message: any) => void) => listeners.add(listener), removeListener: (listener: (message: any) => void) => listeners.delete(listener) },
+      onDisconnect: { addListener() {} }, disconnect() {},
+    }) });
+    await mount();
+    const old = outgoing.filter((message) => message.type === "state").at(-1).state;
+    await click("更多");
+    await click("打开其他文件");
+    const input = host.querySelector<HTMLInputElement>('input[type="file"]')!;
+    Object.defineProperty(input, "files", { configurable: true, value: [new File(["%PDF-"], "same-bytes.pdf", { type: "application/pdf" })] });
+    await act(async () => input.dispatchEvent(new Event("change", { bubbles: true })));
+    await settle();
+    const current = outgoing.filter((message) => message.type === "state").at(-1).state;
+    expect(current.pageUrl).toBe(old.pageUrl);
+    expect(current.sessionId).not.toBe(old.sessionId);
+    const draft = { note: "stale session input", tags: "", color: records[0]!.color, base: records[0], editing: true };
+    const commands = [
+      { type: "draft", id: "saved-highlight", draft },
+      { type: "save", id: "saved-highlight" },
+      { type: "remove", id: "saved-highlight" },
+      { type: "focus", id: "saved-highlight" },
+      { type: "filter", filter: "original" },
+      { type: "undo" },
+    ];
+    const before = messages.length;
+    outgoing.length = 0;
+    await act(async () => {
+      for (const [index, command] of commands.entries()) {
+        for (const listener of listeners) listener({ type: "command", commandId: `stale-${index}`, pageUrl: old.pageUrl, sessionId: old.sessionId, command });
+      }
+    });
+    await settle();
+    expect(messages.slice(before).some((message) => message.type.startsWith("annotations."))).toBe(false);
+    expect(outgoing.some((message) => message.ack?.startsWith("stale-"))).toBe(false);
+    expect(unloadBlocked()).toBe(false);
+    expect(host.querySelector(".pdf-mark-menu")).toBeNull();
+    expect(records[0]!.note).toBe("");
   });
 
   it("preserves an older sidebar draft as a conflict before any database write", async () => {
