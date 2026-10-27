@@ -50,6 +50,7 @@ function event() {
 async function setup(mode: "library" | "sidepanel" = "library") {
   let activeTab = { id: 7, windowId: 1, url: "https://example.test/article", title: "Article" };
   let currentSettings = settings;
+  const pageModes = new Map<string, boolean>();
   const messages = event(), activated = event(), updated = event(), storage = event();
   const ports: Array<{ onMessage: ReturnType<typeof event>; onDisconnect: ReturnType<typeof event>; postMessage: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> }> = [];
   const connect = vi.fn(() => {
@@ -62,7 +63,7 @@ async function setup(mode: "library" | "sidepanel" = "library") {
       currentReader: activeTab.url.endsWith(".pdf"), candidates: [],
     } };
     if (message.type === "page.state.get") return { ok: true, data: { pageUrl: activeTab.url, states: [] } };
-    if (message.type === "page.mode.get") return { ok: true, data: { enabled: false } };
+    if (message.type === "page.mode.get") return { ok: true, data: { enabled: pageModes.get(message.pageUrl) ?? false } };
     if (message.type === "page.action") return { ok: false, error: "Focus unavailable" };
     if (message.type === "settings.get") return { ok: true, data: currentSettings };
     if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
@@ -70,16 +71,27 @@ async function setup(mode: "library" | "sidepanel" = "library") {
     if (message.type === "storage.stats") return { ok: false, error: "Stats unavailable" };
     return { ok: true, data: {} };
   });
+  const sendToPage = vi.fn(async (
+    tabId: number,
+    message: { type: string; expectedUrl: string; enabled: boolean },
+    options: { frameId: number },
+  ) => {
+    if (tabId !== activeTab.id || message.expectedUrl !== activeTab.url ||
+        message.type !== "page.mode.set" || typeof message.enabled !== "boolean" || options.frameId !== 0)
+      return { ok: false, error: "The target page changed." };
+    pageModes.set(message.expectedUrl, message.enabled);
+    return { ok: true, data: true };
+  });
   Object.defineProperty(globalThis, "chrome", { configurable: true, value: {
     runtime: { id: "test", connect, sendMessage: send, onMessage: messages, getURL: (path: string) => `chrome-extension://test/${path}` },
-    tabs: { connect, query: vi.fn(async () => [activeTab]), create: vi.fn(), onActivated: activated, onUpdated: updated },
+    tabs: { connect, sendMessage: sendToPage, query: vi.fn(async () => [activeTab]), create: vi.fn(), onActivated: activated, onUpdated: updated },
     permissions: { contains: vi.fn(async () => true), request: vi.fn(async () => true) },
     storage: { local: { get: async () => ({}), set: async () => {} }, onChanged: storage },
   } });
   const host = document.createElement("div"); document.body.append(host); root = createRoot(host);
   await act(async () => root!.render(createElement(ManagementApp, { mode })));
   await settle();
-  return { host, send, messages, activated, updated, storage, connect, ports,
+  return { host, send, sendToPage, messages, activated, updated, storage, connect, ports,
     navigate: async (next: typeof activeTab) => {
       const previousId = activeTab.id; activeTab = next;
       await act(async () => {
@@ -178,15 +190,22 @@ it("does not execute PageScreen or reconnect selection for an unrelated action e
   expect(send.mock.calls.slice(reads).map(([message]) => message.type)).toEqual(["page.action"]);
 });
 it("keeps callbacks current across URL changes, tab activation, language and PDF reader contexts", async () => {
-  const { host, send, navigate, changeSettings, connect, ports } = await setup("sidepanel");
+  const { host, send, sendToPage, navigate, changeSettings, connect, ports } = await setup("sidepanel");
   for (const next of [
     { id: 7, windowId: 1, url: "https://example.test/new", title: "New URL" },
     { id: 8, windowId: 2, url: "https://example.test/other", title: "Other tab" },
   ]) {
     await navigate(next); expect(host.textContent).toContain(next.title);
     expect(send.mock.calls.filter(([message]) => message.type === "annotations.query").at(-1)?.[0].query.pageUrl).toBe(next.url);
-    await act(async () => host.querySelector<HTMLButtonElement>('.page-header button[role="switch"]')!.click());
-    expect(send).toHaveBeenCalledWith({ type: "page.mode.put", pageUrl: next.url, enabled: true });
+    const control = host.querySelector<HTMLButtonElement>('.page-header button[role="switch"]')!;
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    const requests = sendToPage.mock.calls.length;
+    await act(async () => control.click());
+    expect(sendToPage).toHaveBeenCalledTimes(requests + 1);
+    expect(sendToPage).toHaveBeenLastCalledWith(next.id,
+      { type: "page.mode.set", expectedUrl: next.url, enabled: true }, { frameId: 0 });
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.mode.put" }));
     await act(async () => host.querySelector<HTMLButtonElement>(".annotation-row")!.click());
     await click(host, "定位", ".detail-actions button");
     expect(send).toHaveBeenCalledWith({ type: "page.action", tabId: next.id, action: "focus", id: "dependency-note" });

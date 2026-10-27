@@ -26,6 +26,7 @@ export function useTabObserver({
   const [selectionConnectionVersion, setSelectionConnectionVersion] = useState(0);
   const [documentVersion, setDocumentVersion] = useState(0);
   const pageStateVersion = useRef(0);
+  const pageToggleVersion = useRef<number | undefined>(undefined);
   const contextRequest = useRef(0);
   const activeTabId = useRef<number | undefined>(undefined);
   const activeDocument = useRef<{ id?: number; url?: string; version: number }>({ version: 0 });
@@ -234,12 +235,32 @@ export function useTabObserver({
       }
     };
     const toggleCurrentPage = async () => {
-      if (!pageUrl) return;
+      const document = activeDocument.current;
+      if (!pageUrl || tab.id === undefined || !tab.url ||
+          document.id !== tab.id || document.url !== tab.url ||
+          pageToggleVersion.current === document.version) return;
+      const version = document.version;
+      const isCurrent = () => activeDocument.current.version === version;
+      pageToggleVersion.current = version;
       try {
-        await request({ type: "page.mode.put", pageUrl, enabled: !pageEnabled });
+        const response: unknown = await chrome.tabs.sendMessage(tab.id, {
+          type: "page.mode.set", expectedUrl: tab.url, enabled: !pageEnabled,
+        }, { frameId: 0 });
+        if (!isCurrent()) return;
+        if (!response || typeof response !== "object" ||
+            !("ok" in response) || response.ok !== true ||
+            !("data" in response) || response.data !== true) {
+          const message = response && typeof response === "object" &&
+            "error" in response && typeof response.error === "string"
+            ? response.error
+            : language === "zh-CN" ? "未能切换标注，请刷新网页后重试。" : "Could not change annotations. Reload the page and try again.";
+          throw Error(message);
+        }
         await pageState(tab.id, pageUrl, contextRequest.current);
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (pageToggleVersion.current === version) pageToggleVersion.current = undefined;
       }
     };
     return {

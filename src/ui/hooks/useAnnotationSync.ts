@@ -1,6 +1,6 @@
-import { useMemo, useRef, useEffect, useState } from "react";
+import { useMemo, useRef, useEffect, useLayoutEffect, useState } from "react";
 import { request, releaseChromeListener } from "../../core/client";
-import type { Annotation, AnnotationPage, Language } from "../../core/model";
+import type { Annotation, Language } from "../../core/model";
 import { COPY } from "../management/copy";
 import { tagText, parseTags, matchesQuery } from "../management/helpers";
 import type { Draft, FilterKind, Mode, NoticeMessage } from "../management/types";
@@ -27,6 +27,11 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [editing, setEditing] = useState<string>();
   const [conflicts, setConflicts] = useState<Record<string, true>>({});
+  const latestRead = useRef<{ id: string } | undefined>(undefined);
+  useLayoutEffect(() => {
+    latestRead.current = undefined;
+    return () => { latestRead.current = undefined; };
+  }, [editing, selectedId, mode, pageUrl, libraryDocument]);
   const { records, setRecords, nextCursor, loading, loadRecords } =
     useAnnotationQuery(
       { mode, pageUrl: mode === "library" ? libraryDocument : pageUrl, kind, color, tag, query },
@@ -45,12 +50,18 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
     const listener = (message: NoticeMessage) => {
       if (message.type !== "annotations.changed") return;
       if (message.deletedId) {
+        if (latestRead.current?.id === message.deletedId) {
+          latestRead.current = undefined;
+          setError(language === "zh-CN" ? "标注已被删除。" : "The annotation was deleted.");
+        }
         setRecords((current) =>
           current.filter((record) => record.id !== message.deletedId),
         );
         return;
       }
       if (message.annotation) {
+        if (latestRead.current?.id === message.annotation.id)
+          latestRead.current = undefined;
         const { mode, pageUrl, kind, color, tag, query } = activeFilter.current;
         const active = {
           pageUrl: mode === "sidepanel" ? pageUrl : undefined,
@@ -68,13 +79,15 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
         void loadRecords();
         return;
       }
+      // Bulk changes can replace the record without naming its ID.
+      latestRead.current = undefined;
       void loadRecords();
     };
     chrome.runtime.onMessage.addListener(listener);
     return () => {
       releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
     };
-  }, [loadRecords, setRecords]);
+  }, [loadRecords, setRecords, language, setError]);
   return useMemo(() => {
     const startEdit = (record: Annotation) => {
       setEditing(record.id);
@@ -138,17 +151,14 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
     const loadLatest = async (id: string) => {
       const draft = drafts[id];
       if (!draft) return;
+      const read = { id };
+      latestRead.current = read;
       try {
-        const latest = await request<AnnotationPage>({
-          type: "annotations.query",
-          query: {
-            ...(mode === "sidepanel" && pageUrl ? { pageUrl } : {}),
-            text: "",
-            limit: 50,
-            requestId: crypto.randomUUID(),
-          },
+        const record = await request<Annotation | null>({
+          type: "annotations.get",
+          id,
         });
-        const record = latest.items.find((item) => item.id === id);
+        if (latestRead.current !== read) return;
         if (!record)
           throw new Error(
             language === "zh-CN"
@@ -168,7 +178,10 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
           return rest;
         });
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        if (latestRead.current === read)
+          setError(cause instanceof Error ? cause.message : String(cause));
+      } finally {
+        if (latestRead.current === read) latestRead.current = undefined;
       }
     };
     const removeRecord = async (record: Annotation): Promise<boolean> => {

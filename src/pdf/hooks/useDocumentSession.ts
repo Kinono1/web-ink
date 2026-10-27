@@ -2,7 +2,7 @@ import { NativePdfAnnotations } from "../native-annotations";
 import { errorText, type OpenDocument } from "../types";
 import { useEffect, useRef, useState } from "react";
 import { request } from "../../core/client";
-import { type Annotation, type AnnotationPage, type PdfHandoff } from "../../core/model";
+import { type Annotation, type PdfHandoff } from "../../core/model";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "../source";
 import { ieeeSourceUrl, IeeePdfError } from "../ieee";
 import { readPreparedPdf } from "../prepared";
@@ -10,6 +10,7 @@ import { isIeeeSessionPage, isIeeePdfWrapper } from "../context";
 import { pdfDisplayName, pdfDoi } from "../metadata";
 import { doiUrl, learnPdfPaperIdentity } from "../paper-identity";
 import { readPdfPaperReopen } from "../paper-reopen";
+import { findPreviousPdfVersion } from "../previous-version";
 import { PdfSession } from "../session";
 import { readPdfReadingPosition, createPdfReadingPositionWriter } from "../reading-position";
 import { isPdf, type PositionSession, safeSource, ieeeRecordSource } from "./reader-utils";
@@ -345,22 +346,19 @@ export function useDocumentSession(
       });
       let changed = !!expected && expected !== hash;
       let earlierHash: string | undefined;
+      let versionCheckIncomplete = false;
       if (remote && !changed) {
-        const citation = doiUrl(doi) || remote;
-        const earlier = await request<AnnotationPage>({
-          type: "annotations.query",
-          query: { text: citation, limit: 50 },
-        });
-        const previous = earlier.items.find(
-          (r) =>
-            isPdf(r) &&
-            (r.target.sourceUrl === citation || r.target.sourceUrl === remote) &&
-            r.target.documentHash !== hash,
+        const citation = doiUrl(doi);
+        const previous = await findPreviousPdfVersion(
+          hash, citation ? [citation, remote] : [remote], active.signal,
         );
-        if (previous && isPdf(previous)) { changed = true; earlierHash = previous.target.documentHash; }
+        if (!session.current.isCurrent(token)) return;
+        earlierHash = previous.hash;
+        changed = !!earlierHash;
+        versionCheckIncomplete = previous.incomplete;
       }
       if (session.current.isCurrent(token) && changed) {
-        const oldHash = expected || earlierHash;
+        const oldHash = earlierHash || expected;
         if (oldHash && /^[a-f0-9]{64}$/.test(oldHash)) setPreviousHash(oldHash);
         setNotice(
           t(
@@ -368,6 +366,11 @@ export function useDocumentSession(
             "Document changed: previous annotations are preserved and were not applied to this file.",
           ),
         );
+      } else if (session.current.isCurrent(token) && versionCheckIncomplete) {
+        setNotice((notice) => notice || t(
+          "旧版本检查未完成，请到资料库查看之前的标注。旧标注仍按文档隔离保存。",
+          "The previous-version check is incomplete. Check the library for earlier annotations; they remain isolated by document.",
+        ));
       }
     } catch (cause) {
       if (token && session.current.isCurrent(token) && !signal?.aborted) {

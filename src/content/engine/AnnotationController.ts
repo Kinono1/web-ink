@@ -21,6 +21,7 @@ export class AnnotationController {
   stopped: boolean = false;
   disabled: boolean = false;
   disposed: boolean = false;
+  private actionGeneration: number = 0;
   readonly notifications: ReturnType<typeof createNotifications>;
   readonly store: AnnotationStore;
   readonly render: RenderScheduler;
@@ -123,8 +124,23 @@ export class AnnotationController {
   };
 
   private withPageEnabled = async (action: () => void) => {
-    if (!this.modeReady) await this.sync.refresh();
+    const url = pageKey(location.href);
+    const actionGeneration = this.actionGeneration;
+    const pending = !this.modeReady || this.sync.restoreFailed || this.currentUrl !== url
+      ? this.sync.refresh(true)
+      : undefined;
+    const navigationGeneration = this.sync.navigationGeneration;
+    if (pending) await pending;
+    if (
+      this.disposed || this.stopped || this.actionGeneration !== actionGeneration ||
+      this.sync.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
+    ) return;
+    if (!this.modeReady || this.sync.restoreFailed) return;
     if (!this.enabled() && !(await this.changePageMode(true))) return;
+    if (
+      this.disposed || this.stopped || this.actionGeneration !== actionGeneration ||
+      this.sync.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
+    ) return;
     action();
   };
 
@@ -134,7 +150,7 @@ export class AnnotationController {
   ) => {
     if (this.disposed) return;
     if (action === "refresh") {
-      void this.sync.refresh();
+      void this.sync.refresh(true);
       return;
     }
     if (action === "focus") {
@@ -181,6 +197,8 @@ export class AnnotationController {
     }
     if (message.type === "permissions.revoked") {
       this.stopped = true;
+      this.actionGeneration++;
+      this.sync.cancelPendingRefresh();
       this.render.clearText();
       this.mode.exitDrawing();
       this.view.svg.replaceChildren();
@@ -213,6 +231,7 @@ export class AnnotationController {
   stop = () => {
     if (this.disposed) return;
     this.disposed = true;
+    this.actionGeneration++;
     this.events.stop();
     this.sync.dispose();
     this.render.dispose();

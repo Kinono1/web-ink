@@ -8,10 +8,14 @@ const querySamples = (api = "annotations.query", count = 50) =>
 const jumpInitialStates = targetPage => Array.from({ length: 30 }, () => ({
   page: 1, page1Ready: true, targetPage, targetMounted: false, targetReady: false,
 }));
+const restoreInitialStates = () => Array.from({ length: 30 }, () => ({
+  automaticTools: false, pageEnabled: false, paletteEnabled: false, paletteBusy: false, highlightGroups: 0,
+}));
 const webpage = () => ({
   browser: "153.0.8010.12",
   fixture: { characters: 100000, annotations: 200, libraryRecords: 10000 },
-  restore: samples(), captureSave: samples(), libraryQuery: querySamples(), libraryPaint: samples(),
+  restore: samples(), restoreInitialStates: restoreInitialStates(),
+  captureSave: samples(), libraryQuery: querySamples(), libraryPaint: samples(),
   search: { rare: samples(), absent: samples(), tag: samples() },
 });
 const pdf = () => ({ browser: "153.0.8010.12", fixture: "Authored PDF workload", cases: [
@@ -82,6 +86,26 @@ test("paired webpage measurements reject a real p95 latency regression", () => {
   assert.equal(validateBenchmark(candidate, "v03").captureSave.p95, 40);
 });
 
+test("paired restore measurements require a disabled and empty starting state for every sample", () => {
+  const baseline = webpage();
+  for (const mutate of [
+    report => { delete report.restoreInitialStates; },
+    report => { report.restoreInitialStates.pop(); },
+    report => { report.restoreInitialStates[0].automaticTools = true; },
+    report => { report.restoreInitialStates[0].pageEnabled = true; },
+    report => { report.restoreInitialStates[0].paletteEnabled = true; },
+    report => { report.restoreInitialStates[0].paletteBusy = true; },
+    report => { report.restoreInitialStates[0].highlightGroups = 1; },
+  ]) {
+    const candidate = webpage();
+    mutate(candidate);
+    assert.throws(() => validateBenchmark(candidate, "v03", baseline), /restore.*initial/i);
+  }
+  const legacy = webpage();
+  delete legacy.restoreInitialStates;
+  assert.equal(validateBenchmark(legacy, "v03").restore.samples, 30);
+});
+
 test("paired latency comparisons allow twenty percent or two milliseconds of variation", () => {
   const baseline = webpage(), candidate = webpage();
   candidate.restore = Array(30).fill(34.8);
@@ -134,6 +158,7 @@ test("pools every round's raw samples and recomputes all webpage percentiles", (
   first.restoreSummary = { samples: 30, p95: 0 };
   const pooled = aggregateBenchmarkReports([first, second], "v03");
   assert.deepEqual(pooled.restore, [...samples(), ...Array(30).fill(100)]);
+  assert.equal(pooled.restoreInitialStates.length, 60);
   for (const metric of Object.values(validateBenchmark(pooled, "v03"))) {
     assert.equal(metric.samples, 60);
     assert.equal(metric.p95, 100);

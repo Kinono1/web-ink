@@ -53,7 +53,7 @@ export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions
         title={pageUrl ? tab.title || new URL(pageUrl).host : t.unknownPage}
         host={pageUrl ? new URL(pageUrl).host : undefined}
         enabled={pageEnabled}
-        onToggle={selectionToolbarEnabled && !paused ? undefined : toggleCurrentPage}
+        onToggle={toggleCurrentPage}
         toggleLabel={t.showAnnotations}
         disabled={!pageUrl || paused}
       /> : null}

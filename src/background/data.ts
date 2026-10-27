@@ -39,6 +39,7 @@ export interface DataRequestContext {
 
 type KnownMessage =
   | { type: "annotations.list"; pageUrl?: string }
+  | { type: "annotations.get"; id: unknown }
   | { type: "annotations.put"; annotation: unknown; expectedRevision: unknown }
   | { type: "annotations.restore"; annotation: unknown }
   | { type: "annotations.delete"; id: unknown; expectedRevision: unknown }
@@ -91,6 +92,10 @@ function parseMessage(value: unknown): KnownMessage | undefined {
   switch (message.type) {
     case "annotations.list":
       return hasOnly(message, ["type"], ["pageUrl"])
+        ? (message as KnownMessage)
+        : undefined;
+    case "annotations.get":
+      return hasOnly(message, ["type", "id"])
         ? (message as KnownMessage)
         : undefined;
     case "annotations.put":
@@ -237,6 +242,7 @@ function pageRecord(annotation: Annotation, existing?: PageRecord): PageRecord {
     title: annotation.pageTitle,
     updatedAt: annotation.updatedAt,
     ...(existing?.enabled === undefined ? {} : { enabled: existing.enabled }),
+    ...(existing?.modeOverride ? { modeOverride: true } : {}),
   };
 }
 
@@ -266,15 +272,19 @@ async function writeSettings(settings: Settings): Promise<void> {
 
 function effectivePageMode(
   pageUrl: string,
-  manualEnabled: boolean | undefined,
+  page: PageRecord | undefined,
   settings?: Settings,
   automatic = false,
 ): PageMode {
   if (pageUrl.startsWith("urn:web-ink:pdf:"))
-    return { enabled: manualEnabled === true };
+    return { enabled: page?.enabled === true };
   if (settings?.disabledOrigins.includes(new URL(pageUrl).origin))
     return { enabled: false };
-  return { enabled: automatic || manualEnabled === true };
+  return {
+    enabled: page?.modeOverride
+      ? page.enabled === true
+      : automatic || page?.enabled === true,
+  };
 }
 
 async function listAnnotations(pageUrl?: string): Promise<Annotation[]> {
@@ -293,7 +303,7 @@ async function getPageMode(pageUrl: string): Promise<PageMode> {
   if (pageUrl.startsWith("urn:web-ink:pdf:"))
     return effectivePageMode(
       pageUrl,
-      (await getDatabase().pages.get(pageUrl))?.enabled,
+      await getDatabase().pages.get(pageUrl),
     );
   const [page, settings, automatic] = await Promise.all([
     getDatabase().pages.get(pageUrl),
@@ -301,7 +311,7 @@ async function getPageMode(pageUrl: string): Promise<PageMode> {
     readSelectionToolbarEnabled(),
   ]);
   // Reads are deliberately side-effect free: an unopened page stays absent from pages.
-  return effectivePageMode(pageUrl, page?.enabled, settings, automatic);
+  return effectivePageMode(pageUrl, page, settings, automatic);
 }
 
 async function putPageMode(
@@ -310,9 +320,7 @@ async function putPageMode(
 ): Promise<Result<PageMode>> {
   const pdf = pageUrl.startsWith("urn:web-ink:pdf:");
   // Chrome storage must be read before entering the Dexie transaction.
-  const [settings, automatic] = pdf
-    ? [undefined, false]
-    : await Promise.all([readSettings(), readSelectionToolbarEnabled()]);
+  const settings = pdf ? undefined : await readSettings();
   if (enabled && settings?.disabledOrigins.includes(new URL(pageUrl).origin)) {
     return fail("This site is paused and cannot be enabled.", "FORBIDDEN");
   }
@@ -324,13 +332,14 @@ async function putPageMode(
       title: existing?.title ?? "",
       updatedAt: new Date().toISOString(),
       enabled,
+      ...(pdf ? {} : { modeOverride: true }),
     };
     await db.pages.put(stored);
     await applyIncrementalStats({
       ...(existing ? { beforePage: existing } : {}),
       afterPage: stored,
     });
-    return ok(effectivePageMode(pageUrl, enabled, settings, automatic));
+    return ok(effectivePageMode(pageUrl, stored, settings));
   });
 }
 
@@ -595,6 +604,14 @@ export async function handleDataRequest(
     if (!request) return invalid("Unsupported or malformed data request.");
     const ownPage = canonicalContextPage(context);
     switch (request.type) {
+      case "annotations.get": {
+        const forbidden = requireTrusted(context, "read annotations by ID");
+        if (forbidden) return forbidden;
+        const annotation = await getDatabase().annotations.get(
+          validId(request.id),
+        );
+        return ok(annotation ?? null);
+      }
       case "annotations.list": {
         const requested =
           request.pageUrl === undefined

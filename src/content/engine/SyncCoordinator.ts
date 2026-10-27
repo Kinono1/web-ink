@@ -29,17 +29,48 @@ type SyncCoordinatorContext = Pick<
 /** Owns refresh generations, navigation races, and bounded passive retries. */
 export class SyncCoordinator {
   generation: number = 0;
+  navigationGeneration: number = 0;
   presetReadGeneration: number = 0;
   selectionToolbarReadGeneration: number = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   refreshDepth: number = 0;
+  restoreFailed: boolean = false;
+  private interactiveUrl: string | undefined;
+  private currentRefresh: Promise<void> | undefined;
+  private readonly refreshWaiters = new Set<() => void>();
+  private cancellationGeneration: number = 0;
   private passiveRetryCount: number = 0;
   private passiveRetryTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly yieldTimers = new Map<ReturnType<typeof setTimeout>, () => void>();
 
   constructor(private readonly engine: SyncCoordinatorContext) {}
 
-  refresh = async () => {
+  refresh = (interactive = false): Promise<void> => {
+    const pending = this.refreshOnce(interactive);
+    this.currentRefresh = pending;
+    this.wakeRefreshWaiters();
+    if (!interactive) return pending;
+    const cancellationGeneration = this.cancellationGeneration;
+    return (async () => {
+      let latest = pending;
+      while (true) {
+        let wake!: () => void;
+        const changed = new Promise<false>(resolve => {
+          wake = () => resolve(false);
+          this.refreshWaiters.add(wake);
+        });
+        const completed = await Promise.race([latest.then(() => true), changed]);
+        this.refreshWaiters.delete(wake);
+        if (
+          this.cancellationGeneration !== cancellationGeneration ||
+          !this.currentRefresh || (completed && this.currentRefresh === latest)
+        ) return;
+        latest = this.currentRefresh;
+      }
+    })();
+  };
+
+  private refreshOnce = async (interactive: boolean) => {
     const {
       notifications,
       store,
@@ -52,15 +83,22 @@ export class SyncCoordinator {
       enabled,
       label,
     } = this.engine;
-    if (this.engine.disposed) return;
+    if (this.engine.disposed || this.engine.stopped) {
+      this.interactiveUrl = undefined;
+      return;
+    }
     const token = ++this.generation;
     const presetReadToken = ++this.presetReadGeneration;
     const toolbarReadToken = ++this.selectionToolbarReadGeneration;
     this.refreshDepth++;
     let requestedUrl = this.engine.currentUrl;
+    let confirmedDisabled = false;
     try {
       const nextUrl = pageKey(location.href);
+      if (interactive) this.interactiveUrl = nextUrl;
+      else if (this.interactiveUrl !== nextUrl) this.interactiveUrl = undefined;
       if (nextUrl !== this.engine.currentUrl) {
+        this.navigationGeneration++;
         notifications.resetScope();
         this.passiveRetryCount = 0;
         clearTimeout(this.passiveRetryTimer);
@@ -73,6 +111,7 @@ export class SyncCoordinator {
         mode.exitDrawing();
         this.engine.pageEnabled = false;
         this.engine.modeReady = false;
+        this.restoreFailed = false;
         events.mutationObserver.disconnect();
         events.resizeObserver.disconnect();
         save.resetHistory();
@@ -82,7 +121,15 @@ export class SyncCoordinator {
       requestedUrl = this.engine.currentUrl;
       const [newSettings, pageMode, autoToolbar] = await Promise.all([
         request<Settings>({ type: "settings.get" }),
-        request<PageMode>({ type: "page.mode.get", pageUrl: requestedUrl }),
+        request<PageMode>({ type: "page.mode.get", pageUrl: requestedUrl }).then(result => {
+          if (
+            token === this.generation &&
+            !this.engine.disposed &&
+            pageKey(location.href) === requestedUrl
+          )
+            confirmedDisabled = !result.enabled;
+          return result;
+        }),
         readSelectionToolbarEnabled(),
       ]);
       const newPresets = await readAnnotationPresets(newSettings.language);
@@ -117,7 +164,9 @@ export class SyncCoordinator {
         render.transientLayer.replaceChildren();
         mode.exitDrawing();
         interactions.hideSelection();
-        notifications.hide();
+        this.restoreFailed = false;
+        this.interactiveUrl = undefined;
+        notifications.clear("restore");
         store.publishStates();
         return;
       }
@@ -137,6 +186,7 @@ export class SyncCoordinator {
       render.images.clear();
       render.imageLayers.clear();
       if (!enabled()) {
+        this.interactiveUrl = undefined;
         mode.exitDrawing();
         store.publishStates();
         return;
@@ -169,8 +219,15 @@ export class SyncCoordinator {
       render.applyTextStyles();
       store.publishStates();
       render.schedulePaint();
+      this.restoreFailed = false;
+      this.interactiveUrl = undefined;
+      notifications.clear("restore");
     } catch (error) {
       if (this.engine.disposed || token !== this.generation) return;
+      if (this.engine.stopped) {
+        this.interactiveUrl = undefined;
+        return;
+      }
       if (
         (error instanceof RequestError && error.code === "PAGE_CHANGED") ||
         pageKey(location.href) !== requestedUrl
@@ -186,10 +243,13 @@ export class SyncCoordinator {
         }
         return;
       }
-      if (!this.engine.pageEnabled) {
-        this.engine.modeReady = true;
+      if (confirmedDisabled) {
+        this.interactiveUrl = undefined;
         return;
       }
+      this.restoreFailed = true;
+      const repeat = this.interactiveUrl === requestedUrl;
+      this.interactiveUrl = undefined;
       notifications.show(
         label(
           "暂时无法恢复此页标注，可刷新网页重试。",
@@ -197,8 +257,9 @@ export class SyncCoordinator {
         ),
         {
           kind: "error",
-          key: `restore:${error instanceof RequestError ? error.code : "unavailable"}`,
+          key: "restore",
           passive: true,
+          repeat,
           dismissLabel: label("关闭提示", "Dismiss"),
         },
       );
@@ -219,8 +280,21 @@ export class SyncCoordinator {
     }, 250);
   };
 
-  dispose = () => {
+  cancelPendingRefresh = () => {
     this.generation++;
+    this.cancellationGeneration++;
+    this.interactiveUrl = undefined;
+    this.currentRefresh = undefined;
+    this.wakeRefreshWaiters();
+  };
+
+  private wakeRefreshWaiters = () => {
+    for (const wake of this.refreshWaiters) wake();
+    this.refreshWaiters.clear();
+  };
+
+  dispose = () => {
+    this.cancelPendingRefresh();
     clearTimeout(this.refreshTimer);
     clearTimeout(this.passiveRetryTimer);
     for (const [timer, resolve] of this.yieldTimers) {

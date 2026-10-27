@@ -40,6 +40,18 @@ function summarizeLibraryQuery(measurements, label) {
   return summarize(measurements.map(measurement => measurement.ms), label);
 }
 
+function checkRestoreInitialStates(report, required = false) {
+  const states = report.restoreInitialStates;
+  if (states === undefined && !required) return;
+  if (!Array.isArray(states) || states.length !== report.restore?.length)
+    throw Error("restore initial-state sample count must match restore samples");
+  for (const state of states) {
+    if (!state || state.automaticTools !== false || state.pageEnabled !== false ||
+        state.paletteEnabled !== false || state.paletteBusy !== false || state.highlightGroups !== 0)
+      throw Error("restore initial state requires disabled automatic tools, a disabled idle page, and no highlights");
+  }
+}
+
 function measureBenchmark(report, mode) {
   if (mode === "v03") {
     if (!(report.fixture?.libraryRecords >= 5000))
@@ -117,12 +129,13 @@ export function aggregateBenchmarkReports(reports, mode) {
       Object.values(measurements).flatMap(item => [item.open, item.jump, item.retainedMainHeapBytes].filter(Boolean));
     if (summaries.some(summary => summary.samples !== 30))
       throw Error("Each independent report must contain exactly 30 post-warmup samples per metric");
+    if (mode === "v03") checkRestoreInitialStates(report, true);
     if (mode === "pdf" && report.cases.some(item => item.pages > 1 && item.jumpInitialStates === undefined))
       throw Error("Each independent PDF jump report requires 30 initial-state samples");
   }
   const pooled = { browser: first.browser, fixture: first.fixture };
   if (mode === "v03") {
-    for (const key of ["restore", "captureSave", "libraryPaint", "libraryQuery"])
+    for (const key of ["restore", "restoreInitialStates", "captureSave", "libraryPaint", "libraryQuery"])
       pooled[key] = reports.flatMap(report => report[key]);
     pooled.search = Object.fromEntries(["rare", "absent", "tag"].map(key =>
       [key, reports.flatMap(report => report.search[key])]));
@@ -148,8 +161,10 @@ export function aggregateBenchmarkReports(reports, mode) {
 
 export function validateBenchmark(report, mode, baseline) {
   const measurements = measureBenchmark(report, mode);
+  if (mode === "v03") checkRestoreInitialStates(report, Boolean(baseline));
   if (!baseline) return measurements;
   const previous = measureBenchmark(baseline, mode);
+  if (mode === "v03") checkRestoreInitialStates(baseline, true);
   assertSameWorkload(report, baseline, mode);
   const compare = (before, after, label) => {
     if (before.samples !== after.samples) throw Error(`${label}: paired sample counts must match`);

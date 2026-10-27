@@ -11,6 +11,8 @@ export interface NotificationOptions {
   key?: string;
   /** Passive messages come from refresh/recovery rather than an immediate user action. */
   passive?: boolean;
+  /** Allow an explicit retry to report a previously dismissed passive error. */
+  repeat?: boolean;
   /** Sticky messages remain until dismissed or explicitly replaced. */
   sticky?: boolean;
   actions?: NotificationAction[];
@@ -20,6 +22,7 @@ export interface NotificationOptions {
 export interface Notifications {
   show: (message: string, options?: NotificationOptions) => void;
   hide: () => void;
+  clear: (key: string) => void;
   /** Call on a true page/route change so a previously dismissed passive error may appear again. */
   resetScope: () => void;
   dispose: () => void;
@@ -118,13 +121,18 @@ export function createNotifications(container: HTMLElement): Notifications {
     if (active?.passive && active.key) dismissedPassive.add(active.key);
     hide();
   };
+  const clear = (key: string) => {
+    if (active?.key === key) hide();
+    dismissedPassive.delete(key);
+    seenPassive.delete(key);
+  };
   const show = (message: string, options: NotificationOptions = {}) => {
     if (disposed) return;
     const kind = options.kind ?? "info";
     const passive = options.passive === true;
     const sticky = options.sticky === true;
     const key = options.key;
-    if (passive && key && (dismissedPassive.has(key) || seenPassive.has(key)))
+    if (passive && key && !options.repeat && (dismissedPassive.has(key) || seenPassive.has(key)))
       return;
     // A background refresh must never replace the retry/discard affordance of a failed save.
     if (passive && active?.sticky) return;
@@ -185,5 +193,5 @@ export function createNotifications(container: HTMLElement): Notifications {
     hide();
   };
   hide();
-  return { show, hide, resetScope, dispose };
+  return { show, hide, clear, resetScope, dispose };
 }
