@@ -259,7 +259,7 @@ export class SaveCoordinator {
     color: string,
     isCurrent: () => boolean,
   ): Promise<TextAnnotation> => {
-    const { sync, enabled, mode, render, store } = this.engine;
+    const { sync, enabled, mode, render, store, interactions } = this.engine;
     if (!/^#[0-9a-f]{6}$/i.test(color)) throw Error("Choose a six-digit HEX annotation color.");
     if (!this.engine.modeReady) await sync.refresh();
     if (!isCurrent() || this.engine.disposed || pageKey(location.href) !== this.engine.currentUrl)
@@ -284,6 +284,7 @@ export class SaveCoordinator {
           "The annotation was saved, but the page or selection changed. Check the library before retrying.",
         );
       store.applyAnnotationDelta(stored, undefined, stored.pageUrl);
+      interactions.hideSelection();
       return stored;
     } finally {
       this.saving = false;

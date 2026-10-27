@@ -333,7 +333,7 @@ describe('page mode boundary', () => {
   it('inherits enabled reminders for a new webpage without creating a page or stats record', async () => {
     local[SELECTION_TOOLBAR_KEY] = true;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     expect(await db.pages.count()).toBe(0);
     expect(await db.stats.count()).toBe(0);
     expect(local).toEqual({ [SELECTION_TOOLBAR_KEY]: true });
@@ -346,10 +346,10 @@ describe('page mode boundary', () => {
     expect(before).not.toHaveProperty('enabled');
     local[SELECTION_TOOLBAR_KEY] = true;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     local[SELECTION_TOOLBAR_KEY] = false;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.get(pageUrl)).toEqual(before);
     expect(await db.stats.toArray()).toEqual(stats);
     expect(await db.annotations.get('annotation-1')).toMatchObject({ note: 'A note', revision: 1 });
@@ -360,52 +360,52 @@ describe('page mode boundary', () => {
     const disabled = await db.pages.get(pageUrl);
     local[SELECTION_TOOLBAR_KEY] = true;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     expect(await db.pages.get(pageUrl)).toEqual(disabled);
     local[SELECTION_TOOLBAR_KEY] = false;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.get(pageUrl)).toEqual(disabled);
   });
 
   it.each([false, true])('persists an explicit page choice when automatic reminders start at %s', async (automatic) => {
     local[SELECTION_TOOLBAR_KEY] = automatic;
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: false, modeOverride: true });
     db.close();
     await db.open();
     for (const nextAutomatic of [true, false, true]) {
       local[SELECTION_TOOLBAR_KEY] = nextAutomatic;
       expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-        .toEqual({ ok: true, data: { enabled: false } });
+        .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
       expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: otherPageUrl }, { trusted: true }))
-        .toEqual({ ok: true, data: { enabled: nextAutomatic } });
+        .toEqual({ ok: true, data: { enabled: nextAutomatic, selectionToolsEnabled: nextAutomatic } });
     }
     expect(await db.pages.get(otherPageUrl)).toBeUndefined();
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     local[SELECTION_TOOLBAR_KEY] = false;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: true, modeOverride: true });
   });
 
-  it('lets a paused origin override inherited and explicit enabled modes without rewriting either', async () => {
-    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
+  it.each([false, true])('lets a paused origin override inherited and explicit enabled modes with manual tools %s', async (selectionTools) => {
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools }, { trusted: true });
     const saved = await db.pages.get(pageUrl);
     local[SELECTION_TOOLBAR_KEY] = true;
     local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: ['https://example.test'] };
     const fresh = 'https://example.test/new-page';
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: fresh }, { trusted: false, pageUrl: fresh }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.get(pageUrl)).toEqual(saved);
     expect(await db.pages.get(fresh)).toBeUndefined();
     local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: [] };
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
   });
 
   it('keeps reminder fallback off after a preference read error without saving a fallback', async () => {
@@ -418,57 +418,158 @@ describe('page mode boundary', () => {
       },
     });
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.count()).toBe(0);
     expect(await db.stats.count()).toBe(0);
     expect(local).toEqual({});
   });
 
-  it('does not apply webpage reminder fallback to a PDF document identity', async () => {
+  it.each([undefined, false, true])('keeps webpage tool intent out of PDF mode and storage: %s', async (selectionTools) => {
     local[SELECTION_TOOLBAR_KEY] = true;
     const pdfUrl = `urn:web-ink:pdf:${'a'.repeat(64)}`;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: pdfUrl }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: false } });
     expect(await db.pages.count()).toBe(0);
-    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: true }, { trusted: true }))
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: true, ...(selectionTools === undefined ? {} : { selectionTools }) }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: true } });
     expect(await db.pages.get(pdfUrl)).not.toHaveProperty('modeOverride');
-    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: false }, { trusted: true }))
+    expect(await db.pages.get(pdfUrl)).not.toHaveProperty('manualSelectionTools');
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: false, ...(selectionTools === undefined ? {} : { selectionTools }) }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: false } });
     expect(await db.pages.get(pdfUrl)).not.toHaveProperty('modeOverride');
+    expect(await db.pages.get(pdfUrl)).not.toHaveProperty('manualSelectionTools');
+  });
+
+  it.each([
+    { automatic: false, selectionTools: undefined, expected: true },
+    { automatic: false, selectionTools: true, expected: true },
+    { automatic: false, selectionTools: false, expected: false },
+    { automatic: true, selectionTools: undefined, expected: true },
+    { automatic: true, selectionTools: true, expected: true },
+    { automatic: true, selectionTools: false, expected: true },
+  ])('separates explicit selection tools from temporary page enablement: %j', async ({ automatic, selectionTools, expected }) => {
+    local[SELECTION_TOOLBAR_KEY] = automatic;
+    const intent = selectionTools === undefined ? {} : { selectionTools };
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, ...intent }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: expected } });
+    expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: true, modeOverride: true, manualSelectionTools: selectionTools ?? true });
+    db.close();
+    await db.open();
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: expected } });
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: selectionTools !== false } });
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false, ...intent }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
+    local[SELECTION_TOOLBAR_KEY] = true;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
+  });
+
+  it.each([true, undefined])('preserves explicit tools committed before a delayed implicit enable: %s', async (manualSelectionTools) => {
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
+
+    let release = () => {};
+    const paused = new Promise<void>((resolve) => { release = resolve; });
+    let notifyStarted = () => {};
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    const get = chrome.storage.local.get;
+    let blockOnce = true;
+    Object.defineProperty(chrome.storage.local, 'get', {
+      configurable: true,
+      value: async (key: string) => {
+        if (key === 'settings' && blockOnce) {
+          blockOnce = false;
+          notifyStarted();
+          await paused;
+        }
+        return get(key);
+      },
+    });
+    const implicit = handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools: false }, { trusted: true });
+    await started;
+    try {
+      expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools: true }, { trusted: true }))
+        .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
+      if (manualSelectionTools === undefined) {
+        // The older explicit switch stored no tool-intent field.
+        await db.pages.update(pageUrl, { manualSelectionTools: undefined });
+        expect(await db.pages.get(pageUrl)).not.toHaveProperty('manualSelectionTools');
+      }
+    } finally {
+      release();
+    }
+    expect(await implicit)
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
+    expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: true, modeOverride: true, manualSelectionTools: true });
+
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false, selectionTools: false }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools: false }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: false } });
+  });
+
+  it.each([
+    { enabled: true, modeOverride: true as const, expectedEnabled: true, expectedTools: true },
+    { enabled: false, modeOverride: true as const, expectedEnabled: false, expectedTools: false },
+    { enabled: true, expectedEnabled: true, expectedTools: false },
+    { enabled: true, manualSelectionTools: true, expectedEnabled: true, expectedTools: false },
+    { enabled: false, expectedEnabled: false, expectedTools: false },
+  ])('preserves legacy page intent without rewriting records: %j', async ({ expectedEnabled, expectedTools, ...legacy }) => {
+    const stored = { url: pageUrl, title: 'Legacy page', updatedAt: '2026-09-18T00:00:00.000Z', ...legacy };
+    await db.pages.put(stored);
+    local[SELECTION_TOOLBAR_KEY] = false;
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: expectedEnabled, selectionToolsEnabled: expectedTools } });
+    expect(await db.pages.get(pageUrl)).toEqual(stored);
+  });
+
+  it.each([null, 0, 1, 'true', [], {}])('rejects non-boolean selection tool intent without mutation: %j', async (selectionTools) => {
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+    expect(await db.pages.count()).toBe(0);
+    expect(await db.stats.count()).toBe(0);
   });
 
   it('defaults a missing page to disabled without creating a page record', async () => {
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.pages.count()).toBe(0);
   });
 
   it('persists enabled state, allows closing it, and retains existing annotations', async () => {
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     await handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: false, pageUrl });
     expect((await db.pages.get(pageUrl))?.enabled).toBe(true);
 
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await db.annotations.count()).toBe(1);
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
   });
 
-  it.each([false, true])('keeps explicit mode %s and exact page statistics through annotation writes, restores and imports', async (enabled) => {
+  it.each([
+    { enabled: false, selectionTools: false },
+    { enabled: false, selectionTools: true },
+    { enabled: true, selectionTools: false },
+    { enabled: true, selectionTools: true },
+  ])('keeps explicit mode and tool intent through annotation writes, restores and imports: %j', async ({ enabled, selectionTools }) => {
     local[SELECTION_TOOLBAR_KEY] = true;
-    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled }, { trusted: true });
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled, selectionTools }, { trusted: true });
     await handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true });
     const checkPage = async (title: string) => {
       const page = await db.pages.get(pageUrl);
-      expect(page).toMatchObject({ enabled, modeOverride: true, title });
+      expect(page).toMatchObject({ enabled, modeOverride: true, manualSelectionTools: selectionTools, title });
       expect(await db.stats.get('library')).toMatchObject({
         pageCount: 1, pageBytes: new TextEncoder().encode(JSON.stringify(page)).byteLength,
       });
       expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-        .toEqual({ ok: true, data: { enabled } });
+        .toEqual({ ok: true, data: { enabled, selectionToolsEnabled: enabled } });
     };
     await checkPage('Article');
     const saved = textAnnotation('annotation-1', 1);
@@ -491,6 +592,7 @@ describe('page mode boundary', () => {
     const exported = await handleDataRequest({ type: 'backup.export' }, { trusted: true });
     expect(exported).toMatchObject({ ok: true });
     expect(JSON.stringify(exported)).not.toContain('modeOverride');
+    expect(JSON.stringify(exported)).not.toContain('manualSelectionTools');
   });
 
   it('preserves a page-specific close through site pause and resume without affecting another page', async () => {
@@ -503,12 +605,12 @@ describe('page mode boundary', () => {
     expect(await db.pages.get(pageUrl)).toEqual(closed);
     const sameOrigin = 'https://example.test/another-page';
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: sameOrigin }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: [] };
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: sameOrigin }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: true } });
+      .toEqual({ ok: true, data: { enabled: true, selectionToolsEnabled: true } });
     expect(await db.pages.get(pageUrl)).toEqual(closed);
   });
 
@@ -517,17 +619,17 @@ describe('page mode boundary', () => {
     const results = await Promise.all([
       handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }),
       handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true }),
-      handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true }),
+      handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false, selectionTools: false }, { trusted: true }),
     ]);
     expect(results.every((result) => result.ok)).toBe(true);
     const page = await db.pages.get(pageUrl);
-    expect(page).toMatchObject({ title: 'Article', enabled: false, modeOverride: true });
+    expect(page).toMatchObject({ title: 'Article', enabled: false, modeOverride: true, manualSelectionTools: false });
     expect(await db.stats.get('library')).toMatchObject({
       pageCount: 1, annotationCount: 1,
       pageBytes: new TextEncoder().encode(JSON.stringify(page)).byteLength,
     });
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
   });
 
   it('rejects cross-page, malformed, oversized, and paused-site enable requests', async () => {
@@ -545,7 +647,7 @@ describe('page mode boundary', () => {
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }))
       .toMatchObject({ ok: false, code: 'FORBIDDEN' });
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: false, selectionToolsEnabled: false } });
   });
 });
 

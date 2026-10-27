@@ -119,9 +119,13 @@ export interface PageRecord {
   enabled?: boolean;
   /** Local webpage choice; absent on legacy pages that inherit automatic mode. */
   modeOverride?: true;
+  /** Local webpage intent; false only enables the page for saving or locating. */
+  manualSelectionTools?: boolean;
 }
 export interface PageMode {
   enabled: boolean;
+  /** Effective selection tools state for webpages; absent for PDF documents. */
+  selectionToolsEnabled?: boolean;
 }
 export interface RuntimeHealth {
   generation: string;
@@ -279,7 +283,7 @@ export type Request =
   | { type: "settings.get" }
   | { type: "settings.put"; settings: Settings }
   | { type: "page.mode.get"; pageUrl: string }
-  | { type: "page.mode.put"; pageUrl: string; enabled: boolean }
+  | { type: "page.mode.put"; pageUrl: string; enabled: boolean; selectionTools?: boolean }
   | { type: "storage.stats"; recalculate?: boolean }
   | { type: "backup.export" }
   | { type: "backup.preview"; backup: unknown }

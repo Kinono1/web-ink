@@ -105,6 +105,7 @@ export class AnnotationController {
         type: "page.mode.put",
         pageUrl: url,
         enabled: next,
+        ...(next ? { selectionTools: false } : {}),
       });
       if (this.disposed) return false;
       if (pageKey(location.href) !== url) {

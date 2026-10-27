@@ -162,6 +162,65 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     .toBe(1);
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
+test("manual page annotations show selection colors while automatic reminders are off", async () => {
+  await enable();
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  const page = await article(false);
+  const toggle = page.locator(".web-ink-palette-toggle");
+  const color = page.getByRole("button", { name: "高亮 #facd5a", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await page.locator("#selection strong").dblclick();
+  await expect.poll(() => page.evaluate(() => getSelection()?.toString().length ?? 0)).toBeGreaterThan(0);
+  await expect(color).not.toBeVisible();
+
+  await toggle.click();
+  await selectPageMode(page, true);
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#selection strong").dblclick();
+  await expect(color).toBeVisible();
+  await color.click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" })).length).toBe(1);
+  await expect(page.locator(".toast")).toContainText("已保存到本机");
+
+  await setPageMode(page, false);
+  await page.locator("#selection strong").dblclick();
+  await expect(color).not.toBeVisible();
+  const next = await context.newPage();
+  await next.goto("http://127.0.0.1:4173/article?manual=fresh");
+  await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "false");
+  await next.locator("#selection strong").dblclick();
+  await expect(next.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  expect(await manager.evaluate(() => chrome.storage.local.get("ui.selectionToolbarEnabled")))
+    .toEqual({ "ui.selectionToolbarEnabled": false });
+});
+
+test("manual page annotations remain active after reload with automatic reminders off", async () => {
+  await enable();
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  const page = await article(false);
+  await setPageMode(page, true);
+  await page.reload();
+  await expect(page.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+  await page.locator("#selection strong").dblclick();
+  await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
+});
+
+test("paused sites reject manual page annotations with automatic reminders off", async () => {
+  await enable();
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  const page = await article(false);
+  const settings = await rpc<any>(manager, { type: "settings.get" });
+  await rpc(manager, { type: "settings.put", settings: { ...settings, disabledOrigins: [new URL(page.url()).origin] } });
+  const toggle = page.locator(".web-ink-palette-toggle");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(page.getByRole("menuitem", { name: "开启本页标注", exact: true })).toBeDisabled();
+  await page.keyboard.press("Escape");
+  await page.locator("#selection strong").dblclick();
+  await expect(page.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  expect(await rpc<any[]>(manager, { type: "annotations.list" })).toHaveLength(0);
+});
+
 test("automatic reminders activate current and new pages except paused sites", async () => {
   await enable();
   const first = await article(false);
@@ -209,7 +268,7 @@ test("automatic reminders activate current and new pages except paused sites", a
   await setPageMode(first, true);
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await select(first);
-  await expect(first.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
+  await expect(first.getByRole("button", { name: "高亮 #facd5a", exact: true })).toBeVisible();
   expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(2);
 });
 
@@ -332,6 +391,52 @@ async function expectSidepanelFitsViewport(height: number) {
   expect(dock).not.toBeNull();
   expect(dock!.y + dock!.height).toBeLessThanOrEqual(height);
 }
+
+test("sidepanel save keeps automatic selection colors quiet until selection tools are enabled", async () => {
+  await enable();
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
+  const page = await article(false);
+  const toggle = page.locator(".web-ink-palette-toggle");
+  const color = page.getByRole("button", { name: "高亮 #facd5a", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await openSidepanel(page);
+  const selection = manager.getByRole("region", { name: "当前选区", exact: true });
+  await page.locator("#selection strong").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await expect(selection).toContainText("Precise highlights survive a return visit.");
+  await expect(color).not.toBeVisible();
+  await selection.getByRole("button", { name: "添加笔记", exact: true }).click();
+  await manager.getByRole("textbox", { name: "笔记", exact: true }).fill("侧栏保存测试");
+  await manager.getByRole("button", { name: "保存", exact: true }).click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" }))[0]?.note).toBe("侧栏保存测试");
+
+  const selectOtherText = async () => page.locator("#selection").evaluate(element => {
+    const range = document.createRange(); range.selectNodeContents(element.firstChild!);
+    getSelection()!.removeAllRanges(); getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await selectOtherText();
+  await expect(selection).toContainText("这是一段可标记的中文。");
+  await expect(color).not.toBeVisible();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBeGreaterThan(0);
+  expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].target.exact).toBe("Precise highlights survive a return visit.");
+  await selectOtherText();
+  await expect(selection).toContainText("这是一段可标记的中文。");
+  await expect(color).not.toBeVisible();
+  await toggle.click();
+  await page.getByRole("menuitem", { name: "开启选字工具", exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await selectOtherText();
+  await expect(color).toBeVisible();
+  expect(await manager.evaluate(() => chrome.storage.local.get("ui.selectionToolbarEnabled")))
+    .toEqual({ "ui.selectionToolbarEnabled": false });
+});
 
 test("sidepanel captures a webpage selection with automatic toolbars off and restores the saved note", async () => {
   await enable();

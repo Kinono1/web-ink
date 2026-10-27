@@ -12,8 +12,8 @@ function fixture(
   get: () => Promise<Record<string, unknown>>,
   pdfContext?: () => Promise<unknown>,
   openPdf?: () => Promise<unknown>,
-  pageMode?: () => Promise<{ enabled: boolean }>,
-  putMode?: (enabled: boolean) => Promise<{ enabled: boolean }>,
+  pageMode?: () => Promise<{ enabled: boolean; selectionToolsEnabled?: boolean }>,
+  putMode?: (enabled: boolean) => Promise<{ enabled: boolean; selectionToolsEnabled?: boolean }>,
   disabledOrigins: string[] = [],
 ) {
   let settings = { ...DEFAULT_SETTINGS, disabledOrigins };
@@ -258,6 +258,20 @@ it.each([true, false])('keeps the page toggle usable when automatic reminders ar
   root.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
   await vi.waitFor(() => expect(window.__webInkBootstrap?.isEnabled()).toBe(false));
   expect(f.messages).toContainEqual({ type: 'page.mode.put', pageUrl: location.href, enabled: false });
+});
+
+it('offers selection tools without hiding annotations already enabled by a sidebar save', async () => {
+  const f = fixture(async () => ({}),
+    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }), undefined,
+    async () => ({ enabled: true, selectionToolsEnabled: false }),
+    async () => ({ enabled: true, selectionToolsEnabled: true }));
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.button.click();
+  const root = f.host.shadowRoot!;
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-action="selection-tools"]')?.textContent).toBe('开启选字工具'));
+  expect(root.querySelector<HTMLButtonElement>('[data-action="toggle"]')?.textContent).toBe('关闭本页标注');
+  root.querySelector<HTMLButtonElement>('[data-action="selection-tools"]')!.click();
+  await vi.waitFor(() => expect(f.messages).toContainEqual({ type: 'page.mode.put', pageUrl: location.href, enabled: true }));
 });
 
 it('disables the page toggle on a paused website', async () => {
