@@ -73,6 +73,7 @@ async function benchmarkWebpage(temp) {
     label: label || "working-tree",
     browser: "",
     restore: [],
+    restoreInitialStates: [],
     libraryQuery: [],
     libraryPaint: [],
     units: "milliseconds",
@@ -132,10 +133,9 @@ async function benchmarkWebpage(temp) {
   const manager = await context.newPage();
   await manager.goto(`chrome-extension://${id}/library.html`);
   await rpc(manager, { type: "permissions.enable" });
-  // Selection tools are opt-in; make the benchmark's capture path explicit.
-  await manager.evaluate(() => chrome.storage.local.set({
-    "ui.selectionToolbarEnabled": true,
-  }));
+  // Automatic tools must be off while measuring disable -> restore. Older
+  // builds otherwise remain enabled even after page.mode.put(false).
+  await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": false }));
   await rpc(manager, {
     type: "backup.import",
     backup: {
@@ -157,8 +157,23 @@ async function benchmarkWebpage(temp) {
   await page.locator(".web-ink-palette-toggle").waitFor();
   await page.bringToFront();
   for (let i = 0; i < runs.restore[0]; i++) {
-    await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: false });
-    await page.waitForFunction(() => CSS.highlights.size === 0);
+    const automaticTools = await manager.evaluate(async () =>
+      (await chrome.storage.local.get("ui.selectionToolbarEnabled"))["ui.selectionToolbarEnabled"]);
+    if (automaticTools !== false) throw Error("Restore benchmark could not disable automatic tools");
+    const pageMode = await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: false });
+    if (pageMode?.enabled !== false) throw Error("Restore benchmark page did not disable");
+    const ready = await page.waitForFunction(() => {
+      const palette = document.querySelector("web-ink-ui")?.shadowRoot
+        ?.querySelector(".web-ink-palette-toggle");
+      const state = {
+        paletteEnabled: palette?.dataset.enabled !== "false",
+        paletteBusy: palette?.getAttribute("aria-busy") !== "false",
+        highlightGroups: CSS.highlights.size,
+      };
+      return !state.paletteEnabled && !state.paletteBusy && state.highlightGroups === 0 && state;
+    });
+    const initial = await ready.jsonValue();
+    await ready.dispose();
     await page.evaluate(() => {
       window.__perfStart = performance.now();
       window.__perfDone = new Promise((resolve, reject) => {
@@ -179,12 +194,18 @@ async function benchmarkWebpage(temp) {
         tick();
       });
     });
-    await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: true });
+    const enabled = await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: true });
+    if (enabled?.enabled !== true) throw Error("Restore benchmark page did not enable");
     const elapsed = await page.evaluate(() => window.__perfDone);
-    if (i >= runs.restore[1]) result.restore.push(elapsed);
+    if (i >= runs.restore[1]) {
+      result.restore.push(elapsed);
+      result.restoreInitialStates.push({ automaticTools, pageEnabled: pageMode.enabled, ...initial });
+    }
   }
   await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: false });
   if (runs.captureSave) {
+    // Capture/save measures the opt-in selection toolbar separately.
+    await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
     result.captureSave = [];
     await rpc(manager, { type: "page.mode.put", pageUrl: url, enabled: true });
     await page.waitForFunction(() =>
