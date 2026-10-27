@@ -12,7 +12,7 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import type { Annotation, Settings } from "../../src/core/model";
+import type { Annotation, PageMode, Settings } from "../../src/core/model";
 import { fixturePdf } from "../pdf-fixture";
 
 const expectedId = "cmllmmnfiefikhcbelokclankodgcdog";
@@ -439,7 +439,9 @@ test("in-place extension Reload replaces old runtimes three times without naviga
     const durableState = async () => ({
       records: (await rpc<Annotation[]>(manager, { type: "annotations.list" })).sort((a, b) => a.id.localeCompare(b.id)),
       settings: await rpc<Settings>(manager, { type: "settings.get" }),
-      modes: await Promise.all(pages.map((page) => rpc(manager, { type: "page.mode.get", pageUrl: page.url() }))),
+      modes: await Promise.all(pages.map(async (page) => ({
+        enabled: (await rpc<PageMode>(manager, { type: "page.mode.get", pageUrl: page.url() })).enabled,
+      }))),
       permissions: await manager.evaluate(async () => {
         const granted = await chrome.permissions.getAll();
         return { origins: granted.origins?.sort(), permissions: granted.permissions?.sort() };
@@ -527,6 +529,10 @@ test("in-place extension Reload replaces old runtimes three times without naviga
       await expect.poll(() => pageRuntime(manager, tabIds[0]!)).toMatchObject({ health, engineLoaded: true, engineGeneration: health.generation, engineStyles: 1 });
       expect(await pageRuntime(manager, tabIds[1]!)).toEqual({ health, engineLoaded: false, engineGeneration: null, engineStyles: 0 });
       await expect.poll(() => enabled.evaluate(() => CSS.highlights.size)).toBeGreaterThan(0);
+      for (const page of pages) {
+        const mode = await rpc<PageMode>(manager, { type: "page.mode.get", pageUrl: page.url() });
+        expect(mode.selectionToolsEnabled).toBe(false);
+      }
       expect(await durableState()).toEqual({
         ...before,
         permissions: {

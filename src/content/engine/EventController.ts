@@ -90,10 +90,12 @@ export class EventController {
     const { sync, interactions, mode } = this.engine;
     if (areaName !== "local" || this.engine.disposed) return;
     if (changes[SELECTION_TOOLBAR_KEY]) {
-      sync.selectionToolbarReadGeneration++;
-      interactions.selectionToolbarEnabled = changes[SELECTION_TOOLBAR_KEY]!.newValue === true;
-      if (!interactions.selectionToolbarEnabled && interactions.selectionPaletteAutomatic)
-        interactions.hideSelection();
+      if (changes[SELECTION_TOOLBAR_KEY]!.newValue !== true) {
+        // Fail closed until the effective page mode has been read again.
+        interactions.selectionToolbarEnabled = false;
+        if (interactions.selectionPaletteAutomatic) interactions.hideSelection();
+      }
+      void sync.refresh();
     }
     if (!changes["ui.annotationPresets"])
       return;

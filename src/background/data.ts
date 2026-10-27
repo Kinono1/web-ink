@@ -48,7 +48,12 @@ type KnownMessage =
   | { type: "settings.get" }
   | { type: "settings.put"; settings: unknown }
   | { type: "page.mode.get"; pageUrl: unknown }
-  | { type: "page.mode.put"; pageUrl: unknown; enabled: unknown }
+  | {
+      type: "page.mode.put";
+      pageUrl: unknown;
+      enabled: unknown;
+      selectionTools?: unknown;
+    }
   | { type: "storage.stats"; recalculate?: unknown }
   | { type: "backup.export" }
   | { type: "backup.preview"; backup: unknown }
@@ -134,7 +139,7 @@ function parseMessage(value: unknown): KnownMessage | undefined {
         ? (message as KnownMessage)
         : undefined;
     case "page.mode.put":
-      return hasOnly(message, ["type", "pageUrl", "enabled"])
+      return hasOnly(message, ["type", "pageUrl", "enabled"], ["selectionTools"])
         ? (message as KnownMessage)
         : undefined;
     case "backup.preview":
@@ -243,6 +248,9 @@ function pageRecord(annotation: Annotation, existing?: PageRecord): PageRecord {
     updatedAt: annotation.updatedAt,
     ...(existing?.enabled === undefined ? {} : { enabled: existing.enabled }),
     ...(existing?.modeOverride ? { modeOverride: true } : {}),
+    ...(!isPdfAnnotation(annotation) && existing?.manualSelectionTools !== undefined
+      ? { manualSelectionTools: existing.manualSelectionTools }
+      : {}),
   };
 }
 
@@ -279,11 +287,19 @@ function effectivePageMode(
   if (pageUrl.startsWith("urn:web-ink:pdf:"))
     return { enabled: page?.enabled === true };
   if (settings?.disabledOrigins.includes(new URL(pageUrl).origin))
-    return { enabled: false };
+    return { enabled: false, selectionToolsEnabled: false };
+  const enabled = page?.modeOverride
+    ? page.enabled === true
+    : automatic || page?.enabled === true;
+  // Older page overrides predate the intent field; annotation-only legacy
+  // records have no override and must not opt into selection reminders.
+  const manualSelectionTools =
+    page?.modeOverride === true &&
+    page.enabled === true &&
+    page.manualSelectionTools !== false;
   return {
-    enabled: page?.modeOverride
-      ? page.enabled === true
-      : automatic || page?.enabled === true,
+    enabled,
+    selectionToolsEnabled: enabled && (automatic || manualSelectionTools),
   };
 }
 
@@ -317,29 +333,39 @@ async function getPageMode(pageUrl: string): Promise<PageMode> {
 async function putPageMode(
   pageUrl: string,
   enabled: boolean,
+  selectionTools: boolean,
 ): Promise<Result<PageMode>> {
   const pdf = pageUrl.startsWith("urn:web-ink:pdf:");
   // Chrome storage must be read before entering the Dexie transaction.
-  const settings = pdf ? undefined : await readSettings();
+  const [settings, automatic] = pdf
+    ? ([undefined, false] as const)
+    : await Promise.all([readSettings(), readSelectionToolbarEnabled()]);
   if (enabled && settings?.disabledOrigins.includes(new URL(pageUrl).origin)) {
     return fail("This site is paused and cannot be enabled.", "FORBIDDEN");
   }
   const db = getDatabase();
   return db.transaction("rw", db.pages, db.stats, async () => {
     const existing = await db.pages.get(pageUrl);
+    // A delayed sidebar save must not revoke a switch another tab enabled.
+    const manualSelectionTools =
+      selectionTools ||
+      (enabled &&
+        existing?.enabled === true &&
+        existing.modeOverride === true &&
+        existing.manualSelectionTools !== false);
     const stored: PageRecord = {
       url: pageUrl,
       title: existing?.title ?? "",
       updatedAt: new Date().toISOString(),
       enabled,
-      ...(pdf ? {} : { modeOverride: true }),
+      ...(pdf ? {} : { modeOverride: true, manualSelectionTools }),
     };
     await db.pages.put(stored);
     await applyIncrementalStats({
       ...(existing ? { beforePage: existing } : {}),
       afterPage: stored,
     });
-    return ok(effectivePageMode(pageUrl, stored, settings));
+    return ok(effectivePageMode(pageUrl, stored, settings, automatic));
   });
 }
 
@@ -709,12 +735,21 @@ export async function handleDataRequest(
         );
         if (typeof request.enabled !== "boolean")
           return invalid("enabled must be a boolean");
+        if (
+          request.selectionTools !== undefined &&
+          typeof request.selectionTools !== "boolean"
+        )
+          return invalid("selectionTools must be a boolean");
         if (!context.trusted && requested !== ownPage)
           return fail(
             "Content scripts may only change their own page mode.",
             "FORBIDDEN",
           );
-        return putPageMode(requested, request.enabled);
+        return putPageMode(
+          requested,
+          request.enabled,
+          request.selectionTools ?? true,
+        );
       }
       case "settings.get":
         return ok(await readSettings());

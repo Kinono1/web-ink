@@ -61,6 +61,8 @@ async function fixture(options: { enabled?: boolean; paused?: boolean; auto?: bo
   const messages: any[] = [];
   let enabled = options.enabled ?? false;
   let paused = options.paused ?? false;
+  let automatic = options.auto ?? false;
+  let manualTools = enabled;
   vi.stubGlobal("chrome", {
     runtime: {
       id: ID, getURL: ownUrl,
@@ -69,8 +71,12 @@ async function fixture(options: { enabled?: boolean; paused?: boolean; auto?: bo
       sendMessage: async (message: any) => {
         messages.push(message);
         if (message.type === "settings.get") return { ok: true, data: { ...DEFAULT_SETTINGS, language: "en", disabledOrigins: paused ? [location.origin] : [] } };
-        if (message.type === "page.mode.put") enabled = message.enabled;
-        if (message.type.startsWith("page.mode.")) return { ok: true, data: { enabled } };
+        if (message.type === "page.mode.put") {
+          enabled = message.enabled;
+          manualTools = enabled && message.selectionTools !== false;
+        }
+        if (message.type.startsWith("page.mode."))
+          return { ok: true, data: { enabled, selectionToolsEnabled: enabled && (automatic || manualTools) } };
         if (message.type === "engine.ensure") {
           const engine = (await import("../entrypoints/engine")).default;
           (engine as unknown as { main: () => void }).main();
@@ -89,7 +95,7 @@ async function fixture(options: { enabled?: boolean; paused?: boolean; auto?: bo
       },
     },
     storage: {
-      local: { get: async () => ({ "ui.selectionToolbarEnabled": options.auto ?? false }), set: async () => {} },
+      local: { get: async () => ({ "ui.selectionToolbarEnabled": automatic }), set: async () => {} },
       onChanged: { addListener: (fn: any) => storageListeners.add(fn), removeListener: (fn: any) => storageListeners.delete(fn) },
     },
   });
@@ -118,7 +124,7 @@ async function fixture(options: { enabled?: boolean; paused?: boolean; auto?: bo
     messages, connect,
     emit: (type: string) => { for (const fn of [...listeners]) fn({ type }, { id: ID }, () => {}); },
     pause: () => { paused = true; },
-    setAuto: (value: boolean) => { for (const fn of storageListeners) fn({ "ui.selectionToolbarEnabled": { newValue: value } }, "local"); },
+    setAuto: (value: boolean) => { automatic = value; for (const fn of storageListeners) fn({ "ui.selectionToolbarEnabled": { newValue: value } }, "local"); },
   };
 }
 
@@ -133,23 +139,57 @@ it("does not index or load the engine for a selection until an explicit sidebar 
   expect(f.messages.some((message) => message.type === "annotations.list")).toBe(false);
   p.save(p.state()!.token!);
   await vi.waitFor(() => expect(p.replies.some((reply) => reply.type === "saved")).toBe(true));
-  expect(f.messages).toContainEqual({ type: "page.mode.put", pageUrl: location.href, enabled: true });
+  expect(f.messages).toContainEqual({ type: "page.mode.put", pageUrl: location.href, enabled: true, selectionTools: false });
   expect(f.messages.filter((message) => message.type === "annotations.put")[0].annotation).toMatchObject({ kind: "text", color: "#69b0f1", target: { exact: "chosen" } });
   expect(p.state()?.status).toBe("empty");
 });
 
-it("suppresses automatic selection palettes while retaining the preset shortcut", async () => {
+it("keeps the page palette quiet after a sidebar-only save with automatic reminders off", async () => {
+  const f = await fixture();
+  select();
+  const port = f.connect();
+  port.save(port.state()!.token!);
+  await vi.waitFor(() => expect(port.replies.some(reply => reply.type === "saved")).toBe(true));
+  const view = window.__webInkBootstrap!.view;
+  select();
+  document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  expect(view.selection.style.display).not.toBe("flex");
+});
+
+it("shows selection colors on an enabled page while retaining the preset shortcut", async () => {
   const f = await fixture({ enabled: true });
   const view = window.__webInkBootstrap!.view;
   await vi.waitFor(() => expect(f.messages.some((message) => message.type === "annotations.list")).toBe(true));
   const capture = vi.spyOn(TextAnchorSession.prototype, "capture");
   select();
   document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
-  expect(view.selection.style.display).not.toBe("flex");
-  expect(capture).not.toHaveBeenCalled();
+  expect(view.selection.style.display).toBe("flex");
+  expect(capture).toHaveBeenCalled();
   document.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit1", key: "!", altKey: true, shiftKey: true, bubbles: true, cancelable: true }));
   await vi.waitFor(() => expect(f.messages.filter((message) => message.type === "annotations.put")).toHaveLength(1));
   expect(f.messages.find((message) => message.type === "annotations.put").annotation.tags).toEqual(["Important"]);
+});
+
+it("keeps the page palette after a failed sidebar save and closes it after a successful retry", async () => {
+  let attempts = 0;
+  const f = await fixture({ enabled: true, write: async record => {
+    if (++attempts === 1) throw Error("write failed");
+    return { ...record, revision: 1 };
+  } });
+  await vi.waitFor(() => expect(f.messages.some(message => message.type === "annotations.list")).toBe(true));
+  const view = window.__webInkBootstrap!.view;
+  select();
+  document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+  expect(view.selection.style.display).toBe("flex");
+  const port = f.connect();
+  const token = port.state()!.token!;
+  port.save(token);
+  await vi.waitFor(() => expect(port.replies.some(reply => reply.type === "error")).toBe(true));
+  expect(view.selection.style.display).toBe("flex");
+  port.save(token, "retry-2");
+  await vi.waitFor(() => expect(port.replies.some(reply => reply.type === "saved")).toBe(true));
+  expect(view.selection.style.display).toBe("none");
+  expect(f.messages.filter(message => message.type === "annotations.put")).toHaveLength(2);
 });
 
 it("hides an open automatic palette when the preference changes", async () => {

@@ -31,7 +31,6 @@ export class SyncCoordinator {
   generation: number = 0;
   navigationGeneration: number = 0;
   presetReadGeneration: number = 0;
-  selectionToolbarReadGeneration: number = 0;
   private refreshTimer: ReturnType<typeof setTimeout> | undefined;
   refreshDepth: number = 0;
   restoreFailed: boolean = false;
@@ -89,7 +88,6 @@ export class SyncCoordinator {
     }
     const token = ++this.generation;
     const presetReadToken = ++this.presetReadGeneration;
-    const toolbarReadToken = ++this.selectionToolbarReadGeneration;
     this.refreshDepth++;
     let requestedUrl = this.engine.currentUrl;
     let confirmedDisabled = false;
@@ -119,7 +117,7 @@ export class SyncCoordinator {
         interactions.hideSelection();
       }
       requestedUrl = this.engine.currentUrl;
-      const [newSettings, pageMode, autoToolbar] = await Promise.all([
+      const [newSettings, pageMode] = await Promise.all([
         request<Settings>({ type: "settings.get" }),
         request<PageMode>({ type: "page.mode.get", pageUrl: requestedUrl }).then(result => {
           if (
@@ -130,8 +128,11 @@ export class SyncCoordinator {
             confirmedDisabled = !result.enabled;
           return result;
         }),
-        readSelectionToolbarEnabled(),
       ]);
+      // Older extension contexts only return enabled; keep their global
+      // preference until the replacement background provides page intent.
+      const selectionTools = pageMode.selectionToolsEnabled ??
+        (pageMode.enabled && await readSelectionToolbarEnabled());
       const newPresets = await readAnnotationPresets(newSettings.language);
       if (token !== this.generation || this.engine.disposed) return;
       if (pageKey(location.href) !== requestedUrl) {
@@ -144,16 +145,13 @@ export class SyncCoordinator {
       if (this.engine.settings.defaultColor !== newSettings.defaultColor || mode.mode === "idle")
         mode.currentColor = newSettings.defaultColor;
       this.engine.settings = newSettings;
-      if (toolbarReadToken === this.selectionToolbarReadGeneration) {
-        interactions.selectionToolbarEnabled = autoToolbar;
-        if (!autoToolbar && interactions.selectionPaletteAutomatic) interactions.hideSelection();
-      }
       if (presetReadToken === this.presetReadGeneration)
         interactions.annotationPresets = newPresets;
       view.applyPreferences(this.engine.settings);
       this.engine.disabled = this.engine.settings.disabledOrigins.includes(location.origin);
       this.engine.pageEnabled = pageMode.enabled;
       this.engine.modeReady = true;
+      interactions.selectionToolbarEnabled = enabled() && selectionTools;
       if (!enabled()) {
         events.mutationObserver.disconnect();
         events.resizeObserver.disconnect();

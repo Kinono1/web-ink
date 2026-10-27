@@ -1,6 +1,6 @@
 import { ICON_PATHS, type IconName } from '../ui/icons';
 
-export type PaletteAction = 'toggle' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry' | 'cancel';
+export type PaletteAction = 'toggle' | 'selection-tools' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry' | 'cancel';
 export interface PaletteMenuItem {
   action: PaletteAction;
   label: string;

@@ -90,6 +90,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   view.host.dataset.webInkGeneration = health.generation;
   let disposed = false;
   let enabled = false;
+  let selectionToolsEnabled = false;
   let blocked = false;
   let accessReady = false;
   let permissionRevoked = false;
@@ -167,6 +168,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       blocked = permissionRevoked || settings.disabledOrigins.includes(location.origin);
       accessReady = true;
       enabled = mode.enabled;
+      selectionToolsEnabled = mode.selectionToolsEnabled ?? mode.enabled;
       if (enabled && !blocked) await ensureEngine();
       else stopEngine();
     } catch (error) {
@@ -177,6 +179,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       }
       // Keep page annotation off until a later permission/mode refresh.
       enabled = false;
+      selectionToolsEnabled = false;
       accessReady = false;
       stopEngine();
     } finally {
@@ -187,7 +190,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       }
     }
   };
-  const setEnabled = async (next: boolean): Promise<boolean> => {
+  const setEnabled = async (next: boolean, selectionTools = true): Promise<boolean> => {
     if (
       disposed ||
       busy ||
@@ -211,6 +214,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         type: "page.mode.put",
         pageUrl: url,
         enabled: next,
+        ...(next && !selectionTools ? { selectionTools: false } : {}),
       });
       if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return false;
       if (version !== modeReadVersion) {
@@ -218,6 +222,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         changed = enabled === next;
       } else {
         enabled = mode.enabled;
+        selectionToolsEnabled = mode.selectionToolsEnabled ?? mode.enabled;
         currentUrl = url;
         changed = enabled ? await ensureEngine() : true;
       }
@@ -237,7 +242,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       }
     }
     return changed && !disposed && accessReady && epoch === permissionEpoch &&
-      pageKey(location.href) === url && enabled === next;
+      pageKey(location.href) === url && enabled === next &&
+      (!next || !selectionTools || selectionToolsEnabled);
   };
   const dispatch = async (
     action: "focus" | "rebind" | "draw" | "refresh",
@@ -252,7 +258,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     // Direct user operations may deliberately turn the page on. Rebind only acts
     // on an already-restored record and therefore does not silently enable a page.
     if (action === "focus" && !enabled && !blocked)
-      await setEnabled(true);
+      await setEnabled(true, false);
     if (!enabled || blocked || !(await ensureEngine())) return;
     window.__webInkEngine?.dispatch(action, id, health.generation);
   };
@@ -269,7 +275,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       await refreshMode(false);
       if (blocked || !accessReady) throw Error("Webpage annotations are paused or unavailable. Check site access and try again.");
       assertCurrent();
-      if (!enabled && !await setEnabled(true)) throw Error("Could not enable webpage annotations. Check site access and try again.");
+      if (!enabled && !await setEnabled(true, false)) throw Error("Could not enable webpage annotations. Check site access and try again.");
       assertCurrent();
       if (!await ensureEngine()) throw Error("The webpage annotation engine is unavailable.");
       assertCurrent();
@@ -352,6 +358,9 @@ export function startBootstrap(health: RuntimeHealth): () => void {
           candidateUrl: candidate.url });
       }
     } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
+      if (enabled && !selectionToolsEnabled)
+        items.push({ action: "selection-tools", icon: "highlight", primary: true, disabled: blocked,
+          label: zh ? "开启选字工具" : "Enable selection tools" });
       items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
         label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
           : enabled ? "Disable page annotations" : "Enable page annotations" });
@@ -413,6 +422,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
         });
       } else if (action === "toggle") {
         if (!await setEnabled(!enabled)) throw Error(language === "zh-CN" ? "未能切换标注，请重试。" : "Could not change annotations. Try again.");
+      } else if (action === "selection-tools") {
+        if (!await setEnabled(true)) throw Error(language === "zh-CN" ? "未能开启选字工具，请重试。" : "Could not enable selection tools. Try again.");
       } else {
         // Send in the click's message turn so Chrome retains sidePanel.open activation.
         await request({ type: "ui.open", target: action });
@@ -494,6 +505,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       permissionRevoked = true;
       accessReady = false;
       enabled = false;
+      selectionToolsEnabled = false;
       busy = false;
       stopEngine(true);
       updateToggle();
