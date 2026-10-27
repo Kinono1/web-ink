@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { DEFAULT_SETTINGS, type Annotation, type PdfHandoff, type Request } from "../src/core/model";
+import { DEFAULT_SETTINGS, type Annotation, type AnnotationPage, type AnnotationQuery, type PdfHandoff, type Request } from "../src/core/model";
 import type { PdfReadingPosition } from "../src/pdf/reading-position";
 import { rememberPdfPaperReopen } from "../src/pdf/paper-reopen";
 
@@ -173,6 +173,8 @@ let root: Root | undefined;
 let host: HTMLDivElement;
 let records: Annotation[];
 let messages: Request[];
+let previousRecords: Annotation[];
+let previousQuery: ((query: AnnotationQuery) => Promise<AnnotationPage>) | undefined;
 let handoff: PdfHandoff | null;
 let writes: Record<string, unknown>[];
 let readKeys: string[];
@@ -221,6 +223,8 @@ beforeEach(() => {
   io.dataReads = 0;
   records = [];
   messages = [];
+  previousRecords = [];
+  previousQuery = undefined;
   writes = [];
   readKeys = [];
   handoff = { token: TOKEN, tabId: 8, returnUrl: publicSource, sourceUrl: publicSource };
@@ -285,7 +289,15 @@ beforeEach(() => {
         switch (message.type) {
           case "settings.get": return { ok: true, data: DEFAULT_SETTINGS };
           case "annotations.list": return { ok: true, data: records };
-          case "annotations.query": return { ok: true, data: { items: [] } };
+          case "annotations.query": {
+            if (previousQuery) return { ok: true, data: await previousQuery(message.query) };
+            const matching = previousRecords.filter(record => JSON.stringify(record).toLowerCase().includes(message.query.text?.toLowerCase() ?? ""));
+            const start = message.query.cursor ? matching.findIndex(record => record.id === message.query.cursor!.id) + 1 : 0;
+            const items = matching.slice(start, start + (message.query.limit ?? 25));
+            const last = items.at(-1);
+            return { ok: true, data: { items, ...(last && start + items.length < matching.length
+              ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } } : {}) } };
+          }
           case "page.mode.get": return { ok: true, data: { enabled: false } };
           case "pdf.handoff.get": return { ok: true, data: handoff };
           case 'pdf.prepared.claim': {
@@ -1150,6 +1162,164 @@ describe("PDF reader workspace", () => {
     expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).toBeNull();
     expect(puts()).toHaveLength(0);
   });
+  describe("previous PDF version detection", () => {
+    const doi = "10.1109/TII.2026.3716639";
+    const citation = "https://doi.org/10.1109/TII.2026.3716639";
+    const oldHash = "b".repeat(64);
+    const changedNotice = "旧标注已保留";
+    const incompleteNotice = "旧版本检查未完成";
+    function prior(sourceUrl = publicSource, hash = oldHash, id = "previous-highlight") {
+      const record = baseRecord();
+      return { ...record, id, pageUrl: `urn:web-ink:pdf:${hash}`,
+        target: { ...record.target, documentHash: hash, sourceUrl } };
+    }
+    function queries() {
+      return messages.filter((message): message is Extract<Request, { type: "annotations.query" }> => message.type === "annotations.query");
+    }
+
+    it("finds legacy source-only annotations when the new PDF exposes a DOI", async () => {
+      io.metadataDoi = doi;
+      previousRecords = [prior()];
+      records = [baseRecord()];
+      const original = structuredClone(previousRecords);
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).toContain(changedNotice);
+      expect(button("查看之前的标注")).toBeTruthy();
+      expect(host.querySelector('[data-pdf-annotation="previous-highlight"]')).toBeNull();
+      expect(host.querySelector('[data-pdf-annotation="saved-highlight"]')).not.toBeNull();
+      expect(previousRecords).toEqual(original);
+      expect(puts()).toHaveLength(0);
+      expect(queries().map(message => message.query.text)).toEqual([citation, publicSource]);
+    });
+
+    it.each([citation, publicSource])("finds a previous hash beyond the first page for %s", async (source) => {
+      io.metadataDoi = doi;
+      previousRecords = [
+        ...Array.from({ length: 51 }, (_, index) => prior(source, HASH, `current-${String(99 - index).padStart(2, "0")}`)),
+        prior(source), prior(source, "c".repeat(64), "even-older"),
+      ];
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).toContain(changedNotice);
+      expect(button("查看之前的标注")).toBeTruthy();
+      expect(host.querySelector('[data-pdf-annotation="previous-highlight"]')).toBeNull();
+      expect(queries().filter(message => message.query.text === source)).toHaveLength(2);
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("rejects text-only source matches and the current document hash", async () => {
+      io.metadataDoi = doi;
+      previousRecords = [prior(publicSource, HASH), prior(`${publicSource}?other=1`),
+        { ...prior("https://other.example.test/paper.pdf"), note: citation }];
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).not.toContain(changedNotice);
+      expect(host.textContent).not.toContain(incompleteNotice);
+      expect(host.querySelector('[data-pdf-annotation="previous-highlight"]')).toBeNull();
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("opens the detected older hash when the reader URL already names the current document", async () => {
+      previousRecords = [prior(), prior(publicSource, "c".repeat(64), "older")];
+      await mount(`?document=${HASH}&source=${encodeURIComponent(publicSource)}`, false);
+      const destinations: string[] = [];
+      vi.spyOn(chrome.runtime, "getURL").mockImplementation(path => {
+        destinations.push(path);
+        return `${location.href}#library`;
+      });
+      await click("查看之前的标注");
+      expect(destinations).toContain(`/library.html?document=${oldHash}`);
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("queries a DOI source only once and stops after an exact previous version", async () => {
+      io.metadataDoi = doi;
+      previousRecords = [prior(citation), prior(citation, "c".repeat(64), "older")];
+      await mount(`?source=${encodeURIComponent(citation)}`, false);
+      expect(host.textContent).toContain(changedNotice);
+      expect(queries()).toHaveLength(1);
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("keeps the loaded PDF readable and reports an incomplete version check on query failure", async () => {
+      previousQuery = async () => { throw Error("query unavailable"); };
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.textContent).toContain(incompleteNotice);
+      expect(host.textContent).toContain("资料库");
+      expect(host.querySelector('.pdf-page')).not.toBeNull();
+      expect(button("更多").disabled).toBe(false);
+      expect(host.textContent).not.toContain(changedNotice);
+      expect(puts()).toHaveLength(0);
+    });
+
+    it("continues with the observed source if the DOI query fails", async () => {
+      io.metadataDoi = doi;
+      previousQuery = async (query) => {
+        if (query.text === citation) throw Error("DOI query unavailable");
+        return { items: [prior()] };
+      };
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(host.textContent).toContain(changedNotice);
+      expect(host.textContent).not.toContain(incompleteNotice);
+      expect(queries()).toHaveLength(2);
+    });
+
+    it.each(["same", "newer"])("stops a %s cursor and reports the incomplete check", async (direction) => {
+      previousQuery = async query => ({ items: [prior(publicSource, HASH)],
+        nextCursor: { updatedAt: query.cursor && direction === "newer" ? "2026-10-11T00:00:00Z" : "2026-10-10T00:00:00Z", id: "previous-highlight" } });
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).toContain(incompleteNotice);
+      expect(queries()).toHaveLength(2);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+    });
+
+    it("does not treat a cancelled response as a completed version check", async () => {
+      previousQuery = async () => ({ items: [], cancelled: true });
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).toContain(incompleteNotice);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(queries()).toHaveLength(1);
+    });
+
+    it("bounds a large history and directs the reader to the library when checking is incomplete", async () => {
+      previousRecords = [
+        ...Array.from({ length: 1000 }, (_, index) =>
+          prior(publicSource, HASH, `current-${String(2000 - index).padStart(4, "0")}`)),
+        prior(),
+      ];
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      expect(host.textContent).toContain(incompleteNotice);
+      expect(host.textContent).toContain("资料库");
+      expect(host.textContent).not.toContain(changedNotice);
+      expect(queries()).toHaveLength(20);
+      expect(button("更多").disabled).toBe(false);
+    });
+
+    it.each(["resolve", "reject"])("cancels the obsolete check and ignores a late %s after changing readers", async (finish) => {
+      const pending = deferred<AnnotationPage>();
+      previousQuery = async query => query.text === publicSource ? pending.promise : { items: [] };
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      const firstQuery = queries()[0]!;
+      await act(async () => root!.unmount());
+      root = undefined;
+      const otherSource = "https://papers.example.test/other.pdf";
+      io.hash = "c".repeat(64);
+      await mount(`?source=${encodeURIComponent(otherSource)}`, false);
+      await act(async () => {
+        if (finish === "resolve") pending.resolve({ items: [prior()],
+          nextCursor: { updatedAt: "2026-10-10T00:00:00Z", id: "previous-highlight" } });
+        else pending.reject(Error("obsolete query failure"));
+      });
+      await settle();
+      expect(host.querySelector('.pdf-name')?.textContent).toBe("other.pdf");
+      expect(host.textContent).not.toContain(changedNotice);
+      expect(host.textContent).not.toContain(incompleteNotice);
+      expect(host.querySelector('[role="alert"]')).toBeNull();
+      expect(queries().filter(message => message.query.text === publicSource)).toHaveLength(1);
+      expect(messages).toContainEqual({ type: "annotations.query.cancel", requestId: firstQuery.query.requestId });
+    });
+  });
+
   it("refreshes the early annotation snapshot after subscribing to the parsed document", async () => {
     const listeners = runtimeListeners();
     const parsing = deferred<unknown>();

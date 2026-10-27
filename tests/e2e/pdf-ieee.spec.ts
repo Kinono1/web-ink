@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { createServer, type Server } from "node:net";
 import path from "node:path";
 import { fixturePdf } from "../pdf-fixture";
-import type { Annotation, PdfTextAnnotation } from "../../src/core/model";
+import type { Annotation, AnnotationPage, PdfTextAnnotation } from "../../src/core/model";
 
 const IEEE = "https://ieeexplore.ieee.org";
 const WRAPPER = `${IEEE}/stamp/stamp.jsp?tp=&arnumber=11643626`;
@@ -336,6 +336,57 @@ test("legacy IEEE Open PDF prefers the learned DOI, restores the same file, and 
   await expect(paper.getByText("之前版本的标注", { exact: true })).toBeVisible();
   await expect(paper.getByRole("button", { name: new RegExp(legacy.target.exact) }).first()).toBeVisible();
   expect((await rpc<Annotation[]>({ type: "annotations.list" })).map(item => item.id)).toEqual([legacy.id]);
+});
+
+test("fresh IEEE copy discovers an older annotation beyond the first search page without applying it", async () => {
+  const reader = await context.newPage();
+  await reader.goto(WRAPPER);
+  await openThroughSidepanel(reader);
+  const old = await selectAndHighlight(reader);
+  const observedSource = old.target.sourceUrl!;
+
+  // Newer search hits mention the source but belong to another source. They
+  // force a second real IndexedDB query page before the old match is found.
+  for (let index = 0; index < 50; index++) {
+    await rpc({ type: "annotations.put", expectedRevision: 0, annotation: {
+      ...old,
+      id: `search-decoy-${index}`,
+      note: observedSource,
+      updatedAt: "2099-01-01T00:00:00.000Z",
+      revision: 0,
+      target: { ...old.target, sourceUrl: "https://unrelated.example.test/paper.pdf" },
+    } });
+  }
+  const first = await rpc<AnnotationPage>({ type: "annotations.query", query: { text: observedSource, limit: 50 } });
+  expect(first.items).toHaveLength(50);
+  expect(first.items.some(item => item.id === old.id)).toBe(false);
+  expect(first.nextCursor).toBeDefined();
+  const second = await rpc<AnnotationPage>({ type: "annotations.query", query: { text: observedSource, limit: 50, cursor: first.nextCursor } });
+  expect(second.items.map(item => item.id)).toContain(old.id);
+
+  pdfRevision = 1;
+  const fresh = await context.newPage();
+  const readerNavigations: string[] = [];
+  fresh.on("framenavigated", frame => {
+    if (frame === fresh.mainFrame() && frame.url().startsWith(`chrome-extension://${extensionId}/pdf.html?`)) {
+      readerNavigations.push(frame.url());
+    }
+  });
+  await fresh.goto(WRAPPER);
+  await openThroughSidepanel(fresh);
+  expect(readerNavigations.length).toBeGreaterThan(0);
+  expect(new URL(readerNavigations[0]!).searchParams.has("document")).toBe(false);
+  const newHash = new URL(fresh.url()).searchParams.get("document");
+  expect(newHash).toMatch(/^[a-f0-9]{64}$/);
+  expect(newHash).not.toBe(old.target.documentHash);
+  expect(await rpc({ type: "annotations.list", pageUrl: `urn:web-ink:pdf:${newHash}` })).toEqual([]);
+  await expect(fresh.getByText("文档版本已变化：旧标注已保留，没有套用到这份文件。", { exact: true })).toBeVisible();
+  await expect(fresh.locator(`[data-pdf-annotation="${old.id}"]`)).toHaveCount(0);
+  expect(await rpc({ type: "annotations.get", id: old.id })).toEqual(old);
+
+  await fresh.getByRole("button", { name: "查看之前的标注", exact: true }).click();
+  await expect(fresh).toHaveURL(`chrome-extension://${extensionId}/library.html?document=${old.target.documentHash}`);
+  await expect(fresh.getByText("之前版本的标注", { exact: true })).toBeVisible();
 });
 
 test("sidepanel IEEE session handoff keeps the ticket out of reader and persistent data, requires a fresh grant after reload, then restores saved marks in the same tab", async () => {

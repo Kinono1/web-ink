@@ -345,7 +345,7 @@ describe("management UI", () => {
     const host = await mount("sidepanel");
     const control = host.querySelector<HTMLButtonElement>('[role="switch"][aria-label="自动显示标注工具"]')!;
     expect(control.getAttribute("aria-checked")).toBe("true");
-    expect(host.querySelector('.page-header [role="switch"]')).toBeNull();
+    expect(host.querySelector('.page-header [role="switch"]')?.getAttribute("aria-checked")).toBe("true");
     await act(async () => control.click());
     expect(stored["ui.selectionToolbarEnabled"]).toBe(false);
     expect(host.querySelector('.page-header [role="switch"]')?.getAttribute("aria-checked")).toBe("false");
@@ -364,6 +364,88 @@ describe("management UI", () => {
     });
     expect(control.getAttribute("aria-checked")).toBe("true");
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("Preference storage denied");
+  });
+
+  it.each([true, false])("toggles the current page through its content script with automatic reminders %s", async automatic => {
+    let enabled = false;
+    const sendMessage = installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled } };
+      return { ok: true, data: true };
+    });
+    const sendToPage = vi.fn(async (_tabId: number, message: { enabled: boolean }) => {
+      enabled = message.enabled;
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome.tabs, { sendMessage: sendToPage });
+    Object.assign(chrome, { storage: { local: { get: async () => ({ "ui.selectionToolbarEnabled": automatic }) } } });
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('.page-header [role="switch"]')!;
+    expect(control?.getAttribute("aria-checked")).toBe("false");
+    await act(async () => control.click());
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(sendToPage).toHaveBeenCalledWith(7, { type: "page.mode.set", expectedUrl: "https://example.test/article", enabled: true }, { frameId: 0 });
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.mode.put" }));
+    await act(async () => control.click());
+    expect(control.getAttribute("aria-checked")).toBe("false");
+    expect(sendToPage).toHaveBeenLastCalledWith(7, expect.objectContaining({ enabled: false }), { frameId: 0 });
+  });
+
+  it.each([undefined, { ok: true, data: false }, { ok: false, error: "Resolve the unsaved change." }, "disconnected"])("retains page mode when the content script cannot toggle: %j", async response => {
+    const sendMessage = installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: 7, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      return { ok: true, data: true };
+    });
+    Object.assign(chrome.tabs, { sendMessage: vi.fn(async () => {
+      if (response === "disconnected") throw Error("Receiving end does not exist.");
+      return response;
+    }) });
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('.page-header [role="switch"]')!;
+    await act(async () => control.click());
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(1);
+    expect(control.getAttribute("aria-checked")).toBe("true");
+    expect(host.querySelector('[role="alert"]')?.textContent).toBeTruthy();
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.mode.put" }));
+  });
+
+  it.each(["tab", "URL", "loading"])("ignores duplicate page toggles and late errors after a %s change", async change => {
+    const tab = { id: 7, windowId: 1, url: "https://example.test/article", title: "Article" };
+    let updated!: TabUpdatedListener;
+    let activated!: TabActivatedListener;
+    let finish!: (value: unknown) => void;
+    const sendMessage = installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: tab.id, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      return { ok: true, data: true };
+    }, tab, listener => { updated = listener; }, undefined, listener => { activated = listener; });
+    Object.assign(chrome.tabs, { sendMessage: vi.fn(() => new Promise(resolve => { finish = resolve; })) });
+    const host = await mount("sidepanel");
+    const control = host.querySelector<HTMLButtonElement>('.page-header [role="switch"]')!;
+    await act(async () => { control.click(); control.click(); });
+    expect(chrome.tabs.sendMessage).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      if (change === "tab") {
+        tab.id = 8;
+        activated({ tabId: 8, windowId: 1 });
+      } else if (change === "URL") {
+        tab.url = "https://example.test/next";
+        updated(tab.id, { url: tab.url });
+      } else updated(tab.id, { status: "loading" });
+    });
+    await act(async () => finish({ ok: false, error: "Old page error" }));
+    expect(host.querySelector('[role="alert"]')?.textContent ?? "").not.toContain("Old page error");
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "page.mode.put" }));
   });
 
   it("does not let a late automatic-mode snapshot replace the latest manual mode", async () => {
@@ -1500,6 +1582,7 @@ it("retains a conflicting revision-bound draft until the reader explicitly loads
   const sent = installChrome(message => {
     if (message.type === "settings.get") return { ok: true, data: settings };
     if (message.type === "annotations.query") return { ok: true, data: { items: [stored] } };
+    if (message.type === "annotations.get") return { ok: true, data: stored };
     if (message.type === "annotations.put") {
       if (message.expectedRevision !== stored.revision)
         return { ok: false, code: "CONFLICT", error: "Changed in another tab" };

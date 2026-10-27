@@ -13,9 +13,10 @@ function fixture(
   pdfContext?: () => Promise<unknown>,
   openPdf?: () => Promise<unknown>,
   pageMode?: () => Promise<{ enabled: boolean }>,
-  putMode?: () => Promise<{ enabled: boolean }>,
+  putMode?: (enabled: boolean) => Promise<{ enabled: boolean }>,
+  disabledOrigins: string[] = [],
 ) {
-  let settings = { ...DEFAULT_SETTINGS };
+  let settings = { ...DEFAULT_SETTINGS, disabledOrigins };
   let listener: ((message: { type: string }) => void) | undefined;
   let reads = 0;
   const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, area: string) => void>();
@@ -26,7 +27,7 @@ function fixture(
     runtime: {
       sendMessage: async (message: Record<string, unknown>) => {
         messages.push(message);
-        if (message.type === 'page.mode.put' && putMode) return { ok: true, data: await putMode() };
+        if (message.type === 'page.mode.put' && putMode) return { ok: true, data: await putMode(message.enabled === true) };
         if (message.type === 'page.mode.get' && pageMode) return { ok: true, data: await pageMode() };
         if (message.type === 'settings.get') return { ok: true, data: settings };
         if (message.type === 'pdf.context.get' && pdfContext)
@@ -241,19 +242,33 @@ it('ignores an old enable reply after a newer explicit disable has been read', a
 });
 
 
-it('exposes manual page controls only while automatic reminders are off', async () => {
-  const f = fixture(async () => ({ 'ui.selectionToolbarEnabled': true }),
-    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }));
+it.each([true, false])('keeps the page toggle usable when automatic reminders are %s', async automatic => {
+  let enabled = false;
+  const f = fixture(async () => ({ 'ui.selectionToolbarEnabled': automatic }),
+    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }), undefined,
+    async () => ({ enabled }), async next => ({ enabled: enabled = next }));
   await vi.waitFor(() => expect(f.button.disabled).toBe(false));
   f.button.click();
   const root = f.host.shadowRoot!;
-  await vi.waitFor(() => expect(root.querySelector('[data-action="sidebar"]')).not.toBeNull());
-  await vi.waitFor(() => expect(root.querySelector('[role="menu"]')?.getAttribute("aria-busy")).toBe("false"));
-  expect(root.querySelector('[data-action="toggle"]')).toBeNull();
-  f.change('ui.selectionToolbarEnabled', false);
-  await vi.waitFor(() => expect(root.querySelector('[data-action="toggle"]')).not.toBeNull());
-  f.change('ui.selectionToolbarEnabled', true);
-  await vi.waitFor(() => expect(root.querySelector('[data-action="toggle"]')).toBeNull());
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-action="toggle"]')?.textContent).toBe('开启本页标注'));
+  root.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  await vi.waitFor(() => expect(window.__webInkBootstrap?.isEnabled()).toBe(true));
+  expect(f.messages).toContainEqual({ type: 'page.mode.put', pageUrl: location.href, enabled: true });
+  await vi.waitFor(() => expect(root.querySelector<HTMLButtonElement>('[data-action="toggle"]')?.textContent).toBe('关闭本页标注'));
+  root.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  await vi.waitFor(() => expect(window.__webInkBootstrap?.isEnabled()).toBe(false));
+  expect(f.messages).toContainEqual({ type: 'page.mode.put', pageUrl: location.href, enabled: false });
+});
+
+it('disables the page toggle on a paused website', async () => {
+  const f = fixture(async () => ({ 'ui.selectionToolbarEnabled': true }),
+    async () => ({ kind: 'unavailable', reason: 'not-pdf', candidates: [] }), undefined,
+    async () => ({ enabled: false }), undefined, [location.origin]);
+  await vi.waitFor(() => expect(f.button.disabled).toBe(false));
+  f.button.click();
+  await vi.waitFor(() => expect(f.host.shadowRoot!.querySelector<HTMLButtonElement>('[data-action="toggle"]')?.disabled).toBe(true));
+  f.host.shadowRoot!.querySelector<HTMLButtonElement>('[data-action="toggle"]')!.click();
+  expect(f.messages.some(message => message.type === 'page.mode.put')).toBe(false);
 });
 
 it('keeps a live reminder choice when initial appearance storage resolves late', async () => {

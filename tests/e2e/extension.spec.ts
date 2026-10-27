@@ -162,17 +162,16 @@ async function selectAndMark(page: Page, selector = "#selection strong") {
     .toBe(1);
   await expect(page.locator(".toast")).toContainText("已保存到本机");
 }
-test("automatic reminders activate current and new pages despite stored off modes, except paused sites", async () => {
+test("automatic reminders activate current and new pages except paused sites", async () => {
   await enable();
   const first = await article(false);
   const toggle = first.locator(".web-ink-palette-toggle");
   await expect(toggle).toHaveAttribute("aria-pressed", "false");
-  await rpc(manager, { type: "page.mode.put", pageUrl: first.url(), enabled: false });
   await manager.evaluate(() => chrome.storage.local.set({ "ui.selectionToolbarEnabled": true }));
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
   await toggle.click();
   await expect(first.locator(".web-ink-palette-menu")).toHaveAttribute("aria-busy", "false");
-  await expect(first.getByRole("menuitem", { name: "关闭本页标注", exact: true })).toHaveCount(0);
+  await expect(first.getByRole("menuitem", { name: "关闭本页标注", exact: true })).toBeVisible();
   await first.keyboard.press("Escape");
   await selectAndMark(first);
   await first.reload();
@@ -212,6 +211,70 @@ test("automatic reminders activate current and new pages despite stored off mode
   await select(first);
   await expect(first.getByRole("button", { name: "高亮 #facd5a", exact: true })).not.toBeVisible();
   expect(await rpc(manager, { type: "annotations.list" })).toHaveLength(2);
+});
+
+test("page toggle survives reload and automatic mode changes while new pages inherit", async () => {
+  await enable();
+  const page = await article();
+  const toggle = page.locator(".web-ink-palette-toggle");
+  await selectAndMark(page);
+  const saved = await rpc<any[]>(manager, { type: "annotations.list" });
+  await openSidepanel(page);
+  const automatic = manager.getByRole("switch", { name: "自动显示标注工具", exact: true });
+  const display = manager.getByRole("switch", { name: "显示标注", exact: true });
+  await expect(automatic).toHaveAttribute("aria-checked", "true");
+  await expect(display).toHaveAttribute("aria-checked", "true");
+
+  await setPageMode(page, false);
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBe(0);
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].id).toBe(saved[0].id);
+
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-checked", "false");
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-checked", "true");
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  const next = await context.newPage();
+  await next.goto("http://127.0.0.1:4173/article?toggle=fresh");
+  await expect(next.locator(".web-ink-palette-toggle")).toHaveAttribute("aria-pressed", "true");
+
+  await page.bringToFront();
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  await setPageMode(page, true);
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect(display).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => page.evaluate(() => CSS.highlights.size)).toBeGreaterThan(0);
+  expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].id).toBe(saved[0].id);
+  await display.click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await expect(display).toHaveAttribute("aria-checked", "false");
+  await automatic.click();
+  await expect(automatic).toHaveAttribute("aria-checked", "false");
+  await display.click();
+  await expect(display).toHaveAttribute("aria-checked", "true");
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+});
+
+test("paused sites cannot enable the page from the pencil menu", async () => {
+  await enable();
+  const page = await article();
+  await openSidepanel(page);
+  await manager.locator("summary[aria-label='更多操作']").click();
+  await manager.getByRole("button", { name: "暂停此网站", exact: true }).click();
+  await expect(manager.getByText("此网站已暂停，现有标注不会显示。", { exact: true })).toBeVisible();
+  const toggle = page.locator(".web-ink-palette-toggle");
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(page.getByRole("menuitem", { name: "开启本页标注", exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
 });
 
 test("web preset shortcut captures live text and keeps ordinary copy inert", async () => {
@@ -1589,8 +1652,8 @@ test("sidepanel preserves per-annotation notes and its display switch controls p
   expect((await rpc<any[]>(manager, { type: "annotations.list" }))[0].note).toBe(
     "从侧栏保存的笔记",
   );
-  await rpc(manager, { type: "page.mode.put", pageUrl: page.url(), enabled: true });
   await manager.getByRole("switch", { name: "自动显示标注工具", exact: true }).click();
+  await setPageMode(page, true);
   const switchControl = manager.getByRole("switch", {
     name: "显示标注",
     exact: true,

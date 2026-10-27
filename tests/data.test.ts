@@ -60,6 +60,30 @@ afterEach(async () => {
 });
 
 describe('handleDataRequest annotation boundary', () => {
+  it('reads a current annotation by ID only for trusted extension UI and returns null for a missing ID', async () => {
+    await db.annotations.put(textAnnotation('target', 7));
+    expect(await handleDataRequest({ type: 'annotations.get', id: 'target' }, { trusted: true }))
+      .toEqual({ ok: true, data: textAnnotation('target', 7) });
+    expect(await handleDataRequest({ type: 'annotations.get', id: 'missing' }, { trusted: true }))
+      .toEqual({ ok: true, data: null });
+    for (const senderPage of [pageUrl, otherPageUrl]) {
+      expect(await handleDataRequest({ type: 'annotations.get', id: 'target' }, { trusted: false, pageUrl: senderPage }))
+        .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    }
+  });
+
+  it.each([
+    { type: 'annotations.get' },
+    { type: 'annotations.get', id: '' },
+    { type: 'annotations.get', id: '../target' },
+    { type: 'annotations.get', id: 7 },
+    { type: 'annotations.get', id: 'a'.repeat(129) },
+    { type: 'annotations.get', id: 'target', pageUrl },
+  ])('rejects malformed direct annotation reads: %j', async (request) => {
+    expect(await handleDataRequest(request, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+  });
+
   it('commits a create once and returns the same record for an identical retry', async () => {
     const request = { type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 };
     const first = await handleDataRequest(request, { trusted: false, pageUrl });
@@ -331,8 +355,8 @@ describe('page mode boundary', () => {
     expect(await db.annotations.get('annotation-1')).toMatchObject({ note: 'A note', revision: 1 });
   });
 
-  it('lets automatic selection override a stored disabled webpage without rewriting its manual mode', async () => {
-    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true });
+  it('keeps historical disabled pages without an override on the automatic fallback', async () => {
+    await db.pages.put({ url: pageUrl, title: 'Legacy page', updatedAt: '2026-09-18T00:00:00.000Z', enabled: false });
     const disabled = await db.pages.get(pageUrl);
     local[SELECTION_TOOLBAR_KEY] = true;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: false, pageUrl }))
@@ -344,14 +368,27 @@ describe('page mode boundary', () => {
     expect(await db.pages.get(pageUrl)).toEqual(disabled);
   });
 
-  it('acknowledges the effective automatic mode while preserving the requested manual mode', async () => {
-    local[SELECTION_TOOLBAR_KEY] = true;
+  it.each([false, true])('persists an explicit page choice when automatic reminders start at %s', async (automatic) => {
+    local[SELECTION_TOOLBAR_KEY] = automatic;
     expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: false, modeOverride: true });
+    db.close();
+    await db.open();
+    for (const nextAutomatic of [true, false, true]) {
+      local[SELECTION_TOOLBAR_KEY] = nextAutomatic;
+      expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+        .toEqual({ ok: true, data: { enabled: false } });
+      expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: otherPageUrl }, { trusted: true }))
+        .toEqual({ ok: true, data: { enabled: nextAutomatic } });
+    }
+    expect(await db.pages.get(otherPageUrl)).toBeUndefined();
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: true } });
-    expect((await db.pages.get(pageUrl))?.enabled).toBe(false);
     local[SELECTION_TOOLBAR_KEY] = false;
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
-      .toEqual({ ok: true, data: { enabled: false } });
+      .toEqual({ ok: true, data: { enabled: true } });
+    expect(await db.pages.get(pageUrl)).toMatchObject({ enabled: true, modeOverride: true });
   });
 
   it('lets a paused origin override inherited and explicit enabled modes without rewriting either', async () => {
@@ -393,6 +430,12 @@ describe('page mode boundary', () => {
     expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: pdfUrl }, { trusted: true }))
       .toEqual({ ok: true, data: { enabled: false } });
     expect(await db.pages.count()).toBe(0);
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: true }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: true } });
+    expect(await db.pages.get(pdfUrl)).not.toHaveProperty('modeOverride');
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl: pdfUrl, enabled: false }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await db.pages.get(pdfUrl)).not.toHaveProperty('modeOverride');
   });
 
   it('defaults a missing page to disabled without creating a page record', async () => {
@@ -414,15 +457,77 @@ describe('page mode boundary', () => {
       .toEqual({ ok: true, data: { enabled: false } });
   });
 
-  it('keeps page mode while annotation writes and overwrite imports update page metadata', async () => {
-    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true });
+  it.each([false, true])('keeps explicit mode %s and exact page statistics through annotation writes, restores and imports', async (enabled) => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled }, { trusted: true });
     await handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true });
-    expect((await db.pages.get(pageUrl))?.enabled).toBe(true);
+    const checkPage = async (title: string) => {
+      const page = await db.pages.get(pageUrl);
+      expect(page).toMatchObject({ enabled, modeOverride: true, title });
+      expect(await db.stats.get('library')).toMatchObject({
+        pageCount: 1, pageBytes: new TextEncoder().encode(JSON.stringify(page)).byteLength,
+      });
+      expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+        .toEqual({ ok: true, data: { enabled } });
+    };
+    await checkPage('Article');
+    const saved = textAnnotation('annotation-1', 1);
+    expect(await handleDataRequest({ type: 'annotations.delete', id: saved.id, expectedRevision: 1 }, { trusted: true }))
+      .toMatchObject({ ok: true });
+    expect(await handleDataRequest({ type: 'annotations.restore', annotation: { ...saved, pageTitle: 'Restored article' } }, { trusted: true }))
+      .toMatchObject({ ok: true });
+    await checkPage('Restored article');
 
-    const imported = { ...textAnnotation('annotation-1'), note: 'from backup', updatedAt: '2026-09-18T00:02:00.000Z' };
+    const imported = { ...textAnnotation('annotation-1'), pageTitle: 'Imported article', note: 'from backup', updatedAt: '2026-09-18T00:02:00.000Z' };
     const backup = { format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T03:00:00.000Z', annotations: [imported] };
-    await handleDataRequest({ type: 'backup.import', backup, overwrite: true }, { trusted: true });
-    expect((await db.pages.get(pageUrl))?.enabled).toBe(true);
+    expect(await handleDataRequest({ type: 'backup.import', backup, overwrite: true }, { trusted: true }))
+      .toMatchObject({ ok: true });
+    await checkPage('Imported article');
+    const added = { ...textAnnotation('annotation-2'), pageTitle: 'Added article' };
+    expect(await handleDataRequest({ type: 'backup.import', backup: { ...backup, annotations: [added] }, overwrite: false }, { trusted: true }))
+      .toMatchObject({ ok: true });
+    await checkPage('Added article');
+    expect((await db.annotations.toArray()).every((annotation) => !('modeOverride' in annotation))).toBe(true);
+    const exported = await handleDataRequest({ type: 'backup.export' }, { trusted: true });
+    expect(exported).toMatchObject({ ok: true });
+    expect(JSON.stringify(exported)).not.toContain('modeOverride');
+  });
+
+  it('preserves a page-specific close through site pause and resume without affecting another page', async () => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true });
+    const closed = await db.pages.get(pageUrl);
+    local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: ['https://example.test'] };
+    expect(await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }))
+      .toMatchObject({ ok: false, code: 'FORBIDDEN' });
+    expect(await db.pages.get(pageUrl)).toEqual(closed);
+    const sameOrigin = 'https://example.test/another-page';
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: sameOrigin }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    local.settings = { language: 'en', defaultColor: '#facc15', disabledOrigins: [] };
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl: sameOrigin }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: true } });
+    expect(await db.pages.get(pageUrl)).toEqual(closed);
+  });
+
+  it('keeps the explicit flag atomic with mode writes and concurrent annotation metadata updates', async () => {
+    local[SELECTION_TOOLBAR_KEY] = true;
+    const results = await Promise.all([
+      handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true }, { trusted: true }),
+      handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true }),
+      handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: false }, { trusted: true }),
+    ]);
+    expect(results.every((result) => result.ok)).toBe(true);
+    const page = await db.pages.get(pageUrl);
+    expect(page).toMatchObject({ title: 'Article', enabled: false, modeOverride: true });
+    expect(await db.stats.get('library')).toMatchObject({
+      pageCount: 1, annotationCount: 1,
+      pageBytes: new TextEncoder().encode(JSON.stringify(page)).byteLength,
+    });
+    expect(await handleDataRequest({ type: 'page.mode.get', pageUrl }, { trusted: true }))
+      .toEqual({ ok: true, data: { enabled: false } });
   });
 
   it('rejects cross-page, malformed, oversized, and paused-site enable requests', async () => {

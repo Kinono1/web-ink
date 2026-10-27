@@ -47,6 +47,22 @@ describe('content notifications', () => {
     expect(container.querySelector('button')?.textContent).toBe('retry');
   });
 
+  it('clears only the requested passive key without hiding a sticky error', () => {
+    const container = toast(); const notices = createNotifications(container);
+    notices.show('other', { passive: true, key: 'other' });
+    (container.querySelector('button:last-child') as HTMLButtonElement).click();
+    notices.show('restore', { passive: true, key: 'restore' });
+    (container.querySelector('button:last-child') as HTMLButtonElement).click();
+    notices.show('save failed', { sticky: true });
+    notices.clear('restore');
+    expect(container.textContent).toContain('save failed');
+    notices.hide();
+    notices.show('other again', { passive: true, key: 'other' });
+    expect(container.textContent).toBe('');
+    notices.show('restore again', { passive: true, key: 'restore' });
+    expect(container.textContent).toContain('restore again');
+  });
+
   it('renders message and action labels as text, not HTML', () => {
     const container = toast(); const notices = createNotifications(container);
     notices.show('<img src=x onerror=alert(1)>', { actions: [{ label: '<b>Retry</b>', run: () => undefined }] });

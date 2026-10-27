@@ -117,6 +117,8 @@ export interface PageRecord {
   title: string;
   updatedAt: string;
   enabled?: boolean;
+  /** Local webpage choice; absent on legacy pages that inherit automatic mode. */
+  modeOverride?: true;
 }
 export interface PageMode {
   enabled: boolean;
@@ -261,6 +263,8 @@ export type Request =
   | { type: "pdf.prepared.chunk"; token: string; index: number }
   | { type: "pdf.prepared.release"; token: string }
   | { type: "annotations.list"; pageUrl?: string }
+  /** Extension UI only: read the current revision without pagination. */
+  | { type: "annotations.get"; id: string }
   | {
       type: "annotations.put";
       annotation: Annotation;

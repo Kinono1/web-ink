@@ -32,6 +32,7 @@ beforeEach(() => {
   vi.stubGlobal('chrome', {
     runtime: {
       id: 'web-ink-test',
+      getURL: (path: string) => `chrome-extension://web-ink-test/${path}`,
       sendMessage: async (message: { type: string; enabled?: boolean }) => {
         messages.push(message);
         if (message.type === 'runtime.health') return { ok: true, data: HEALTH };
@@ -194,6 +195,268 @@ describe('content runtime generations', () => {
     expect(owner.isEnabled()).toBe(false);
     expect(owner.view.root.querySelector<HTMLButtonElement>('.web-ink-palette-toggle')!.dataset.blocked).toBe('true');
     expect(messages.filter(message => message.type === 'engine.ensure')).toHaveLength(0);
+  });
+});
+
+describe('directed page mode requests', () => {
+  const sender = { id: 'web-ink-test', url: 'chrome-extension://web-ink-test/sidepanel.html' };
+  async function change(enabled: boolean, expectedUrl = location.href, source = sender) {
+    const respond = vi.fn();
+    for (const listener of listeners)
+      listener({ type: 'page.mode.set', enabled, expectedUrl } as { type: string }, source, respond);
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+    return respond.mock.calls[0]![0];
+  }
+
+  async function runningPage() {
+    modeEnabled = true;
+    document.body.innerHTML = '<main><p id="mode-source">before chosen after</p></main>';
+    const owner = bootstrap();
+    await idle();
+    (await import('../entrypoints/engine')).default.main();
+    await vi.waitFor(() => expect(messages.some(message => message.type === 'annotations.list')).toBe(true));
+    return owner;
+  }
+
+  it('uses the live engine to close and reopen a page', async () => {
+    const owner = await runningPage();
+    expect(await change(false)).toEqual({ ok: true, data: true });
+    expect(modeEnabled).toBe(false);
+    expect(owner.isEnabled()).toBe(false);
+    expect(await change(true)).toEqual({ ok: true, data: true });
+    expect(modeEnabled).toBe(true);
+    expect(owner.isEnabled()).toBe(true);
+  });
+
+  it.each(['failed draft', 'pending write'])('retains the mode and real annotation draft during a %s', async state => {
+    const owner = await runningPage();
+    const originalSend = chrome.runtime.sendMessage;
+    let finish!: (value: unknown) => void;
+    chrome.runtime.sendMessage = ((message: { type: string }) => {
+      if (message.type === 'annotations.put') {
+        messages.push(message);
+        return state === 'pending write'
+          ? new Promise<unknown>(resolve => { finish = resolve; })
+          : Promise.resolve({ ok: false, error: 'Save denied' });
+      }
+      return originalSend(message);
+    }) as typeof originalSend;
+    const node = document.querySelector('#mode-source')!.firstChild!;
+    const range = document.createRange();
+    range.setStart(node, 7); range.setEnd(node, 13);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: '!', code: 'Digit1', altKey: true, shiftKey: true, bubbles: true, cancelable: true,
+    }));
+    await vi.waitFor(() => expect(messages.filter(message => message.type === 'annotations.put')).toHaveLength(1));
+    if (state === 'failed draft')
+      await vi.waitFor(() => expect(owner.view.toast.textContent).toContain('Save denied'));
+    expect(await change(false)).toMatchObject({ ok: false });
+    expect(modeEnabled).toBe(true);
+    expect(owner.isEnabled()).toBe(true);
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+    expect(owner.view.toast.textContent).toContain('请先处理尚未保存的修改');
+    if (state === 'pending write') {
+      finish({ ok: false, error: 'Save denied' });
+      await vi.waitFor(() => expect(owner.view.toast.textContent).toContain('Save denied'));
+    }
+    const retry = [...owner.view.toast.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent === '重试保存');
+    expect(retry).toBeTruthy();
+    chrome.runtime.sendMessage = ((message: { type: string; annotation?: Annotation }) => {
+      if (message.type === 'annotations.put') {
+        messages.push(message);
+        return Promise.resolve({ ok: true, data: { ...message.annotation, revision: 1 } });
+      }
+      return originalSend(message);
+    }) as typeof originalSend;
+    retry!.click();
+    await vi.waitFor(() => expect(owner.view.toast.textContent).toContain('已保存到本机'));
+    const writes = messages.filter(message => message.type === 'annotations.put') as unknown as Array<{ annotation: Annotation }>;
+    expect(writes).toHaveLength(2);
+    expect(writes[1]!.annotation).toEqual(writes[0]!.annotation);
+    expect(await change(false)).toEqual({ ok: true, data: true });
+    expect(modeEnabled).toBe(false);
+  });
+
+  it.each(['success', 'write failure', 'route change', 'permission change', 'replacement'])('keeps closing atomic and recovers safely after %s', async outcome => {
+    const owner = await runningPage();
+    const engineEntry = (await import('../entrypoints/engine')).default;
+    const send = chrome.runtime.sendMessage;
+    let finish!: (value: unknown) => void;
+    chrome.runtime.sendMessage = ((message: { type: string }) => {
+      if (message.type === 'page.mode.put') {
+        messages.push(message);
+        return new Promise<unknown>(resolve => { finish = resolve; });
+      }
+      if (message.type === 'annotations.put') {
+        messages.push(message);
+        return Promise.resolve({ ok: false, error: 'Save denied' });
+      }
+      if (message.type === 'engine.ensure') engineEntry.main();
+      return send(message);
+    }) as typeof send;
+    const selectAndSave = () => {
+      const node = document.querySelector('#mode-source')!.firstChild!;
+      const range = document.createRange();
+      range.setStart(node, 7); range.setEnd(node, 13);
+      window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+      document.dispatchEvent(new KeyboardEvent('keydown', {
+        key: '!', code: 'Digit1', altKey: true, shiftKey: true, bubbles: true, cancelable: true,
+      }));
+    };
+    const closing = change(false);
+    void closing.catch(() => undefined);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    // A mode broadcast, explicit reinjection, and a save gesture must not reopen
+    // the engine while the closing transaction is waiting on durable storage.
+    for (const listener of listeners) listener({ type: 'page.mode.changed' }, {}, () => {});
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    engineEntry.main();
+    selectAndSave();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(messages.filter(message => message.type === 'annotations.put')).toHaveLength(0);
+    expect(window.__webInkEngine?.snapshot().enabled ?? false).toBe(false);
+    let replacement: ReturnType<typeof bootstrap> | undefined;
+    if (outcome === 'route change') {
+      history.replaceState(null, '', '/after-closing-navigation');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(window.__webInkEngine?.snapshot().enabled ?? false).toBe(false);
+    } else if (outcome === 'permission change') {
+      for (const listener of listeners) listener({ type: 'permissions.revoked' }, {}, () => {});
+      for (const listener of listeners) listener({ type: 'permissions.restored' }, {}, () => {});
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(window.__webInkEngine?.snapshot().enabled ?? false).toBe(false);
+    } else if (outcome === 'replacement') {
+      replacement = bootstrap(NEXT_HEALTH);
+      await vi.waitFor(() => expect(replacement!.isEnabled()).toBe(true));
+      engineEntry.main();
+    }
+    if (outcome === 'success') {
+      modeEnabled = false;
+      finish({ ok: true, data: { enabled: false } });
+      expect(await closing).toEqual({ ok: true, data: true });
+      expect(owner.isEnabled()).toBe(false);
+      expect(window.__webInkEngine?.snapshot().enabled ?? false).toBe(false);
+      return;
+    }
+    finish({ ok: false, error: 'Mode storage denied' });
+    expect(await closing).toMatchObject({ ok: false });
+    expect(modeEnabled).toBe(true);
+    const active = replacement ?? owner;
+    await vi.waitFor(() => expect(active.isEnabled()).toBe(true));
+    await vi.waitFor(() => expect(window.__webInkEngine?.snapshot()).toMatchObject({ enabled: true, pageUrl: location.href }));
+    if (replacement) expect(window.__webInkEngine?.generation).toBe(NEXT_HEALTH.generation);
+    selectAndSave();
+    await vi.waitFor(() => expect(messages.filter(message => message.type === 'annotations.put')).toHaveLength(1));
+  });
+
+  it('retains a replacement engine draft when the old close commits and broadcasts during its save', async () => {
+    await runningPage();
+    const engineEntry = (await import('../entrypoints/engine')).default;
+    const send = chrome.runtime.sendMessage;
+    let finishClose!: (value: unknown) => void;
+    let finishSave!: (value: unknown) => void;
+    const writes: Array<{ annotation: Annotation; expectedRevision: number }> = [];
+    chrome.runtime.sendMessage = ((message: { type: string; annotation?: Annotation; expectedRevision?: number }) => {
+      if (message.type === 'page.mode.put')
+        return new Promise<unknown>(resolve => { finishClose = resolve; });
+      if (message.type === 'annotations.put') {
+        writes.push({ annotation: message.annotation!, expectedRevision: message.expectedRevision! });
+        if (writes.length === 1)
+          return new Promise<unknown>(resolve => { finishSave = resolve; });
+        const stored = { ...message.annotation!, revision: message.expectedRevision! + 1 };
+        annotationRecords = [stored];
+        return Promise.resolve({ ok: true, data: stored });
+      }
+      if (message.type === 'engine.ensure') engineEntry.main();
+      return send(message);
+    }) as typeof send;
+    const closing = change(false);
+    void closing.catch(() => undefined);
+    await vi.waitFor(() => expect(finishClose).toBeDefined());
+    const replacement = bootstrap(NEXT_HEALTH);
+    await vi.waitFor(() => expect(replacement.isEnabled()).toBe(true));
+    engineEntry.main();
+    await vi.waitFor(() => expect(window.__webInkEngine?.snapshot().enabled).toBe(true));
+    const bridge = window.__webInkEngine!;
+    const node = document.querySelector('#mode-source')!.firstChild!;
+    const range = document.createRange();
+    range.setStart(node, 7); range.setEnd(node, 13);
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range);
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: '!', code: 'Digit1', altKey: true, shiftKey: true, bubbles: true, cancelable: true,
+    }));
+    await vi.waitFor(() => expect(writes).toHaveLength(1));
+    expect(annotationRecords).toHaveLength(0);
+    modeEnabled = false;
+    finishClose({ ok: true, data: { enabled: false } });
+    for (const listener of listeners)
+      listener({ type: 'page.mode.changed', pageUrl: location.href, enabled: false } as { type: string }, {}, () => {});
+    expect(await closing).toMatchObject({ ok: false });
+    await vi.waitFor(() => expect(replacement.isEnabled()).toBe(false));
+    await vi.waitFor(() => expect(bridge.snapshot().enabled).toBe(false));
+    expect(window.__webInkEngine).toBe(bridge);
+    expect(bridge.generation).toBe(NEXT_HEALTH.generation);
+    expect(annotationRecords).toHaveLength(0);
+    finishSave({ ok: false, error: 'Replacement save denied' });
+    await vi.waitFor(() => expect(replacement.view.toast.textContent).toContain('Replacement save denied'));
+    const retry = [...replacement.view.toast.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent === '重试保存');
+    const discard = [...replacement.view.toast.querySelectorAll<HTMLButtonElement>('button')]
+      .find(button => button.textContent === '放弃本次修改');
+    expect(retry).toBeTruthy();
+    expect(discard).toBeTruthy();
+    retry!.click();
+    await vi.waitFor(() => expect(replacement.view.toast.textContent).toContain('已保存到本机'));
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toEqual(writes[0]);
+    expect(annotationRecords).toEqual([{ ...writes[0]!.annotation, revision: 1 }]);
+    expect(annotationRecords[0]).toMatchObject({ kind: 'text', target: { exact: 'chosen' } });
+    expect(modeEnabled).toBe(false);
+    expect(replacement.isEnabled()).toBe(false);
+  });
+
+  it.each([
+    { id: 'foreign', url: 'chrome-extension://web-ink-test/sidepanel.html' },
+    { id: 'web-ink-test', url: 'https://example.test/sidepanel.html' },
+    { id: 'web-ink-test', url: 'chrome-extension://web-ink-test.evil/sidepanel.html' },
+  ])('rejects an unauthorized sender: %j', async source => {
+    await runningPage();
+    expect(await change(false, location.href, source)).toMatchObject({ ok: false });
+    expect(modeEnabled).toBe(true);
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+  });
+
+  it('rejects an old URL before writing mode', async () => {
+    await runningPage();
+    const oldUrl = location.href;
+    history.replaceState(null, '', '/next-mode-page');
+    expect(await change(false, oldUrl)).toMatchObject({ ok: false });
+    expect(modeEnabled).toBe(true);
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(0);
+  });
+
+  it('rejects a duplicate request while the first mode write is pending', async () => {
+    await runningPage();
+    const send = chrome.runtime.sendMessage;
+    let finish!: (value: unknown) => void;
+    chrome.runtime.sendMessage = ((message: { type: string }) => {
+      if (message.type === 'page.mode.put') {
+        messages.push(message);
+        return new Promise<unknown>(resolve => { finish = resolve; });
+      }
+      return send(message);
+    }) as typeof send;
+    const first = change(false);
+    void first.catch(() => undefined);
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    expect(await change(false)).toMatchObject({ ok: false });
+    expect(messages.filter(message => message.type === 'page.mode.put')).toHaveLength(1);
+    modeEnabled = false;
+    finish({ ok: true, data: { enabled: false } });
+    expect(await first).toEqual({ ok: true, data: true });
   });
 });
 

@@ -90,14 +90,13 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   view.host.dataset.webInkGeneration = health.generation;
   let disposed = false;
   let enabled = false;
-  let automaticReminders = false;
-  let reminderPreferenceVersion = 0;
   let blocked = false;
   let accessReady = false;
   let permissionRevoked = false;
   let permissionEpoch = 0;
   let modeReadVersion = 0;
   let busy = true;
+  let closing = false;
   let language: Settings["language"] = DEFAULT_SETTINGS.language;
   let currentUrl = pageKey(location.href);
   const updateToggle = () => {
@@ -126,7 +125,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     return false;
   };
   const ensureEngine = async (): Promise<boolean> => {
-    if (disposed || !enabled || blocked) return false;
+    if (disposed || closing || !enabled || blocked) return false;
     let bridge = window.__webInkEngine;
     if (bridge?.generation !== health.generation) bridge = undefined;
     bridge?.start(health.generation);
@@ -136,6 +135,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     // an extension reload or a document navigation in the intervening microtask.
     if (
       disposed ||
+      closing ||
       !enabled ||
       blocked ||
       pageKey(location.href) !== currentUrl
@@ -181,7 +181,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       stopEngine();
     } finally {
       if (!disposed && version === modeReadVersion && epoch === permissionEpoch && pageKey(location.href) === url) {
-        busy = false;
+        busy = closing;
         updateToggle();
         selectionSession.refresh();
       }
@@ -191,16 +191,22 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     if (
       disposed ||
       busy ||
+      closing ||
       blocked ||
       (!next && window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
     )
       return false;
     const version = ++modeReadVersion;
     busy = true;
+    closing = !next;
     updateToggle();
     const url = pageKey(location.href);
     const epoch = permissionEpoch;
+    let changed = false;
     try {
+      // Stop synchronously after admitting the close: no save may start while
+      // storage is pending, and broadcasts/reinjection cannot restart the engine.
+      if (!next && !stopEngine()) return false;
       const mode = await request<PageMode>({
         type: "page.mode.put",
         pageUrl: url,
@@ -209,28 +215,36 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       if (disposed || epoch !== permissionEpoch || pageKey(location.href) !== url) return false;
       if (version !== modeReadVersion) {
         await refreshMode(false);
-        return enabled === next;
+        changed = enabled === next;
+      } else {
+        enabled = mode.enabled;
+        currentUrl = url;
+        changed = enabled ? await ensureEngine() : true;
       }
-      enabled = mode.enabled;
-      currentUrl = url;
-      if (enabled) return ensureEngine();
-      stopEngine();
-      return true;
     } catch {
-      return false;
+      changed = false;
     } finally {
-      if (!disposed && epoch === permissionEpoch) {
+      if (!next) {
+        // The route, permissions, or effective mode may have changed while the
+        // write was pending. Reopen only from a fresh read of the current page.
+        closing = false;
+        enabled = false;
+        accessReady = false;
+        if (!disposed) await refreshMode();
+      } else if (!disposed && epoch === permissionEpoch) {
         busy = false;
         updateToggle();
       }
     }
+    return changed && !disposed && accessReady && epoch === permissionEpoch &&
+      pageKey(location.href) === url && enabled === next;
   };
   const dispatch = async (
     action: "focus" | "rebind" | "draw" | "refresh",
     id?: string,
   ) => {
     // Ignore stale drawing messages before they can enable a page or load an engine.
-    if (disposed || action === "draw") return;
+    if (disposed || closing || action === "draw") return;
     if (pageKey(location.href) !== currentUrl) {
       stopEngine();
       await refreshMode();
@@ -244,7 +258,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   };
   const selectionSession = createWebSelection({
     host: view.host,
-    availability: () => blocked ? "paused" : !disposed && accessReady ? "ready" : "unsupported",
+    availability: () => blocked ? "paused" : !disposed && !closing && accessReady ? "ready" : "unsupported",
     save: async (range, color, isCurrent) => {
       const assertCurrent = () => {
         if (!isCurrent()) throw Error("The page or selection changed. Select the text again.");
@@ -337,7 +351,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
             : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
-    } else if (!automaticReminders && menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
+    } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
       items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
         label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
           : enabled ? "Disable page annotations" : "Enable page annotations" });
@@ -422,16 +436,11 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   // settings/theme changes and SPA routes must not restore this preference again.
   let appearanceVersion = 0;
   const initialAppearance = appearanceVersion;
-  const initialReminderPreference = reminderPreferenceVersion;
-  void Promise.resolve().then(() => chrome.storage.local.get([PALETTE_POSITION_KEY, PALETTE_SIZE_KEY, SELECTION_TOOLBAR_KEY]))
+  void Promise.resolve().then(() => chrome.storage.local.get([PALETTE_POSITION_KEY, PALETTE_SIZE_KEY]))
     .then(saved => {
       if (!disposed) {
         if (appearanceVersion === initialAppearance) toggle.setSize(normalizePaletteSize(saved[PALETTE_SIZE_KEY]), true);
         toggle.setPosition(readPalettePosition(saved[PALETTE_POSITION_KEY]));
-        if (reminderPreferenceVersion === initialReminderPreference) {
-          automaticReminders = saved[SELECTION_TOOLBAR_KEY] === true;
-          updateToggle();
-        }
       }
     })
     .catch(() => undefined);
@@ -442,18 +451,37 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       toggle.setSize(normalizePaletteSize(changes[PALETTE_SIZE_KEY]?.newValue));
     }
     if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) {
-      reminderPreferenceVersion++;
-      automaticReminders = changes[SELECTION_TOOLBAR_KEY]?.newValue === true;
       void refreshMode(false);
     }
   };
   try { chrome.storage?.onChanged?.addListener(onPreferences); } catch { /* Reload may invalidate storage before cleanup. */ }
   const onMessage = (
-    message: { type?: string; pageUrl?: string; action?: string; id?: string; diagnostic?: IeeePdfDiagnostic; stage?: string },
+    message: { type?: string; pageUrl?: string; expectedUrl?: string; enabled?: boolean; action?: string; id?: string; diagnostic?: IeeePdfDiagnostic; stage?: string },
     _sender: chrome.runtime.MessageSender,
     respond: (value: unknown) => void,
   ) => {
     if (disposed) return false;
+    if (message.type === "page.mode.set") {
+      if (_sender.id !== chrome.runtime.id || _sender.url !== chrome.runtime.getURL("sidepanel.html")) {
+        respond({ ok: false, error: "This annotation action requires the extension sidebar." });
+        return false;
+      }
+      if (typeof message.enabled !== "boolean" || message.expectedUrl !== location.href) {
+        respond({ ok: false, error: "The page changed. Refresh the sidebar and try again." });
+        return false;
+      }
+      const failure = {
+        ok: false,
+        error: language === "zh-CN"
+          ? "未能切换标注。请先处理未保存的修改或等待保存完成，再重试。"
+          : "Could not change annotations. Resolve unsaved changes or wait for saving to finish, then try again.",
+      };
+      void setEnabled(message.enabled).then(
+        changed => respond(changed ? { ok: true, data: true } : failure),
+        () => respond(failure),
+      );
+      return true;
+    }
     if (message.type === 'pdf.preparation.changed' && _sender.id === chrome.runtime.id && opening) {
       preparationPhase = message.stage ?? message.diagnostic?.phase;
       menu.update({ pending: true, status: pdfPreparationLabel(preparationPhase, language), items: menuItems() });
@@ -511,7 +539,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   const bootstrap: ContentBootstrap = {
     health,
     view,
-    isEnabled: () => !disposed && enabled && !blocked,
+    isEnabled: () => !disposed && !closing && enabled && !blocked,
     dispose: () => {
       if (disposed) return;
       disposed = true;
