@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import type { Language } from "../../../core/model";
 import { Icon } from "../helpers";
 import { COPY } from "../copy";
@@ -26,20 +26,24 @@ export function Empty({ title, text, action, icon }: {
     </section>
   );
 }
-export function PageHeader({ title, host, enabled, onToggle, toggleLabel, disabled = false }: {
+export function PageHeader({ title, host, enabled, onToggle, toggleLabel, scopeLabel, disabled = false, pending = false }: {
   title: string; host?: string; enabled: boolean; onToggle?: () => void;
-  toggleLabel: string; disabled?: boolean;
+  toggleLabel: string; scopeLabel: string; disabled?: boolean; pending?: boolean;
 }) {
+  const scopeId = useId();
   return (
     <section className="page-header">
       <strong title={title}>{title}</strong>
       <div className="page-context">
         {host ? <span>{host}</span> : null}
         {onToggle ? (
+          <>
+          <span id={scopeId} className="page-scope">{scopeLabel}</span>
           <button className={enabled ? "page-switch on" : "page-switch"} role="switch"
-            aria-checked={enabled} disabled={disabled} onClick={onToggle}>
+            aria-checked={enabled} aria-busy={pending} aria-describedby={scopeId} disabled={disabled} onClick={onToggle}>
             <span aria-hidden="true" />{toggleLabel}
           </button>
+          </>
         ) : null}
       </div>
     </section>
@@ -49,11 +53,14 @@ export function SelectionToolbarSwitch({ enabled, saving = false, onToggle, t, d
   enabled: boolean; saving?: boolean; onToggle: () => void;
   t: (typeof COPY)[Language]; describe?: boolean;
 }) {
+  const scopeId = useId();
   return (
     <div className={describe ? "selection-toolbar-setting described" : "selection-toolbar-setting"}>
       {describe ? <strong>{t.webpageSelectionToolbar}</strong> : null}
+      {!describe ? <span id={scopeId} className="selection-toolbar-scope">{t.allPagesScope}</span> : null}
       <button className={enabled ? "page-switch on" : "page-switch"} type="button" role="switch"
-        aria-label={t.selectionToolbar} aria-checked={enabled} disabled={saving} onClick={onToggle}>
+        aria-label={t.selectionToolbar} aria-describedby={!describe ? scopeId : undefined}
+        aria-checked={enabled} disabled={saving} onClick={onToggle}>
         <span aria-hidden="true" />{t.selectionToolbar}
       </button>
       {describe ? <p className="hint">{t.selectionToolbarDescription}</p> : null}

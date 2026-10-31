@@ -13,11 +13,13 @@ import { textLinkScope, textLinkUrl } from "../../core/text-link";
 import { annotationsAtPoint, matchingTextSelection } from "../annotation-hit";
 import { button, separator, svgElement, type ContentView } from "../view-lite";
 import type { DataEngine } from "./DataEngine";
+import type { Notifications } from "../notifications";
 
 /** Host surface supplied by {@link AnnotationController}; the data half exists first. */
 export interface UIControllerHost {
   readonly view: ContentView;
   readonly data: DataEngine;
+  readonly notifications?: Pick<Notifications, "clear">;
   settings: Settings;
   disposed: boolean;
   enabled: () => boolean;
@@ -308,6 +310,12 @@ export class UIController {
     this.selectedRange = range.cloneRange();
     const rect = range.getBoundingClientRect();
     this.engine.view.selection.replaceChildren();
+    if (this.rebinding?.kind === "text") {
+      const label = document.createElement("span");
+      label.className = "brand";
+      label.textContent = this.engine.label("重新绑定", "Rebind");
+      this.engine.view.selection.append(label);
+    }
     const primary = [
       ...new Set([...this.engine.data.recentColors, this.currentColor, ...COLORS.slice(0, 3)]),
     ].slice(0, 4);
@@ -377,7 +385,7 @@ export class UIController {
     more.className = "more";
     more.append(glyph(ICON_PATHS.more, 3));
     this.engine.view.selection.append(more);
-    const matches = matchingTextSelection(this.engine.data.annotations, this.engine.data.textRanges, range);
+    const matches = this.rebinding ? [] : matchingTextSelection(this.engine.data.annotations, this.engine.data.textRanges, range);
     if (matches.length) this.engine.view.selection.append(separator());
     if (matches.length === 1) this.engine.view.selection.append(this.removeButton(matches[0]!));
     else if (matches.length > 1)
@@ -390,6 +398,12 @@ export class UIController {
           () => this.showAnnotationActions(matches, rect),
         ),
       );
+    if (this.rebinding) this.engine.view.selection.append(button(this.engine.label("取消", "Cancel"), () => {
+      this.rebinding = undefined;
+      this.hideSelection();
+      this.engine.notifications?.clear("rebind.manual");
+      this.engine.notifications?.clear("rebind.preview");
+    }));
     this.placeSelection(rect);
   };
 
@@ -511,6 +525,7 @@ export class UIController {
       return;
     }
     const range = selection.getRangeAt(0);
+    if (this.rebinding) this.engine.notifications?.clear("rebind.preview");
     if (!this.selectionToolbarEnabled && !this.rebinding) {
       this.hideSelection();
       return;
@@ -528,6 +543,8 @@ export class UIController {
       this.exitDrawing();
       this.hideSelection();
       this.rebinding = undefined;
+      this.engine.notifications?.clear("rebind.preview");
+      this.engine.notifications?.clear("rebind.manual");
       return;
     }
     if (this.applyPresetShortcut(e)) return;

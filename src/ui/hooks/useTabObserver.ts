@@ -9,18 +9,21 @@ export const isPdfSurface = (context: PdfTabContext | undefined) =>
   Boolean(context && (context.currentReader || context.kind !== "unavailable"));
 
 export function useTabObserver({
-  mode, selectionToolbarEnabled, receiveSettings, language, setError,
+  mode, selectionToolbarEnabled, receiveSettings, language, setError, setNotice,
 }: {
   mode: Mode;
   selectionToolbarEnabled: boolean;
   receiveSettings: (settings: Settings) => void;
   language: Language;
   setError: (message: string) => void;
+  setNotice: (message: string | undefined) => void;
 }) {
   const [tab, setTab] = useState<TabContext>({});
   const [pdfContext, setPdfContext] = useState<PdfTabContext>();
   const [hasPermission, setHasPermission] = useState(true);
   const [contextError, setContextError] = useState<string>();
+  const [pageToggleError, setPageToggleError] = useState<string>();
+  const [pageToggling, setPageToggling] = useState(false);
   const [states, setStates] = useState<Record<string, AnchorState>>({});
   const [pageEnabled, setPageEnabled] = useState(false);
   const [selectionConnectionVersion, setSelectionConnectionVersion] = useState(0);
@@ -41,6 +44,9 @@ export function useTabObserver({
     const url = context.url ?? (previous.id === context.id ? previous.url : undefined);
     if (previous.id !== context.id || previous.url !== url) {
       activeDocument.current = { id: context.id, url, version: previous.version + 1 };
+      pageToggleVersion.current = undefined;
+      setPageToggling(false);
+      setPageToggleError(undefined);
       setDocumentVersion(activeDocument.current.version);
     }
   }, []);
@@ -158,6 +164,9 @@ export function useTabObserver({
       if (change.url) observeDocument({ id: tabId, url: change.url });
       if (change.status === "loading") {
         activeDocument.current.version++;
+        pageToggleVersion.current = undefined;
+        setPageToggling(false);
+        setPageToggleError(undefined);
         setDocumentVersion(activeDocument.current.version);
       }
       if (change.url || change.status === "complete") void refreshContext();
@@ -242,6 +251,8 @@ export function useTabObserver({
       const version = document.version;
       const isCurrent = () => activeDocument.current.version === version;
       pageToggleVersion.current = version;
+      setPageToggling(true);
+      setNotice(undefined);
       try {
         const response: unknown = await chrome.tabs.sendMessage(tab.id, {
           type: "page.mode.set", expectedUrl: tab.url, enabled: !pageEnabled,
@@ -256,11 +267,15 @@ export function useTabObserver({
             : language === "zh-CN" ? "未能切换标注，请刷新网页后重试。" : "Could not change annotations. Reload the page and try again.";
           throw Error(message);
         }
+        setPageToggleError(undefined);
         await pageState(tab.id, pageUrl, contextRequest.current);
       } catch (cause) {
-        if (isCurrent()) setError(cause instanceof Error ? cause.message : String(cause));
+        if (isCurrent()) setPageToggleError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        if (pageToggleVersion.current === version) pageToggleVersion.current = undefined;
+        if (pageToggleVersion.current === version) {
+          pageToggleVersion.current = undefined;
+          setPageToggling(false);
+        }
       }
     };
     return {
@@ -269,6 +284,9 @@ export function useTabObserver({
       hasPermission,
       contextError,
       setContextError,
+      pageToggleError,
+      setPageToggleError,
+      pageToggling,
       states,
       pageEnabled,
       pageUrl,
@@ -280,5 +298,5 @@ export function useTabObserver({
       pageAction,
       toggleCurrentPage,
     };
-  }, [tab, pdfContext, hasPermission, contextError, states, pageEnabled, pageUrl, selectionConnectionVersion, documentVersion, refreshContext, pageState, mode, language, setError]);
+  }, [tab, pdfContext, hasPermission, contextError, pageToggleError, pageToggling, states, pageEnabled, pageUrl, selectionConnectionVersion, documentVersion, refreshContext, pageState, mode, language, setError, setNotice]);
 }

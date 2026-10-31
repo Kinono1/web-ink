@@ -1,5 +1,22 @@
 # v0.3 performance evidence
 
+## Local working-tree comparison (2026-10-31)
+
+On the same Mac with headless Chromium 153.0.8010.12, the existing benchmark compared clean `4a55ef6` with this working-tree candidate. The candidate was uncommitted (`dirty: true`), so its build identity is not a release. Each P95 below uses 60 samples per build, collected in baseline–candidate–candidate–baseline order after warmups. All configured latency and PDF resource gates passed for these synthetic fixtures.
+
+| P95 measurement | Baseline | Working tree |
+| --- | ---: | ---: |
+| Restore 200 webpage annotations | 44.4 ms | 44.2 ms |
+| Select text through saved highlight | 6.7 ms | 6.7 ms |
+| Library first 50 rows painted | 31.8 ms | 32.8 ms |
+| Open a 1,000-page PDF | 133.6 ms | 134.8 ms |
+| Jump to its last page | 31.0 ms | 30.7 ms |
+| Main-page JS heap after closing the 1,000-page PDF | 2.64 MB | 2.67 MB |
+
+Both builds mounted at most three PDF canvases, with zero page workers observed after closing the reader. Heap values exclude browser, GPU and worker process memory. This run did not measure idle CPU, whole-browser memory, or the new on-demand recovery flow; the timing differences do not establish a speedup.
+
+To repeat the comparison, build the candidate with `npm run build`, then run `WEB_INK_BENCHMARK_BASELINE=/absolute/path/to/baseline npm run test:benchmark`. The baseline path must contain a separately built runtime, and the working tree must still contain the candidate changes being compared.
+
 ## v0.3.14 refactor verification (2026-10-26)
 
 The refactor preserves the annotation database, JSON format, extension identity,

@@ -67,11 +67,11 @@ export function useAnnotationsState() {
 type Inputs = Pick<ReaderSnapshot,
   "annotationChangeEpoch" | "annotationWrites" | "color" | "documentSession" | "documentSessionRef" | "draftsRef" | "fallbackNotes" | "key" | "locked" | "noteAfterSave" | "opened" | "paperDoi" | "records" | "recordsRef" | "removing" | "saving" |
   "setError" | "setNoteConflicts" | "setNoteDrafts" | "setNoteSaving" | "setNotesLimit" | "setNotesOpen" | "setPicked" | "setRecords" | "setRemoving" | "setSaving" | "setSelection" | "setUndoRecord" | "setUnsaved" | "setWriteCount" | "supportsSidebar" | "t" | "undoRecord" |
-  "unsaved" | "unsavedRef">;
+  "unsaved" | "unsavedRef"> & Partial<Pick<ReaderSnapshot, "previousHash">>;
 
 export function useAnnotations(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const { annotationChangeEpoch, annotationWrites, color, documentSession, documentSessionRef, draftsRef, fallbackNotes, key, locked,
-    noteAfterSave, opened, paperDoi, recordsRef, removing, saving, setError, setNoteConflicts, setNoteDrafts, setNoteSaving, setNotesLimit,
+    noteAfterSave, opened, paperDoi, previousHash, recordsRef, removing, saving, setError, setNoteConflicts, setNoteDrafts, setNoteSaving, setNotesLimit,
     setNotesOpen, setPicked, setRecords, setRemoving, setSaving, setSelection, setUndoRecord, setUnsaved, setWriteCount, supportsSidebar, t, undoRecord, unsaved, unsavedRef, } = state;
   // Remote deletion must reach pending save callbacks before React renders.
   const updateRecords = useCallback((next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) => {
@@ -317,8 +317,37 @@ export function useAnnotations(state: Inputs, actions: ReaderActionsRef<"tell">,
       target: pdfTarget,
     }, editNote).catch(() => undefined);
   }, [documentSession, documentSessionRef, opened, key, locked, annotationWrites, color, paperDoi, save]);
+  const copyPrevious = useCallback(async (old: PdfAnnotation, target: SelectionTarget): Promise<void> => {
+    const active = documentSession;
+    if (!opened || !key || !previousHash || old.target.documentHash !== previousHash ||
+      old.pageUrl !== `urn:web-ink:pdf:${previousHash}` || previousHash === opened.hash ||
+      active !== documentSessionRef.current || locked || unsavedRef.current || annotationWrites.current.size)
+      throw Error(t("当前文档或标注状态已改变，请重新选择。", "The document or annotation state changed. Select it again."));
+    await trackWrite(async () => {
+      const latest = await request<Annotation | null>({ type: "annotations.get", id: old.id });
+      if (!latest || !isPdf(latest) || latest.kind !== old.kind || latest.revision !== old.revision ||
+        latest.pageUrl !== old.pageUrl || active !== documentSessionRef.current ||
+        unsavedRef.current || annotationWrites.current.size > 1)
+        throw Error(t("旧标注或文档已改变，请重新打开旧标注。", "The previous annotation or document changed. Open it again."));
+      const recordSource = opened.sourceUrl && isIeeeSessionPage(opened.sourceUrl)
+        ? doiUrl(paperDoi) || opened.sourceUrl : opened.sourceUrl;
+      const copiedAt = new Date().toISOString();
+      await save({
+        ...latest,
+        id: crypto.randomUUID(),
+        pageUrl: key,
+        pageTitle: opened.fileName,
+        createdAt: copiedAt,
+        updatedAt: copiedAt,
+        revision: 0,
+        target: { ...target, documentHash: opened.hash, fileName: opened.fileName,
+          ...(recordSource ? { sourceUrl: recordSource } : {}) },
+      });
+    });
+  }, [documentSession, documentSessionRef, opened, key, previousHash, locked, unsavedRef,
+    annotationWrites, paperDoi, trackWrite, save, t]);
   return {
     updateRecords, updateDraft, trackWrite, refresh, save, saveNote, remove, restoreRemoved,
-    mark,
+    mark, copyPrevious,
   };
 }

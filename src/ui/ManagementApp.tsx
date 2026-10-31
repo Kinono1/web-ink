@@ -34,7 +34,7 @@ export function ManagementApp({ mode }: { mode: Mode }) {
   const [notice, setNotice] = useState<string>();
   const preferences = useManagementSettings(setError);
   const { language, receiveSettings, selectionToolbarEnabled } = preferences;
-  const observer = useTabObserver({ mode, selectionToolbarEnabled, receiveSettings, language, setError });
+  const observer = useTabObserver({ mode, selectionToolbarEnabled, receiveSettings, language, setError, setNotice });
   const { tab, pdfContext, pageUrl, activeDocument, documentVersion } = observer;
   const annotations = useAnnotationSync({ mode, pageUrl, language, setError, setNotice });
   const pdf = usePdfActions({ mode, tab, pdfContext, activeDocument, documentVersion, language, setError });
@@ -68,16 +68,17 @@ function ManagementLayout({ screen, setScreen, error, notice, pdf }: {
   const { settings, language, t } = preferences;
   const { records, nextCursor, loadRecords, libraryDocument, showAllDocuments } = annotations;
   const { pdfContext, pageUrl, hasPermission, refreshContext, enablePermissions,
-    contextError, setContextError } = useTabContext();
+    contextError, setContextError, pageToggleError, setPageToggleError } = useTabContext();
   const { pdfActionError, setPdfActionError, ieeeDiagnostic, openingPdf,
     showHeaderPdfAction, isIeeeSession, ieeeCandidates, openCurrentPdf,
     openIeeeSessionPdf, openLibrary, openPdf } = pdf;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
-  const displayError = error ?? pdfActionError ?? contextError;
+  const displayError = error ?? pdfActionError ?? pageToggleError ?? contextError;
   const closeError = () => {
     if (error) setError(undefined);
     else if (pdfActionError) setPdfActionError(undefined);
+    else if (pageToggleError) setPageToggleError(undefined);
     else setContextError(undefined);
   };
   const copyDiagnostic = () => {
@@ -203,7 +204,7 @@ function ManagementLayout({ screen, setScreen, error, notice, pdf }: {
           </button>
         </details>
       )}
-      {notice ? (
+      {notice && !displayError ? (
         <Alert
           kind="notice"
           text={notice}

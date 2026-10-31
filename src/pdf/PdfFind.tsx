@@ -4,12 +4,13 @@ import { PdfTextSearchIndex, type PdfSearchMatch, type PdfSearchProgress, type P
 import type { Language } from "../core/model";
 import type { OpenDocument } from "../core/pdf-types";
 
-export function PdfFind({ opened, language, blocked, onMatch, onNavigate }: {
+export function PdfFind({ opened, language, blocked, onMatch, onNavigate, requestedSearch }: {
   opened: OpenDocument;
   language: Language;
   blocked: boolean;
   onMatch: (match: PdfSearchMatch | undefined) => void;
   onNavigate: (pageNumber: number) => void;
+  requestedSearch?: { id: number; text: string };
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -19,12 +20,20 @@ export function PdfFind({ opened, language, blocked, onMatch, onNavigate }: {
   const [searching, setSearching] = useState(false);
   const [error, setError] = useState(false);
   const input = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null);
+  const handledSearch = useRef<number | undefined>(undefined);
   const callbacks = useRef({ onMatch, onNavigate, blocked });
   callbacks.current = { onMatch, onNavigate, blocked };
   const index = useMemo(() => new PdfTextSearchIndex(opened.document), [opened]);
   const zh = language === "zh-CN";
   const t = (cn: string, en: string) => zh ? cn : en;
   useEffect(() => () => index.dispose(), [index]);
+  useEffect(() => {
+    if (!requestedSearch || blocked || handledSearch.current === requestedSearch.id) return;
+    handledSearch.current = requestedSearch.id;
+    setOpen(true);
+    setQuery(requestedSearch.text);
+    input.current?.focus();
+  }, [requestedSearch, blocked]);
   useEffect(() => {
     const shortcut = (event: KeyboardEvent) => {
       if (blocked || event.isComposing) return;

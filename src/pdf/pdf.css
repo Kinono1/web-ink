@@ -325,6 +325,10 @@
 .pdf-dialog h2 { margin: 0; font-size: var(--ink-size-title); }
 .pdf-dialog p { margin: 0; color: var(--ink-secondary); }
 .pdf-dialog p[role="alert"] { color: var(--ink-danger); }
+.pdf-recovery-list { display: grid; gap: 12px; overflow: auto; }
+.pdf-recovery-list article { display: grid; gap: 6px; padding: 12px; border: 1px solid var(--ink-separator); border-radius: var(--ink-radius); overflow-wrap: anywhere; }
+.pdf-recovery-list small { color: var(--ink-secondary); }
+.pdf-recovery-list button { justify-self: start; }
 .pdf-dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .pdf-dialog-actions > button:first-child { color: var(--ink-primary-text); background: var(--ink-primary); }
 

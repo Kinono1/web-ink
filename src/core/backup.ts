@@ -67,6 +67,8 @@ export function toMarkdown(annotations: Annotation[]): string {
     lines.push(`## ${label} annotation`);
     lines.push(`- Page title: ${markdownField(annotation.pageTitle)}`);
     lines.push(`- URL: ${markdownField(annotation.pageUrl)}`);
+    lines.push(`- Created: ${markdownField(annotation.createdAt)}`);
+    lines.push(`- Updated: ${markdownField(annotation.updatedAt)}`);
     lines.push(`- Color: ${markdownField(annotation.color)}`);
     if (annotation.tags.length)
       lines.push(`- Tags: ${annotation.tags.map(markdownField).join(", ")}`);
@@ -80,6 +82,8 @@ export function toMarkdown(annotations: Annotation[]): string {
     else {
       lines.push(`- PDF file: ${markdownField(annotation.target.fileName)}`);
       lines.push(`- PDF page: ${annotation.target.pageNumber}`);
+      if (annotation.target.sourceUrl)
+        lines.push(`- Source URL: ${markdownField(annotation.target.sourceUrl)}`);
       if (annotation.kind === "pdf-text") {
         lines.push("- Text quotation:");
         lines.push(markdownQuote(annotation.target.exact));

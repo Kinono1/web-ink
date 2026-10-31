@@ -35,6 +35,7 @@ export interface ReaderActions {
     PdfNoteDraft): Promise<void>; remove(record: PdfAnnotation): Promise<void>; restoreRemoved(): Promise<void>;
   mark(target: SelectionTarget, kind: "pdf-text" | "pdf-area", chosen?: string, editNote?: boolean, tags?
     : string[]): void; receiveOriginalNotes(next: NativePdfAnnotation[]): void; cancelNativeScan(): void;
+  copyPrevious(old: PdfAnnotation, target: SelectionTarget): Promise<void>;
   scanOriginalNotes(): Promise<void>; filterAnnotations(filter: PdfAnnotationFilter): void; nextOriginalPage():
     void; previousOriginalPage(): void; focusOriginalNote(record: NativePdfAnnotation): Promise<void>;
   download(blob: Blob, fileName: string): void; cancelExport(): void; exportAnnotations(kind: "export" | "ai"):

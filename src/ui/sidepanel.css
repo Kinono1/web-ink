@@ -78,6 +78,8 @@
   font-size: var(--ink-size-meta);
 }
 .sidepanel .page-switch { margin-left: auto; }
+.sidepanel .page-context > .page-scope { flex: none; margin-left: auto; }
+.sidepanel .page-scope + .page-switch { margin-left: 0; }
 
 /* Scrolling column */
 .sidepanel > .sidepanel-content {
@@ -95,9 +97,12 @@
 .sidepanel-content > * { flex-shrink: 0; }
 .sidepanel .selection-toolbar-setting {
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   padding: 0 8px;
 }
+.sidepanel .selection-toolbar-scope { color: var(--ink-secondary); font-size: var(--ink-size-meta); }
 .sidepanel .selection-toolbar-setting .page-switch { white-space: nowrap; }
 .sidepanel .web-selection {
   display: grid;
