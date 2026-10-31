@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { usePdfPageBindings } from "../src/pdf/hooks/usePdfPageBindings";
-import { PageLayoutIndex } from "../src/pdf/layout";
-import type { SelectionTarget } from "../src/pdf/types";
+import { usePdfPageBindings } from "../src/pdf/hooks/useViewport";
+import { PageLayoutIndex } from "../src/pdf/reading-position";
+import type { SelectionTarget } from "../src/core/pdf-types";
 
 type Inputs = Parameters<typeof usePdfPageBindings>[0];
 type Commands = Parameters<typeof usePdfPageBindings>[1];

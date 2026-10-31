@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { createIeeePdfDiagnostic } from "../src/pdf/ieee-diagnostics";
+import { createIeeePdfDiagnostic } from "../src/core/ieee-contract";
 
 it("keeps only approved IEEE diagnostic fields from an HTTP failure", () => {
   const diagnostic = createIeeePdfDiagnostic({

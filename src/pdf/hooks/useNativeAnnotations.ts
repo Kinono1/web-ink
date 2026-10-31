@@ -1,7 +1,7 @@
-import type { PdfAnnotationFilter } from "../sidebar-types";
+import type { PdfAnnotationFilter } from "../../core/sidebar";
 import { NativePdfAnnotations, nativePdfRect } from "../native-annotations";
 import { fromPdfRect } from "../geometry";
-import { errorText, type NativePdfAnnotation } from "../types";
+import { errorText, type NativePdfAnnotation } from "../../core/pdf-types";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
 
@@ -34,7 +34,6 @@ export function useNativeAnnotationsState() {
     }
     return { records, end, oversized };
   }, [nativeRecords, nativeOffset]);
-
   return {
     nativeWindow,
     originalNotes, nativeScan, nativeRecords, setNativeRecords, nativeFilter, setNativeFilter,
@@ -42,44 +41,29 @@ export function useNativeAnnotationsState() {
     setNativeError, nativeOffset, setNativeOffset, nativeLimit, nativeHistory,
   };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "documentSession" | "documentSessionRef" | "exportController" | "intentEpoch" |
-  "nativeFocus" | "nativeHistory" | "nativeOffset" | "nativeRecords" | "nativeScan" |
-  "nativeWindow" | "opened" | "originalNotes" | "rotation" | "setNativeError" |
-  "setNativeFilter" | "setNativeLoading" | "setNativeOffset" | "setNativeProgress" |
-  "setNativeRecords" | "setPicked" | "setPositionEpoch" | "zoom"
->;
+  "documentSession" | "documentSessionRef" | "exportController" | "intentEpoch" | "nativeFocus" | "nativeHistory" | "nativeOffset" | "nativeRecords" | "nativeScan" | "nativeWindow" | "opened" | "originalNotes" | "rotation" | "setNativeError" |
+  "setNativeFilter" | "setNativeLoading" | "setNativeOffset" | "setNativeProgress" | "setNativeRecords" | "setPicked" | "setPositionEpoch" | "zoom">;
 
-export function useNativeAnnotations(
-  state: Inputs,
-  actions: ReaderActionsRef<"jump">,
-) {
-  const {
-    documentSession, documentSessionRef, exportController, intentEpoch, nativeFocus,
-    nativeHistory, nativeOffset, nativeRecords, nativeScan, nativeWindow, opened,
-    originalNotes, rotation, setNativeError, setNativeFilter, setNativeLoading,
-    setNativeOffset, setNativeProgress, setNativeRecords, setPicked, setPositionEpoch, zoom,
-  } = state;
-
+export function useNativeAnnotations(state: Inputs, actions: ReaderActionsRef<"jump">,) {
+  const { documentSession, documentSessionRef, exportController, intentEpoch, nativeFocus, nativeHistory, nativeOffset, nativeRecords,
+    nativeScan, nativeWindow, opened, originalNotes, rotation, setNativeError, setNativeFilter, setNativeLoading, setNativeOffset,
+    setNativeProgress, setNativeRecords, setPicked, setPositionEpoch, zoom, } = state;
   useEffect(() => () => {
     nativeScan.current?.abort();
     originalNotes.current?.dispose();
   }, []);
-
   const receiveOriginalNotes = useCallback((next: NativePdfAnnotation[]) => {
     if (documentSession !== documentSessionRef.current) return;
     const hash = originalNotes.current?.records[0]?.documentHash ?? opened?.hash;
     if (next.some((record) => record.documentHash !== hash)) return;
     setNativeRecords(originalNotes.current?.records.slice() ?? next);
   }, [documentSession, opened?.hash]);
-
   function cancelNativeScan() {
     nativeScan.current?.abort();
     nativeScan.current = undefined;
     setNativeLoading(false);
   }
-
   async function scanOriginalNotes() {
     const collector = originalNotes.current;
     if (!collector || nativeScan.current) return;
@@ -101,24 +85,20 @@ export function useNativeAnnotations(
       if (nativeScan.current === controller) { nativeScan.current = undefined; setNativeLoading(false); }
     }
   }
-
   function filterAnnotations(filter: PdfAnnotationFilter) {
     if (exportController.current) return;
     setNativeFilter(filter);
     if (filter === "web-ink") cancelNativeScan();
     else void scanOriginalNotes();
   }
-
   function nextOriginalPage() {
     if (nativeWindow.end >= nativeRecords.length) return;
     nativeHistory.current.push(nativeOffset);
     setNativeOffset(nativeWindow.end);
   }
-
   function previousOriginalPage() {
     setNativeOffset(nativeHistory.current.pop() ?? 0);
   }
-
   async function focusOriginalNote(record: NativePdfAnnotation) {
     if (!opened || record.documentHash !== opened.hash) return;
     const active = documentSessionRef.current;

@@ -1,11 +1,6 @@
 import type { PalettePosition } from "./palette-position";
-
-/**
- * Global UI preference. A future per-origin key (`ui.palettePosition.${origin}`)
- * requires an explicit migration; none is implemented here.
- */
+/** Global UI preference. A future per-origin key (`ui.palettePosition.${origin}`) requires an explicit migration; none is implemented here. */
 export const PALETTE_POSITION_KEY = "ui.palettePosition" as const;
-
 export function createPalettePositionWriter(
   write: (position: PalettePosition) => Promise<void>,
   onError?: (cause: unknown) => void,
@@ -13,17 +8,14 @@ export function createPalettePositionWriter(
   let writing = false;
   let disposed = false;
   let pending: PalettePosition | undefined;
-
   const reportError = (cause: unknown): void => {
     if (disposed || !onError) return;
-
     try {
       onError(cause);
     } catch {
       // Error reporting must not interrupt queue cleanup or create a rejection.
     }
   };
-
   const finishWrite = (): void => {
     const next = pending;
     pending = undefined;
@@ -33,7 +25,6 @@ export function createPalettePositionWriter(
       writing = false;
     }
   };
-
   const dispatch = (snapshot: PalettePosition): void => {
     let result: Promise<void>;
     try {
@@ -44,7 +35,6 @@ export function createPalettePositionWriter(
       finishWrite();
       return;
     }
-
     void Promise.resolve(result).then(
       () => finishWrite(),
       (cause: unknown) => {
@@ -53,17 +43,14 @@ export function createPalettePositionWriter(
       },
     );
   };
-
   return {
     save(position) {
       if (disposed) return;
-
       const snapshot = { ...position };
       if (writing) {
         pending = snapshot;
         return;
       }
-
       writing = true;
       dispatch(snapshot);
     },

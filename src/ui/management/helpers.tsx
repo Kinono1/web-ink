@@ -1,9 +1,8 @@
 import type { Annotation, AnchorState, Language } from "../../core/model";
 import type { FilterKind, AnnotationKind } from "./types";
-import { ICON_PATHS, type IconName } from "../icons";
-import { ieeePaperUrl } from "../../pdf/context";
-import { doiUrl, type PdfPaperIdentity } from "../../pdf/paper-identity";
-import { ieeeSourceUrl } from "../../pdf/ieee";
+import { ICON_PATHS, type IconName } from "../../core/icons";
+import { ieeePaperUrl } from "../../core/pdf-context";
+import { doiUrl, ieeeSourceUrl, type PdfPaperIdentity } from "../../pdf/public";
 export function tagText(tags: string[]): string {
   return tags.join(", ");
 }
@@ -20,7 +19,7 @@ export function parseTags(value: string): string[] {
 export function statusClass(status: AnchorState["status"] | undefined): string {
   return `status ${status ?? "pending"}`;
 }
-export function annotationText(annotation: Annotation): string {
+function annotationText(annotation: Annotation): string {
   const target =
     annotation.kind === "text"
       ? annotation.target.exact

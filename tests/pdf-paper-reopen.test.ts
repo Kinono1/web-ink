@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PdfTarget } from "../src/core/model";
-import { rememberPdfPaperReopen, readPdfPaperReopen } from "../src/pdf/paper-reopen";
+import { rememberPdfPaperReopen, readPdfPaperReopen } from "../src/pdf/paper-identity";
 
 const target: PdfTarget = { documentHash: "a".repeat(64), pageNumber: 3,
   fileName: "IEEE-11643626.pdf", sourceUrl: "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=11643626&ticket=expired",

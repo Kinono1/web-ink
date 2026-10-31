@@ -1,4 +1,4 @@
-import { ICON_PATHS } from "../ui/icons";
+import { ICON_PATHS } from "../core/icons";
 import {
   clampPalettePoint,
   defaultPalettePoint,
@@ -11,6 +11,7 @@ import {
   type PalettePosition,
 } from "./palette-position";
 import { normalizePaletteSize } from "../core/palette-appearance";
+import { svgElement } from "./view-lite";
 
 export interface PaletteToggleState {
   enabled: boolean;
@@ -27,8 +28,6 @@ export interface PaletteToggle {
   dispose: () => void;
 }
 
-const NS = "http://www.w3.org/2000/svg";
-
 /** A fixed, small control that lives inside the extension shadow UI without taking page clicks. */
 export function createPaletteToggle(
   root: ShadowRoot,
@@ -38,14 +37,17 @@ export function createPaletteToggle(
   const style = document.createElement("style");
   style.dataset.webInkPaletteToggle = "true";
   style.textContent = `
-    .web-ink-palette-toggle { position:fixed; width:var(--web-ink-palette-size); height:var(--web-ink-palette-size); min-height:var(--ink-control-min-height); padding:0; border:0; border-radius:50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color var(--ink-motion-fast) ease, color var(--ink-motion-fast) ease, transform var(--ink-motion-fast) ease; }
+    .web-ink-palette-toggle { position:fixed; width:var(--web-ink-palette-size); height:var(--web-ink-palette-size); min-height:var(--ink-control-min-height); padding:0; border:0; border-radius:
+      50%; display:grid; place-items:center; cursor:grab; touch-action:none; user-select:none; pointer-events:auto; color:var(--ink-secondary); background:var(--ink-surface-solid); box-shadow:
+      0 0 0 1px var(--ink-separator), var(--ink-shadow); transition:background-color var(--ink-motion-fast) ease, color var(--ink-motion-fast) ease, transform var(--ink-motion-fast) ease; }
     .web-ink-palette-toggle:not(:disabled):hover { color:var(--ink-text); transform:translateY(-1px); }
     .web-ink-palette-toggle[data-enabled=true] { color:#fff; background:var(--ink-accent); box-shadow:0 0 0 1px transparent, var(--ink-shadow); }
     .web-ink-palette-toggle[data-enabled=true]:not(:disabled):hover { color:#fff; }
     .web-ink-palette-toggle[data-dragging=true] { cursor:grabbing; transform:none!important; transition:none!important; }
     .web-ink-palette-toggle:focus-visible { outline:2px solid var(--ink-accent); outline-offset:3px; }
     .web-ink-palette-toggle:disabled { cursor:not-allowed; opacity:.5; }
-    .web-ink-palette-toggle svg { width:var(--web-ink-palette-icon-size); height:var(--web-ink-palette-icon-size); fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+    .web-ink-palette-toggle svg { width:var(--web-ink-palette-icon-size); height:var(--web-ink-palette-icon-size); fill:
+      none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
     @media (prefers-reduced-motion: reduce) { .web-ink-palette-toggle { transition:none; } }
   `;
   const button = document.createElement("button");
@@ -198,24 +200,14 @@ export function createPaletteToggle(
     const enabled = state.enabled;
     if (busy) cancel();
     const normal =
-      state.language === "zh-CN"
-        ? enabled
-          ? "关闭本页标注"
-          : "开启本页标注"
-        : enabled
-          ? "Disable annotations on this page"
-          : "Enable annotations on this page";
+      state.language === "zh-CN" ? enabled ? "关闭本页标注" : "开启本页标注" : enabled ? "Disable annotations on this page" : "Enable annotations on this page";
     button.dataset.enabled = String(enabled);
     button.dataset.blocked = String(blocked);
     button.setAttribute("aria-pressed", String(enabled));
     button.setAttribute("aria-busy", String(busy));
     // Pausing annotations must leave the launcher available to open its side panel.
     button.disabled = busy;
-    const label = blocked
-      ? state.language === "zh-CN"
-        ? "此网站已暂停，请从侧栏恢复"
-        : "This site is paused. Resume it from the side panel."
-      : normal;
+    const label = blocked ? state.language === "zh-CN" ? "此网站已暂停，请从侧栏恢复" : "This site is paused. Resume it from the side panel." : normal;
     button.title = label;
     button.setAttribute("aria-label", label);
   };
@@ -248,12 +240,7 @@ export function createPaletteToggle(
 
 /** A monochrome highlighter; colour belongs to the page's marks, not the control. */
 function highlighterIcon(): SVGSVGElement {
-  const svg = document.createElementNS(NS, "svg");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("aria-hidden", "true");
-  svg.setAttribute("focusable", "false");
-  const path = document.createElementNS(NS, "path");
-  path.setAttribute("d", ICON_PATHS.highlight);
-  svg.append(path);
+  const svg = svgElement("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", focusable: "false" });
+  svg.append(svgElement("path", { d: ICON_PATHS.highlight }));
   return svg;
 }

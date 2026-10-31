@@ -3,7 +3,7 @@ import { act, createElement, type ComponentProps, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { DEFAULT_SETTINGS, type Annotation, type AnnotationPage, type AnnotationQuery, type PdfHandoff, type Request } from "../src/core/model";
 import type { PdfReadingPosition } from "../src/pdf/reading-position";
-import { rememberPdfPaperReopen } from "../src/pdf/paper-reopen";
+import { rememberPdfPaperReopen } from "../src/pdf/paper-identity";
 
 import type { PdfPage as PdfPageComponent } from "../src/pdf/PdfPage";
 
@@ -79,8 +79,8 @@ vi.mock('../src/pdf/ieee', async (original) => {
     throw Error('Reader must consume prepared bytes, not download IEEE again');
   } };
 });
-vi.mock("../src/pdf/source", async (original) => {
-  const actual = await original<typeof import("../src/pdf/source")>();
+vi.mock("../src/core/pdf-source", async (original) => {
+  const actual = await original<typeof import("../src/core/pdf-source")>();
   return {
     ...actual,
     readLocalPdf: async () => new Uint8Array([37, 80, 68, 70]),

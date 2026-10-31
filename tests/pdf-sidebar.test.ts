@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installPdfSidebarBroker } from "../src/background/pdf-sidebar";
-import type { PdfNoteDraft } from "../src/pdf/PdfNote";
-import type { PdfAnnotation } from "../src/pdf/types";
-import type { PdfSidebarState } from "../src/pdf/sidebar-types";
+import type { PdfNoteDraft } from "../src/core/sidebar";
+import type { PdfAnnotation } from "../src/core/pdf-types";
+import type { PdfSidebarState } from "../src/core/sidebar";
 
 const ID = "web-ink-id";
 const HASH = "a".repeat(64);

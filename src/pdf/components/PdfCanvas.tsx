@@ -1,22 +1,11 @@
-import { usePdfPageBindings } from "../hooks/usePdfPageBindings";
-import type { PdfAnnotation } from "../types";
+import type { PdfAnnotation } from "../../core/pdf-types";
 import { PdfPage } from "../PdfPage";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
+import { usePdfPageBindings } from "../hooks/useViewport";
 import { usePdfDocument } from "../contexts/PdfDocumentContext";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
-type Props = {
-  state: Pick<ReaderSnapshot,
-    "annotationWrites" | "area" | "color" | "container" | "dimensions" | "documentSession" |
-    "documentSessionRef" | "intentEpoch" | "layoutIndex" | "locked" | "measurementGeneration" |
-    "pageWindow" | "pendingSearchPosition" | "recordsByPage" | "rotation" | "searchMatch" |
-    "setError" | "setNativeError" | "setPicked" | "setSelection" | "showMarks" | "unsavedRef" |
-    "zoom"
-  >;
-  actions: Pick<ReaderActions,
-    "mark" | "onPageDimensions" | "pagesPadding" | "receiveOriginalNotes" | "userIntent"
-  >;
-};
+type Props = { state: ReaderSnapshot; actions: ReaderActions };
 
 const EMPTY_RECORDS: PdfAnnotation[] = [];
 

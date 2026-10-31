@@ -1,10 +1,10 @@
 import { webcrypto } from "node:crypto";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFDict, PDFHexString, PDFName } from "pdf-lib";
-import type { PdfAnnotation } from "../src/pdf/types";
+import type { PdfAnnotation } from "../src/core/pdf-types";
 import { verifyPdfExport } from "../src/pdf/export-verify";
 import { exportAnnotatedPdf } from "../src/pdf/export";
-import { pdfHash } from "../src/pdf/source";
+import { pdfHash } from "../src/core/pdf-source";
 import { createNativePdfFixture } from "./pdf-native-fixture";
 
 beforeAll(async () => {

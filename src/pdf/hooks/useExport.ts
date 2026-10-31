@@ -1,8 +1,7 @@
-import { errorText } from "../types";
+import { errorText } from "../../core/pdf-types";
 import { useEffect, useRef, useState } from "react";
-import { MAX_PDF_BYTES } from "../source";
-import { safeSource } from "./reader-utils";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { MAX_PDF_BYTES } from "../../core/pdf-source";
+import { safeSource, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
 
 export function useExportState() {
   const exportController = useRef<AbortController | undefined>(undefined);
@@ -10,28 +9,16 @@ export function useExportState() {
   const downloadUrls = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   return { exportController, exportStage, setExportStage, downloadUrls };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "documentSessionRef" | "downloadUrls" | "exportController" | "key" | "opened" |
-  "recordsRef" | "setError" | "setExportStage" | "setNativeProgress" | "setNativeRecords" |
-  "setNotice" | "t"
->;
+  "documentSessionRef" | "downloadUrls" | "exportController" | "key" | "opened" | "recordsRef" | "setError" | "setExportStage" | "setNativeProgress" | "setNativeRecords" | "setNotice" | "t">;
 
-export function useExport(
-  state: Inputs,
-  actions: ReaderActionsRef<"cancelNativeScan">,
-) {
-  const {
-    documentSessionRef, downloadUrls, exportController, key, opened, recordsRef, setError,
-    setExportStage, setNativeProgress, setNativeRecords, setNotice, t,
-  } = state;
-
+export function useExport(state: Inputs, actions: ReaderActionsRef<"cancelNativeScan">,) {
+  const { documentSessionRef, downloadUrls, exportController, key, opened, recordsRef, setError, setExportStage, setNativeProgress, setNativeRecords, setNotice, t, } = state;
   useEffect(() => () => {
     exportController.current?.abort();
     for (const [url, timer] of downloadUrls.current) { clearTimeout(timer); URL.revokeObjectURL(url); }
     downloadUrls.current.clear();
   }, []);
-
   function download(blob: Blob, fileName: string) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
@@ -46,14 +33,12 @@ export function useExport(
       downloadUrls.current.delete(url);
     }, 30_000));
   }
-
   function cancelExport() {
     exportController.current?.abort();
     exportController.current = undefined;
     setExportStage(undefined);
     setNotice(t("已取消导出。", "Export cancelled."));
   }
-
   async function exportAnnotations(kind: "export" | "ai") {
     if (!opened || exportController.current) return;
     const active = documentSessionRef.current;

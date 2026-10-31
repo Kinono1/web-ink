@@ -5,7 +5,7 @@ import {
   type Owner,
   type PreparedPdfStore,
 } from "../src/background/pdf-prepared";
-import { MAX_PDF_BYTES } from "../src/pdf/source";
+import { MAX_PDF_BYTES } from "../src/core/pdf-source";
 
 const SOURCE: Owner = { tabId: 7, documentId: "source-document", generation: "worker-generation" };
 const READER: Owner = { ...SOURCE, documentId: "reader-document" };

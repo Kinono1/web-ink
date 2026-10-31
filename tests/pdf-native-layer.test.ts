@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { PDFPageProxy } from "pdfjs-dist/types/src/display/api";
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
-import type { PdfApi } from "../src/pdf/types";
-import { createNativeLayer } from "../src/pdf/native-layer";
+import type { PdfApi } from "../src/core/pdf-types";
+import { createNativeLayer } from "../src/pdf/native-annotations";
 
 let api: PdfApi;
 beforeAll(async () => {

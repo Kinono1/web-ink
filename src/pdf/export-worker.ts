@@ -1,6 +1,5 @@
 import { exportAnnotatedPdf } from "./export";
 import { PdfExportError, type PdfExportRequest, type PdfExportReply } from "./export-contract";
-
 const scope = globalThis as unknown as Pick<Worker, "postMessage" | "onmessage">;
 scope.onmessage = async ({ data }: MessageEvent<PdfExportRequest>) => {
   try {

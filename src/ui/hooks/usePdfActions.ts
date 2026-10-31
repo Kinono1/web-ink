@@ -1,10 +1,12 @@
 import { useMemo, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { RequestError, request, releaseChromeListener } from "../../core/client";
 import type { Annotation, Language, PdfOpenResult, PdfTabContext } from "../../core/model";
-import type { IeeePdfDiagnostic } from "../../pdf/ieee-diagnostics";
-import { ieeeFailureMessage } from "../../pdf/ieee-status";
-import { readPdfPaperIdentity } from "../../pdf/paper-identity";
-import { rememberPdfPaperReopen } from "../../pdf/paper-reopen";
+import {
+  ieeeFailureMessage,
+  readPdfPaperIdentity,
+  rememberPdfPaperReopen,
+  type IeeePdfDiagnostic,
+} from "../../pdf/public";
 import { COPY } from "../management/copy";
 import { isPdf, pdfReaderUrl } from "../management/helpers";
 import { openPdfTab } from "../management/openPdf";

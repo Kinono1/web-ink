@@ -3,9 +3,8 @@ import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createNativePdfFixture, NATIVE_FIXTURE_NOTES } from "./pdf-native-fixture";
-import { createNativeLayer } from "../src/pdf/native-layer";
 import {
-  NativePdfAnnotations,
+  NativePdfAnnotations, createNativeLayer,
   nativePdfAnnotationKey,
   nativePdfRect,
   parseNativePdfAnnotations,

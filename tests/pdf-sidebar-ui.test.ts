@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { PdfSidebar } from "../src/ui/PdfSidebar";
-import type { PdfAnnotation } from "../src/pdf/types";
+import type { PdfAnnotation } from "../src/core/pdf-types";
 
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   configurable: true,

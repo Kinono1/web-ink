@@ -1,7 +1,6 @@
 import type { AnchorState, TextAnnotation } from "../core/model";
 import type { createView } from "./view-lite";
 import { AnnotationController } from "./engine/AnnotationController";
-
 export interface ContentEngine {
   stop: () => void;
   dispatch: (
@@ -12,7 +11,6 @@ export interface ContentEngine {
   canStop: () => boolean;
   annotateSelection: (range: Range, color: string, isCurrent: () => boolean) => Promise<TextAnnotation>;
 }
-
 /** Heavy DOM work lives in engine.js. The bootstrap owns the host and palette. */
 export function startEngine(view: ReturnType<typeof createView>): ContentEngine {
   const engine = new AnnotationController(view);

@@ -11,8 +11,7 @@ export function LibraryScreen({ visible, openPdf }: {
   const { language, t, annotations } = useLibraryContext();
   const { records, nextCursor, loading, loadRecords, query, setQuery, kind, setKind,
     color, setColor, tag, setTag, filterOpen, setFilterOpen, filterCount,
-    selectedId, setSelectedId, editing, setEditing, drafts, conflicts,
-    startEdit, updateDraft, saveRecord, loadLatest, removeRecord } = annotations;
+    setSelectedId } = annotations;
   const [libraryDetail, setLibraryDetail] = useState(false);
   const libraryScrollY = useRef<number | undefined>(undefined);
   const openLibraryDetail = (id: string) => {
@@ -75,23 +74,11 @@ export function LibraryScreen({ visible, openPdf }: {
       {records.length ? <AnnotationBrowser
         detailOpen={libraryDetail}
         onBack={closeLibraryDetail}
-        records={records}
-        selectedId={selectedId}
+        annotations={annotations}
         setSelectedId={openLibraryDetail}
         states={{}}
         language={language}
         t={t}
-        editing={editing}
-        drafts={drafts}
-        conflicts={conflicts}
-        onEdit={startEdit}
-        onDraft={updateDraft}
-        onSave={saveRecord}
-        onLoadLatest={loadLatest}
-        onCancel={() => setEditing(undefined)}
-        onDelete={removeRecord}
-        onFocus={() => undefined}
-        onRebind={() => undefined}
         onOpenPdf={openPdf}
       /> : null}
       {!records.length && !loading ? (

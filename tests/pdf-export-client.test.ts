@@ -1,8 +1,8 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import type { PdfAnnotation } from "../src/pdf/types";
+import type { PdfAnnotation } from "../src/core/pdf-types";
 import type { PdfExportReply, PdfExportRequest } from "../src/pdf/export-contract";
 import { exportPdfInWorker } from "../src/pdf/export-client";
-import { MAX_PDF_BYTES } from "../src/pdf/source";
+import { MAX_PDF_BYTES } from "../src/core/pdf-source";
 
 const bytes = () => new TextEncoder().encode("%PDF-1.7\nworker-boundary fixture");
 const hash = "a".repeat(64);

@@ -1,12 +1,7 @@
-import type { PdfAnnotation } from "./types";
-import {
-  PdfExportError, checkExportBytes, validateExportRecords,
-  type PdfExportReply, type PdfExportRequest, type PdfExportResult,
-} from "./export-contract";
-
+import type { PdfAnnotation } from "../core/pdf-types";
+import { PdfExportError, checkExportBytes, validateExportRecords, type PdfExportReply, type PdfExportRequest, type PdfExportResult, } from "./export-contract";
 let activeWorker: Worker | undefined;
-
-export function annotatedPdfFileName(sourceName = "web-ink.pdf"): string {
+function annotatedPdfFileName(sourceName = "web-ink.pdf"): string {
   const base = sourceName.split(/[\\/]/).at(-1)!.replace(/[\u0000-\u001f\u007f]/g, "_")
     .replace(/\.pdf$/i, "").replace(/^\.+/, "").trim();
   return `${Array.from(base).slice(0, 180).join("") || "web-ink"}-annotated.pdf`;
@@ -14,8 +9,7 @@ export function annotatedPdfFileName(sourceName = "web-ink.pdf"): string {
 
 export async function exportPdfInWorker(
   bytes: Uint8Array, sourceHash: string, records: readonly PdfAnnotation[],
-  signal: AbortSignal, fileName?: string,
-): Promise<PdfExportResult> {
+  signal: AbortSignal, fileName?: string) : Promise<PdfExportResult> {
   signal.throwIfAborted();
   checkExportBytes(bytes);
   const snapshot = validateExportRecords(sourceHash, records);

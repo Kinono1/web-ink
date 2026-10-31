@@ -8,10 +8,9 @@ import type {
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { Language, PdfRect } from "../core/model";
 import type { PdfSearchMatch } from "./search";
-import { fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
-import { alignPdfTextFonts } from "./text-fonts";
-import { createNativeLayer } from "./native-layer";
-import { parseNativePdfAnnotations } from "./native-annotations";
+import { alignPdfTextFonts, fromPdfRect, mergePdfTextRects, toPdfRect } from "./geometry";
+import { createNativeLayer, parseNativePdfAnnotations } from "./native-annotations";
+import { textFor } from "./components/labels";
 import {
   errorText,
   type OpenDocument,
@@ -20,7 +19,7 @@ import {
   type SelectionTarget,
   type SelectionPreview,
   type NativePdfAnnotation,
-} from "./types";
+} from "../core/pdf-types";
 export const PdfPage = memo(function PdfPage({
   language = "zh-CN",
   opened,
@@ -58,7 +57,7 @@ export const PdfPage = memo(function PdfPage({
   onError: (e: string) => void;
   onNativeRecords?: (records: NativePdfAnnotation[]) => void;
 }) {
-  const t = (zh: string, en: string) => language === "zh-CN" ? zh : en;
+  const t = textFor(language);
   const [ready, setReady] = useState(false);
   const [rendering, setRendering] = useState(true);
   const [failure, setFailure] = useState<"image-too-large" | "render-failed">();

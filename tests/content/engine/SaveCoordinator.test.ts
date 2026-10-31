@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { SaveCoordinator } from "../../../src/content/engine/SaveCoordinator";
-import type { AnnotationController } from "../../../src/content/engine/AnnotationController";
+import { DataEngine, type DataEngineHost } from "../../../src/content/engine/DataEngine";
+import { createView } from "../../../src/content/view-lite";
 import type { TextAnnotation } from "../../../src/core/model";
 
 const record: TextAnnotation = {
@@ -20,12 +20,15 @@ function fixture() {
     label: (_cn: string, en: string) => en,
     toast: (message: string) => notices.push(message),
     notifications: { show: (message: string) => notices.push(message) },
-    mode: { rebinding: record },
+    ui: { rebinding: record },
     disposed: false,
-    store: { applyAnnotationDelta: (...args: unknown[]) => changes.push(args) },
-    render: { schedulePaint: () => {} },
-  } as unknown as AnnotationController;
-  return { save: new SaveCoordinator(engine), notices, changes };
+    view: createView(),
+  } as unknown as DataEngineHost;
+  const save = new DataEngine(engine);
+  // Storage publication and rAF painting belong to other engine halves.
+  save.applyAnnotationDelta = (...args: unknown[]) => { changes.push(args); return true; };
+  save.schedulePaint = () => {};
+  return { save, notices, changes };
 }
 
 it("blocks concurrent writes and publishes success only after durable confirmation", async () => {

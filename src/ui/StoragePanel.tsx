@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { request, releaseChromeListener } from "../core/client";
 import type { Language, StorageStats } from "../core/model";
 
-export function formatBytes(bytes: number): string {
+function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${Math.round(bytes)} B`;
   if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / 1024 ** 2).toFixed(2)} MiB`;

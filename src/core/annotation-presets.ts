@@ -6,11 +6,10 @@ const STORAGE_KEY = "ui.annotationPresets";
 let saveQueue: Promise<void> = Promise.resolve();
 
 export function defaultAnnotationPresets(language: Language): AnnotationPreset[] {
-  return [
-    { id: "important", label: language === "zh-CN" ? "重要" : "Important", color: COLORS[0] },
+  return [ { id: "important", label: language === "zh-CN" ? "重要" : "Important", color: COLORS[0] },
     { id: "question", label: language === "zh-CN" ? "疑问" : "Question", color: COLORS[2] },
     { id: "insight", label: language === "zh-CN" ? "精彩" : "Insight", color: COLORS[1] },
-  ];
+ ];
 }
 
 export function validateAnnotationPresets(value: unknown): AnnotationPreset[] {

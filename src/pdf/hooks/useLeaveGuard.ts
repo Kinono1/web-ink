@@ -1,11 +1,10 @@
-import { errorText } from "../types";
+import { errorText } from "../../core/pdf-types";
 import { useEffect, useState } from "react";
 import { request, RequestError } from "../../core/client";
 import { type PdfReturnResult } from "../../core/model";
-import { ieeePaperUrl } from "../context";
+import { ieeePaperUrl } from "../../core/pdf-context";
 import { doiUrl, readPdfPaperIdentity } from "../paper-identity";
-import { dirtyDraft, type LeaveAction } from "./reader-utils";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { dirtyDraft, type LeaveAction, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
 
 export function useLeaveGuardState() {
   const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
@@ -13,35 +12,18 @@ export function useLeaveGuardState() {
   const [guardSaving, setGuardSaving] = useState(false);
   return { pendingLeave, setPendingLeave, leaving, setLeaving, guardSaving, setGuardSaving };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "annotationWrites" | "autoOpenAttempted" | "currentParams" | "draftsRef" |
-  "exportController" | "focusBusy" | "focusMode" | "guardSaving" | "handoff" |
-  "handoffToken" | "intentEpoch" | "leaving" | "nativeScan" | "noteAfterSave" | "paperDoi" |
-  "paperUrl" | "pendingLeave" | "positionSession" | "presetDraft" | "presetSaving" |
-  "previousHash" | "publicUrl" | "setError" | "setGuardSaving" | "setHandoff" | "setLeaving" |
-  "setMoreOpen" | "setNativeFilter" | "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" |
-  "setPendingLeave" | "setSelection" | "setSourceOpen" | "setUnsaved" | "sidebarAttachedRef" |
-  "supportsSidebar" | "t" | "unsavedRef"
->;
+  "annotationWrites" | "autoOpenAttempted" | "currentParams" | "draftsRef" | "exportController" | "focusBusy" | "focusMode" | "guardSaving" | "handoff" | "handoffToken" | "intentEpoch" | "leaving" | "nativeScan" | "noteAfterSave" | "paperDoi" |
+  "paperUrl" | "pendingLeave" | "positionSession" | "presetDraft" | "presetSaving" | "previousHash" | "publicUrl" | "setError" | "setGuardSaving" | "setHandoff" | "setLeaving" | "setMoreOpen" | "setNativeFilter" | "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" |
+  "setPendingLeave" | "setSelection" | "setSourceOpen" | "setUnsaved" | "sidebarAttachedRef" | "supportsSidebar" | "t" | "unsavedRef">;
 
-export function useLeaveGuard(
-  state: Inputs,
-  actions: ReaderActionsRef<
-    "cancelExport" | "cancelFocusAttempt" | "cancelNativeScan" | "exportAnnotations" |
-    "flushPosition" | "loadPdf" | "openNotes" | "save" | "saveNote"
-  >,
-) {
-  const {
-    annotationWrites, autoOpenAttempted, currentParams, draftsRef, exportController,
-    focusBusy, focusMode, guardSaving, handoff, handoffToken, intentEpoch, leaving,
-    nativeScan, noteAfterSave, paperDoi, paperUrl, pendingLeave, positionSession, presetDraft,
-    presetSaving, previousHash, publicUrl, setError, setGuardSaving, setHandoff, setLeaving,
-    setMoreOpen, setNativeFilter, setNoteConflicts, setNoteDrafts, setNotesOpen,
-    setPendingLeave, setSelection, setSourceOpen, setUnsaved, sidebarAttachedRef,
-    supportsSidebar, t, unsavedRef,
-  } = state;
-
+export function useLeaveGuard(state: Inputs, actions:
+  ReaderActionsRef< "cancelExport" | "cancelFocusAttempt" | "cancelNativeScan" | "exportAnnotations" | "flushPosition" | "loadPdf" | "openNotes" | "save" | "saveNote" >,) {
+  const { annotationWrites, autoOpenAttempted, currentParams, draftsRef, exportController, focusBusy, focusMode, guardSaving, handoff,
+    handoffToken, intentEpoch, leaving, nativeScan, noteAfterSave, paperDoi, paperUrl, pendingLeave, positionSession, presetDraft,
+    presetSaving, previousHash, publicUrl, setError, setGuardSaving, setHandoff, setLeaving, setMoreOpen, setNativeFilter, setNoteConflicts,
+      setNoteDrafts, setNotesOpen, setPendingLeave, setSelection, setSourceOpen, setUnsaved, sidebarAttachedRef, supportsSidebar, t,
+    unsavedRef, } = state;
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (!unsavedRef.current && !annotationWrites.current.size && !Object.values(draftsRef.current).some(dirtyDraft) && !presetDraft.current && !presetSaving.current) return;
@@ -63,7 +45,6 @@ export function useLeaveGuard(
       window.removeEventListener("pagehide", hide);
     };
   }, []);
-
   async function executeLeave(action: LeaveAction) {
     if (leaving) return;
     if (action.kind === "ai" || action.kind === "export") {
@@ -107,7 +88,6 @@ export function useLeaveGuard(
       setError(errorText(cause));
     } finally { setLeaving(false); }
   }
-
   function requestLeave(action: LeaveAction) {
     if ((action.kind === "export" || action.kind === "ai") && exportController.current) return;
     if (focusBusy || focusMode) actions.current.cancelFocusAttempt();
@@ -124,7 +104,6 @@ export function useLeaveGuard(
     }
     void executeLeave(action);
   }
-
   async function saveAndContinue() {
     if (!pendingLeave || guardSaving) return;
     setGuardSaving(true);
@@ -138,7 +117,6 @@ export function useLeaveGuard(
     } catch (cause) { setError(errorText(cause)); }
     finally { setGuardSaving(false); }
   }
-
   function discardAndContinue() {
     if (!pendingLeave || annotationWrites.current.size || guardSaving) return;
     unsavedRef.current = undefined;
@@ -151,7 +129,6 @@ export function useLeaveGuard(
     setError("");
     void executeLeave(pendingLeave);
   }
-
   function keepEditing() {
     setPendingLeave(undefined);
     if (Object.values(draftsRef.current).some(dirtyDraft)) {

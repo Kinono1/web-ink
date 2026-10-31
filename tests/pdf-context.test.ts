@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { buildPdfOpenUrl, classifyPdfTab, getPdfContext, isIeeeSessionPage, probePdfDocument } from "../src/pdf/context";
+import { buildPdfOpenUrl, classifyPdfTab, getPdfContext, isIeeeSessionPage, probePdfDocument } from "../src/core/pdf-context";
 
 function makeVisible(element: Element) {
   Object.defineProperty(element, "getBoundingClientRect", {

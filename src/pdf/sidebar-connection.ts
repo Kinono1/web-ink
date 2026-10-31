@@ -1,16 +1,11 @@
-import type { PdfReaderRequest, PdfSidebarUpdate } from "./sidebar-types";
-
+import type { PdfReaderRequest, PdfSidebarUpdate } from "../core/sidebar";
 const contextInvalidated = (cause: unknown) =>
   cause instanceof Error && /Extension context invalidated/i.test(cause.message);
 const disconnectedPort = (cause: unknown) =>
   cause instanceof Error && /disconnected port/i.test(cause.message);
 
 /** Reconnect transient views after a worker restart; never write annotations here. */
-export function connectPdfSidebar(
-  name: "web-ink-pdf-reader" | "web-ink-pdf-sidebar",
-  receive: (message: PdfReaderRequest | PdfSidebarUpdate) => void,
-  connected: () => void,
-) {
+export function connectPdfSidebar(name: "web-ink-pdf-reader" | "web-ink-pdf-sidebar", receive: (message: PdfReaderRequest | PdfSidebarUpdate) => void, connected: () => void,) {
   let port: chrome.runtime.Port | undefined;
   let disposed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;

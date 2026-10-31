@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { readPreparedPdf, encodePdfChunk } from '../src/pdf/prepared';
+import { readPreparedPdf } from '../src/pdf/prepared';
+import { encodePdfChunk } from '../src/core/prepared-contract';
 
 describe('prepared PDF reader', () => {
   const bytes = new TextEncoder().encode('%PDF-1.7\nsource bytes already downloaded\n');

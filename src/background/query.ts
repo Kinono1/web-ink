@@ -6,6 +6,7 @@ import type {
 } from "../core/model";
 import { ValidationError } from "../core/validation";
 import { getDatabase } from "./database";
+import { hasOnly, record, validId } from "./data/validation";
 
 const FIRST_BATCH_SIZE = 25;
 const RESIDUAL_BATCH_SIZE = 128;
@@ -55,36 +56,6 @@ export class QueryTaskRegistry {
     for (const [key, expiresAt] of this.preCancelled)
       if (expiresAt <= now) this.preCancelled.delete(key);
   }
-}
-
-function record(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    Object.getPrototypeOf(value) === Object.prototype
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function hasOnly(
-  value: Record<string, unknown>,
-  required: string[],
-  optional: string[] = [],
-): boolean {
-  const allowed = new Set([...required, ...optional]);
-  return (
-    required.every((key) => key in value) &&
-    Object.keys(value).every((key) => allowed.has(key))
-  );
-}
-
-function validId(value: unknown): string {
-  if (
-    typeof value !== "string" ||
-    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value)
-  )
-    throw new ValidationError("id has an invalid format");
-  return value;
 }
 
 export function validQueryId(value: unknown, name: string): string {
@@ -203,74 +174,35 @@ function annotationMatches(
     .includes(query.text);
 }
 
+/** Keyset window on one compound index; the cursor row itself is excluded on continuation. */
+function indexedSource(
+  index: "[pageUrl+updatedAt+id]" | "[kind+updatedAt+id]" | "[color+updatedAt+id]",
+  prefix: string,
+  cursor?: AnnotationCursor,
+) {
+  const upper = cursor
+    ? [prefix, cursor.updatedAt, cursor.id]
+    : [prefix, "\uffff", "\uffff"];
+  return getDatabase()
+    .annotations.where(index)
+    .between([prefix, "", ""], upper, true, cursor === undefined)
+    .reverse();
+}
+
 function querySource(query: AnnotationQuery, cursor?: AnnotationCursor) {
-  const db = getDatabase();
   if (query.pageUrl)
-    return cursor
-      ? db.annotations
-          .where("[pageUrl+updatedAt+id]")
-          .between(
-            [query.pageUrl, "", ""],
-            [query.pageUrl, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[pageUrl+updatedAt+id]")
-          .between(
-            [query.pageUrl, "", ""],
-            [query.pageUrl, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
+    return indexedSource("[pageUrl+updatedAt+id]", query.pageUrl, cursor);
   if (query.kind)
-    return cursor
-      ? db.annotations
-          .where("[kind+updatedAt+id]")
-          .between(
-            [query.kind, "", ""],
-            [query.kind, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[kind+updatedAt+id]")
-          .between(
-            [query.kind, "", ""],
-            [query.kind, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
+    return indexedSource("[kind+updatedAt+id]", query.kind, cursor);
   if (query.color)
-    return cursor
-      ? db.annotations
-          .where("[color+updatedAt+id]")
-          .between(
-            [query.color, "", ""],
-            [query.color, cursor.updatedAt, cursor.id],
-            true,
-            false,
-          )
-          .reverse()
-      : db.annotations
-          .where("[color+updatedAt+id]")
-          .between(
-            [query.color, "", ""],
-            [query.color, "\uffff", "\uffff"],
-            true,
-            true,
-          )
-          .reverse();
+    return indexedSource("[color+updatedAt+id]", query.color, cursor);
+  const annotations = getDatabase().annotations;
   return cursor
-    ? db.annotations
+    ? annotations
         .where("[updatedAt+id]")
         .below([cursor.updatedAt, cursor.id])
         .reverse()
-    : db.annotations.orderBy("[updatedAt+id]").reverse();
+    : annotations.orderBy("[updatedAt+id]").reverse();
 }
 
 function needsResidualFiltering(query: AnnotationQuery): boolean {

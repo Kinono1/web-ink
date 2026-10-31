@@ -1,8 +1,5 @@
 import {
-  SCHEMA_VERSION,
-  type Annotation,
-  type BackupEnvelope,
-  type Settings,
+  SCHEMA_VERSION, type Annotation, type BackupEnvelope, type Settings,
 } from "./model";
 import { validateBackup } from "./validation";
 
@@ -11,14 +8,9 @@ function clone<T>(value: T): T {
 }
 
 /** Produce a portable, versioned JSON object. Callers decide how it is downloaded. */
-export function serializeBackup(
-  annotations: Annotation[],
-  settings?: Settings,
-): BackupEnvelope {
+export function serializeBackup(annotations: Annotation[], settings?: Settings): BackupEnvelope {
   const envelope: BackupEnvelope = {
-    format: "web-ink",
-    schemaVersion: SCHEMA_VERSION,
-    exportedAt: new Date().toISOString(),
+    format: "web-ink", schemaVersion: SCHEMA_VERSION, exportedAt: new Date().toISOString(),
     annotations: clone(annotations).sort((a, b) => a.id.localeCompare(b.id)),
     ...(settings === undefined ? {} : { settings: clone(settings) }),
   };
@@ -60,7 +52,7 @@ export function toMarkdown(annotations: Annotation[]): string {
     "",
     `Exported: ${new Date().toISOString()}`,
     "",
-  ];
+ ];
   for (const annotation of [...annotations].sort(
     (a, b) => a.pageUrl.localeCompare(b.pageUrl) || a.id.localeCompare(b.id),
   )) {

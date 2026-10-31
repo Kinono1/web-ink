@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { useAnnotations, useAnnotationsState } from "../src/pdf/hooks/useAnnotations";
 import { useReaderUIState } from "../src/pdf/hooks/useReaderUI";
 import type { Request } from "../src/core/model";
-import type { OpenDocument, PdfAnnotation, SelectionTarget } from "../src/pdf/types";
+import type { OpenDocument, PdfAnnotation, SelectionTarget } from "../src/core/pdf-types";
 
 let root: Root | undefined;
 const hash = "a".repeat(64);

@@ -1,6 +1,6 @@
 import { afterEach, expect, it } from "vitest";
-import { AnnotationStore } from "../../../src/content/engine/AnnotationStore";
-import type { AnnotationController } from "../../../src/content/engine/AnnotationController";
+import { DataEngine, type DataEngineHost } from "../../../src/content/engine/DataEngine";
+import { createView } from "../../../src/content/view-lite";
 import type { ImageAnnotation } from "../../../src/core/model";
 
 const image = (revision: number): ImageAnnotation => ({
@@ -12,12 +12,10 @@ const image = (revision: number): ImageAnnotation => ({
 afterEach(() => { document.body.replaceChildren(); });
 it("keeps a delete tombstone against an older delivery and admits a newer restoration", () => {
   const engine = {
-    enabled: () => true, currentUrl: location.href,
-    sync: { refreshDepth: 0 }, interactions: { actionRecords: [] },
-    render: { textRanges: new Map(), images: new Map(), imageLayers: { drop: () => {} }, applyTextStyles: () => {}, schedulePaint: () => {} },
-    events: { resizeObserver: { observe: () => {} } },
-  } as unknown as AnnotationController;
-  const store = new AnnotationStore(engine);
+    enabled: () => true, currentUrl: location.href, disposed: true,
+    view: createView(), ui: { actionRecords: [] },
+  } as unknown as DataEngineHost;
+  const store = new DataEngine(engine);
   // State publication is the Chrome boundary; the state/revision logic stays real.
   store.publishStates = () => {};
   store.prepareRestore([image(3)]);
@@ -32,8 +30,10 @@ it("keeps a delete tombstone against an older delivery and admits a newer restor
 });
 
 it("ignores changes from another page and duplicate revisions", () => {
-  const engine = { enabled: () => true, currentUrl: location.href } as AnnotationController;
-  const store = new AnnotationStore(engine);
+  const engine = {
+    enabled: () => true, currentUrl: location.href, disposed: true, view: createView(),
+  } as unknown as DataEngineHost;
+  const store = new DataEngine(engine);
   store.prepareRestore([image(3)]);
   store.applyAnnotationDelta({ ...image(4), pageUrl: "https://elsewhere.test/" });
   store.applyAnnotationDelta(image(3));

@@ -1,5 +1,4 @@
 import type { PDFDocumentProxy, TextContent, TextItem } from "pdfjs-dist/types/src/display/api";
-
 // One million text code units needs roughly 14 MB before Map/object overhead:
 // UTF-16 text plus three Int32 source-coordinate mappings.
 const MAX_CACHED_CHARS = 1_000_000;
@@ -11,44 +10,22 @@ export type PdfSearchMatch = {
   itemRanges: { itemIndex: number; start: number; end: number }[];
 };
 
-export type PdfSearchResult = {
-  matches: PdfSearchMatch[];
-  total: number;
-  scannedPages: number;
-  failedPages: number;
-  textPages: number;
-  limited: boolean;
-};
+export type PdfSearchResult = { matches: PdfSearchMatch[]; total: number; scannedPages: number; failedPages: number; textPages: number; limited: boolean; };
 
 export type PdfSearchProgress = Omit<PdfSearchResult, "matches">;
-
-type SearchOptions = {
-  signal: AbortSignal;
-  onProgress?: (progress: PdfSearchProgress) => void;
-};
-
+type SearchOptions = { signal: AbortSignal; onProgress?: (progress: PdfSearchProgress) => void; };
 type SourcePosition = { itemIndex: number; start: number; end: number };
-type PageTextIndex = {
-  text: string;
-  itemIndexes: Int32Array;
-  starts: Int32Array;
-  ends: Int32Array;
-  chars: number;
-};
-
+type PageTextIndex = { text: string; itemIndexes: Int32Array; starts: Int32Array; ends: Int32Array; chars: number; };
 const segmenter = new Intl.Segmenter("und", { granularity: "grapheme" });
 const CJK_CONTINUATION = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]$/u;
 const CJK_LINE_BREAK = /([\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])\r?\n(?=[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}])/gu;
-
 function abortError(): DOMException {
   return new DOMException("PDF search was cancelled.", "AbortError");
 }
-
 function isTextItem(item: unknown): item is TextItem {
   return typeof item === "object" && item !== null && "str" in item &&
     typeof (item as { str?: unknown }).str === "string";
 }
-
 class FoldedTextBuilder {
   #parts: string[] = [];
   #itemIndexes: number[] = [];
@@ -57,7 +34,6 @@ class FoldedTextBuilder {
   #pendingWhitespace?: SourcePosition;
   #pendingLineBreak = false;
   #lastNonWhitespace = "";
-
   appendItem(value: string, itemIndex: number): void {
     for (const { segment, index } of segmenter.segment(value)) {
       const folded = segment.normalize("NFC").toLocaleLowerCase("und");
@@ -83,12 +59,10 @@ class FoldedTextBuilder {
       this.#lastNonWhitespace = Array.from(folded).at(-1) ?? this.#lastNonWhitespace;
     }
   }
-
   appendEndOfLine(): void {
     // PDF.js represents a visual line break separately from a text item.
     if (!this.#pendingWhitespace) this.#pendingLineBreak = true;
   }
-
   finish(): PageTextIndex {
     this.#flushWhitespace();
     const text = this.#parts.join("");
@@ -100,7 +74,6 @@ class FoldedTextBuilder {
       chars: text.length,
     };
   }
-
   #flushWhitespace(): void {
     if (this.#pendingWhitespace)
       this.#append(" ", this.#pendingWhitespace);
@@ -109,7 +82,6 @@ class FoldedTextBuilder {
     this.#pendingWhitespace = undefined;
     this.#pendingLineBreak = false;
   }
-
   #append(value: string, position: SourcePosition): void {
     this.#parts.push(value);
     for (let index = 0; index < value.length; index++) {
@@ -119,13 +91,11 @@ class FoldedTextBuilder {
     }
   }
 }
-
 function foldQuery(value: string): string {
   const builder = new FoldedTextBuilder();
   builder.appendItem(value.replace(CJK_LINE_BREAK, "$1"), 0);
   return builder.finish().text;
 }
-
 function itemRanges(index: PageTextIndex, start: number, end: number): PdfSearchMatch["itemRanges"] {
   const ranges: PdfSearchMatch["itemRanges"] = [];
   for (let offset = start; offset < end; offset++) {
@@ -142,13 +112,11 @@ function itemRanges(index: PageTextIndex, start: number, end: number): PdfSearch
   }
   return ranges;
 }
-
 function matchesForPage(
   pageNumber: number,
   index: PageTextIndex,
   query: string,
-  remaining: number,
-): { total: number; matches: PdfSearchMatch[] } {
+  remaining: number) : { total: number; matches: PdfSearchMatch[] } {
   const matches: PdfSearchMatch[] = [];
   let total = 0;
   let start = 0;
@@ -166,7 +134,6 @@ function matchesForPage(
   }
   return { total, matches };
 }
-
 function yieldToBrowser(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
@@ -179,11 +146,9 @@ export class PdfTextSearchIndex {
   #generation = 0;
   #activeAbort?: AbortController;
   #disposed = false;
-
   constructor(document: PDFDocumentProxy) {
     this.#document = document;
   }
-
   async search(query: string, { signal, onProgress }: SearchOptions): Promise<PdfSearchResult> {
     this.#activeAbort?.abort();
     const controller = new AbortController();
@@ -192,7 +157,6 @@ export class PdfTextSearchIndex {
     const abort = () => controller.abort();
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) controller.abort();
-
     const result: PdfSearchResult = {
       matches: [], total: 0, scannedPages: 0, failedPages: 0, textPages: 0, limited: false,
     };
@@ -200,7 +164,6 @@ export class PdfTextSearchIndex {
     try {
       this.#assertActive(generation, controller.signal);
       if (!foldedQuery.trim()) return result;
-
       for (let pageNumber = 1; pageNumber <= this.#document.numPages; pageNumber++) {
         this.#assertActive(generation, controller.signal);
         let pageIndex = this.#getCached(pageNumber);
@@ -233,7 +196,6 @@ export class PdfTextSearchIndex {
       if (this.#activeAbort === controller) this.#activeAbort = undefined;
     }
   }
-
   dispose(): void {
     this.#disposed = true;
     this.#generation++;
@@ -242,17 +204,14 @@ export class PdfTextSearchIndex {
     this.#cache.clear();
     this.#cachedChars = 0;
   }
-
   #progress(result: PdfSearchResult): PdfSearchProgress {
     const { matches: _matches, ...progress } = result;
     return progress;
   }
-
   #assertActive(generation: number, signal: AbortSignal): void {
     if (this.#disposed || signal.aborted || generation !== this.#generation)
       throw abortError();
   }
-
   #getCached(pageNumber: number): PageTextIndex | undefined {
     const value = this.#cache.get(pageNumber);
     if (!value) return undefined;
@@ -260,7 +219,6 @@ export class PdfTextSearchIndex {
     this.#cache.set(pageNumber, value);
     return value;
   }
-
   #cachePage(pageNumber: number, value: PageTextIndex): void {
     if (value.chars > MAX_CACHED_CHARS) return;
     this.#cache.set(pageNumber, value);
@@ -272,7 +230,6 @@ export class PdfTextSearchIndex {
       this.#cachedChars -= oldest[1].chars;
     }
   }
-
   async #readPage(pageNumber: number, generation: number, signal: AbortSignal): Promise<PageTextIndex> {
     const page = await this.#document.getPage(pageNumber);
     this.#assertActive(generation, signal);

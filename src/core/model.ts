@@ -1,13 +1,7 @@
 /** Durable, versioned records. DOM nodes and viewport coordinates never enter storage. */
 export const SCHEMA_VERSION = 2 as const;
 // Apple AnnotationKit's light-paper highlight palette; provenance in DESIGN.md.
-export const COLORS = [
-  "#facd5a",
-  "#7cc868",
-  "#69b0f1",
-  "#fb5c89",
-  "#c885da",
-] as const;
+export const COLORS = ["#facd5a", "#7cc868", "#69b0f1", "#fb5c89", "#c885da"] as const;
 export type Language = "zh-CN" | "en";
 export interface Settings {
   language: Language;
@@ -19,11 +13,7 @@ export interface Settings {
   reduceTransparency?: boolean;
 }
 export const DEFAULT_SETTINGS: Settings = {
-  language: "zh-CN",
-  defaultColor: COLORS[0],
-  disabledOrigins: [],
-  theme: "system",
-  reduceMotion: false,
+  language: "zh-CN", defaultColor: COLORS[0], disabledOrigins: [], theme: "system", reduceMotion: false,
   reduceTransparency: false,
 };
 export interface TextTarget {
@@ -107,8 +97,7 @@ export interface PdfAreaAnnotation extends AnnotationBase {
   kind: "pdf-area";
   target: PdfTarget;
 }
-export type Annotation =
-  | TextAnnotation
+export type Annotation = | TextAnnotation
   | ImageAnnotation
   | PdfTextAnnotation
   | PdfAreaAnnotation;
@@ -137,8 +126,7 @@ export interface PdfSourceCandidate {
   url: string;
   via: "url" | "viewer" | "iframe" | "embed" | "object";
 }
-export type PdfContextReason =
-  | "not-pdf"
+export type PdfContextReason = | "not-pdf"
   | "source-unknown"
   | "protected-viewer"
   | "permission-denied"
@@ -178,8 +166,7 @@ export interface PdfReturnResult {
   tabId: number;
   url: string;
 }
-export type PdfNavigationErrorCode =
-  | "INVALID_INPUT"
+export type PdfNavigationErrorCode = | "INVALID_INPUT"
   | "FORBIDDEN"
   | "PAGE_CHANGED"
   | "PDF_CHOICE_REQUIRED"
@@ -192,14 +179,6 @@ export interface BackupEnvelope {
   schemaVersion: typeof SCHEMA_VERSION;
   exportedAt: string;
   annotations: Annotation[];
-  settings?: Settings;
-}
-/** Read-only compatibility shape accepted at import; exports are always schema v2. */
-export interface BackupEnvelopeV1 {
-  format: "web-ink";
-  schemaVersion: 1;
-  exportedAt: string;
-  annotations: Array<TextAnnotation | ImageAnnotation>;
   settings?: Settings;
 }
 export type AnchorStatus = "located" | "pending" | "unresolved" | "unsupported";
@@ -251,11 +230,9 @@ export interface StorageStats {
   backupRecordLimit: number;
   storageWarningBytes: number;
 }
-export type Result<T> =
-  | { ok: true; data: T }
-  | { ok: false; error: string; code?: string; diagnostic?: import('../pdf/ieee-diagnostics').IeeePdfDiagnostic };
-export type Request =
-  | { type: "runtime.health" }
+export type Result<T> = | { ok: true; data: T }
+  | { ok: false; error: string; code?: string; diagnostic?: import('./ieee-contract').IeeePdfDiagnostic };
+export type Request = | { type: "runtime.health" }
   | { type: "ui.open"; target: "sidebar" | "library" | "local-pdf" }
   | { type: "pdf.context.get"; tabId?: number; windowId?: number; expectedUrl?: string }
   | { type: "pdf.openCurrent"; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string; accessMode?: "public" | "site-session" }
@@ -297,8 +274,7 @@ export type Request =
       id?: string;
     }
   | { type: "permissions.enable" };
-export type Notification =
-  | {
+export type Notification = | {
       type: "annotations.changed";
       pageUrl?: string;
       annotation?: Annotation;

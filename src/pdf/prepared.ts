@@ -1,17 +1,7 @@
-import { MAX_PDF_BYTES, pdfHash, verifyPdf } from './source';
-import type { PreparedInfo } from '../background/pdf-prepared';
-
-export const IEEE_PREPARE_PORT = 'web-ink-ieee-prepare';
-export const PDF_CHUNK_BYTES = 256 * 1024;
-export function encodePdfChunk(bytes: Uint8Array): string {
-  let text = '';
-  for (let offset = 0; offset < bytes.length; offset += 8192)
-    text += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
-  return btoa(text);
-}
+import { MAX_PDF_BYTES, pdfHash, verifyPdf } from '../core/pdf-source';
+import { PDF_CHUNK_BYTES, type PreparedInfo } from '../core/prepared-contract';
 export async function readPreparedPdf(
-  token: string, request: <T>(message: object) => Promise<T>, signal: AbortSignal,
-): Promise<Uint8Array> {
+  token: string, request: <T>(message: object) => Promise<T>, signal: AbortSignal) : Promise<Uint8Array> {
   signal.throwIfAborted();
   let claimed = false;
   try {

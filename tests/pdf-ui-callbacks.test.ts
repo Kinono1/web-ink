@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { DEFAULT_SETTINGS } from "../src/core/model";
 import { useReaderUI, useReaderUIState } from "../src/pdf/hooks/useReaderUI";
 import { useViewport, useViewportState } from "../src/pdf/hooks/useViewport";
-import type { OpenDocument } from "../src/pdf/types";
+import type { OpenDocument } from "../src/core/pdf-types";
 
 let root: Root | undefined;
 beforeEach(() => {

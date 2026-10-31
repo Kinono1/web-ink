@@ -1,6 +1,6 @@
 import { connectPdfSidebar } from "../sidebar-connection";
-import type { PdfReaderRequest, PdfSidebarState } from "../sidebar-types";
-import { errorText } from "../types";
+import type { PdfReaderRequest, PdfSidebarState } from "../../core/sidebar";
+import { errorText } from "../../core/pdf-types";
 import { useEffect, useRef, useState } from "react";
 import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
 
@@ -21,36 +21,19 @@ export function useSidebarSyncState() {
     sidebarAck, setSidebarAck,
   };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "annotationWrites" | "busy" | "draftsRef" | "error" | "key" | "locked" | "nativeFilter" |
-  "nativeLimit" | "nativeLoading" | "nativeOffset" | "nativeProgress" | "nativeRecords" |
-  "nativeWindow" | "noteConflicts" | "noteDrafts" | "noteSaving" | "notesLimit" | "notice" |
-  "opened" | "originalError" | "pendingLeave" | "readerTab" | "readerWindow" | "records" |
-  "recordsRef" | "removing" | "setError" | "setFallbackNotes" | "setNoteConflicts" |
-  "setNotesLimit" | "setPicked" | "setSidebarAck" | "setSidebarAttached" | "sidebarAck" |
-  "sidebarAttachedRef" | "sidebarClient" | "sidebarHandler" | "sidebarSession" |
-  "sidebarView" | "sortedNotes" | "sourceOpen" | "undoRecord" | "unsavedRef"
->;
+  "annotationWrites" | "busy" | "draftsRef" | "error" | "key" | "locked" | "nativeFilter" | "nativeLimit" | "nativeLoading" | "nativeOffset" | "nativeProgress" | "nativeRecords" | "nativeWindow" | "noteConflicts" | "noteDrafts" | "noteSaving" |
+  "notesLimit" | "notice" | "opened" | "originalError" | "pendingLeave" | "readerTab" | "readerWindow" | "records" | "recordsRef" | "removing" | "setError" | "setFallbackNotes" | "setNoteConflicts" | "setNotesLimit" | "setPicked" | "setSidebarAck" | "setSidebarAttached" |
+  "sidebarAck" | "sidebarAttachedRef" | "sidebarClient" | "sidebarHandler" | "sidebarSession" | "sidebarView" | "sortedNotes" | "sourceOpen" | "undoRecord" | "unsavedRef">;
 
-export function useSidebarSync(
-  state: Inputs,
-  actions: ReaderActionsRef<
-    "cancelNativeScan" | "filterAnnotations" | "focusOriginalNote" | "jump" |
-    "nextOriginalPage" | "previousOriginalPage" | "remove" | "restoreRemoved" | "saveNote" |
-    "updateDraft"
-  >,
-) {
-  const {
-    annotationWrites, busy, draftsRef, error, key, locked, nativeFilter, nativeLimit,
-    nativeLoading, nativeOffset, nativeProgress, nativeRecords, nativeWindow, noteConflicts,
-    noteDrafts, noteSaving, notesLimit, notice, opened, originalError, pendingLeave,
-    readerTab, readerWindow, records, recordsRef, removing, setError, setFallbackNotes,
-    setNoteConflicts, setNotesLimit, setPicked, setSidebarAck, setSidebarAttached, sidebarAck,
-    sidebarAttachedRef, sidebarClient, sidebarHandler, sidebarSession, sidebarView,
-    sortedNotes, sourceOpen, undoRecord, unsavedRef,
-  } = state;
-
+export function useSidebarSync(state: Inputs, actions:
+  ReaderActionsRef< "cancelNativeScan" | "filterAnnotations" | "focusOriginalNote" | "jump" | "nextOriginalPage" | "previousOriginalPage" | "remove" | "restoreRemoved" | "saveNote" | "updateDraft" >,
+  ) {
+  const { annotationWrites, busy, draftsRef, error, key, locked, nativeFilter, nativeLimit, nativeLoading, nativeOffset, nativeProgress,
+    nativeRecords, nativeWindow, noteConflicts, noteDrafts, noteSaving, notesLimit, notice, opened, originalError, pendingLeave,
+    readerTab, readerWindow, records, recordsRef, removing, setError, setFallbackNotes, setNoteConflicts, setNotesLimit, setPicked,
+      setSidebarAck, setSidebarAttached, sidebarAck, sidebarAttachedRef, sidebarClient, sidebarHandler, sidebarSession, sidebarView,
+    sortedNotes, sourceOpen, undoRecord, unsavedRef, } = state;
   useEffect(() => {
     void chrome.tabs?.getCurrent?.()
       .then((tab) => { readerTab.current = tab?.id; readerWindow.current = tab?.windowId; })
@@ -81,7 +64,6 @@ export function useSidebarSync(
     nativeTotalCount: nativeRecords.length, nativeOffset, nativeLimit, nativePageEnd: nativeWindow.end,
   } : null;
   sidebarView.current = sidebarState;
-
   useEffect(() => {
     sidebarClient.current?.send({ type: "state", state: sidebarState, ack: sidebarAck });
   }, [opened, key, busy, records, notesLimit, noteDrafts, noteConflicts, locked, pendingLeave, sourceOpen, noteSaving, removing, undoRecord, error, notice, sidebarAck, sidebarSession,

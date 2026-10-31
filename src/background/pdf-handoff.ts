@@ -1,56 +1,24 @@
-import type {
-  PdfHandoff,
-  PdfNavigationErrorCode,
-  PdfOpenResult,
-  PdfTabContext,
-  Result,
-} from "../core/model";
+import type { PdfHandoff, PdfNavigationErrorCode, PdfOpenResult, PdfTabContext, Result } from "../core/model";
 import {
-  buildPdfOpenUrl,
-  classifyPdfTab,
-  getPdfContext,
-  isKnownPdfViewer,
-  isIeeePdfWrapper,
-  isIeeeSessionPage,
-  probePdfDocument,
-  publicPdfSource,
-} from "../pdf/context";
+  buildPdfOpenUrl, classifyPdfTab, getPdfContext, isKnownPdfViewer, isIeeePdfWrapper,
+  isIeeeSessionPage, probePdfDocument, publicPdfSource,
+} from "../core/pdf-context";
 import { createIeeePreparation } from './ieee-preparation';
-import { IeeePdfError } from '../pdf/ieee';
+import { IeeePdfError } from '../core/ieee-contract';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 class PdfNavigationError extends Error {
-  constructor(readonly code: PdfNavigationErrorCode, message: string) {
-    super(message);
-  }
+  constructor(readonly code: PdfNavigationErrorCode, message: string) { super(message); }
 }
 type Input = {
-  type: string;
-  tabId?: number;
-  windowId?: number;
-  expectedUrl?: string;
-  candidateUrl?: string;
-  token?: string;
-  accessMode?: "public" | "site-session";
-  index?: number;
+  type: string; tabId?: number; windowId?: number; expectedUrl?: string; candidateUrl?: string;
+  token?: string; accessMode?: "public" | "site-session"; index?: number;
 };
 type Actor = {
-  kind: "sidebar" | "content" | "reader";
-  tabId: number;
-  windowId?: number;
-  activationEpoch?: number;
-  documentId?: string;
-  contextDocumentId?: string;
-  contextId?: string;
-  sender: chrome.runtime.MessageSender;
+  kind: "sidebar" | "content" | "reader"; tabId: number; windowId?: number; activationEpoch?: number;
+  documentId?: string; contextDocumentId?: string; contextId?: string; sender: chrome.runtime.MessageSender;
 };
-type Snapshot = {
-  url?: string;
-  epoch: number;
-  documentId?: string;
-  readerDocumentId?: string;
-  cancelEpoch?: number;
-};
+type Snapshot = { url?: string; epoch: number; documentId?: string; readerDocumentId?: string; cancelEpoch?: number };
 
 function pageUrl(raw: string): string {
   try { return new URL(raw).href; } catch { throw new PdfNavigationError("INVALID_INPUT", "Invalid page URL."); }
@@ -58,8 +26,7 @@ function pageUrl(raw: string): string {
 function ownPage(raw: string | undefined, name: string): boolean {
   if (!raw) return false;
   try {
-    const url = new URL(raw);
-    const own = new URL(chrome.runtime.getURL(name));
+    const url = new URL(raw), own = new URL(chrome.runtime.getURL(name));
     return url.protocol === own.protocol && url.host === own.host && url.pathname === own.pathname;
   } catch { return false; }
 }
@@ -75,7 +42,8 @@ function returnUrl(raw: unknown): string | undefined {
 function parseInput(raw: unknown): Input {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF request.");
   const input = { ...raw } as Input;
-  const reader = input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" || input.type === "pdf.returnOriginal" || input.type.startsWith('pdf.prepared.');
+  const reader = input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" ||
+    input.type === "pdf.returnOriginal" || input.type.startsWith('pdf.prepared.');
   const fields = reader ? ["type", "token"] : ["type", "tabId", "windowId", "expectedUrl"];
   if (input.type === 'pdf.prepared.chunk') fields.push('index');
   if (input.type === "pdf.openCurrent") fields.push("candidateUrl", "accessMode");
@@ -86,18 +54,18 @@ function parseInput(raw: unknown): Input {
     throw new PdfNavigationError("INVALID_INPUT", "Invalid PDF access mode.");
   if (reader) {
     if (typeof input.token !== "string" || !UUID.test(input.token)) throw new PdfNavigationError("INVALID_INPUT", "Invalid return session.");
-  } else {
-    if (input.tabId !== undefined && (!Number.isInteger(input.tabId) || input.tabId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid tab.");
-    if (input.windowId !== undefined && (!Number.isInteger(input.windowId) || input.windowId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid window.");
-    if (input.expectedUrl !== undefined) {
-      if (typeof input.expectedUrl !== "string" || input.expectedUrl.length > 8192) throw new PdfNavigationError("INVALID_INPUT", "Invalid page URL.");
-      input.expectedUrl = pageUrl(input.expectedUrl);
-    }
-    if (input.candidateUrl !== undefined) {
-      if (typeof input.candidateUrl !== "string" || input.candidateUrl.length > 8192 || !publicPdfSource(input.candidateUrl))
-        throw new PdfNavigationError("INVALID_INPUT", "Choose a public HTTPS PDF source.");
-      input.candidateUrl = publicPdfSource(input.candidateUrl);
-    }
+    return input;
+  }
+  if (input.tabId !== undefined && (!Number.isInteger(input.tabId) || input.tabId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid tab.");
+  if (input.windowId !== undefined && (!Number.isInteger(input.windowId) || input.windowId < 0)) throw new PdfNavigationError("INVALID_INPUT", "Invalid window.");
+  if (input.expectedUrl !== undefined) {
+    if (typeof input.expectedUrl !== "string" || input.expectedUrl.length > 8192) throw new PdfNavigationError("INVALID_INPUT", "Invalid page URL.");
+    input.expectedUrl = pageUrl(input.expectedUrl);
+  }
+  if (input.candidateUrl !== undefined) {
+    if (typeof input.candidateUrl !== "string" || input.candidateUrl.length > 8192 || !publicPdfSource(input.candidateUrl))
+      throw new PdfNavigationError("INVALID_INPUT", "Choose a public HTTPS PDF source.");
+    input.candidateUrl = publicPdfSource(input.candidateUrl);
   }
   return input;
 }
@@ -183,8 +151,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
       const sidePanel = name === "sidepanel.html" && item.contextType === "SIDE_PANEL" && (item.frameId === -1 || item.frameId === 0);
       // Chrome keeps MessageSender.url at the loaded URL after replaceState.
       // Readers add document/position parameters without replacing the document.
-      const samePage = name === "pdf.html" && documentId
-        ? ownPage(item.documentUrl, name) : item.documentUrl === sender.url;
+      const samePage = name === "pdf.html" && documentId ? ownPage(item.documentUrl, name) : item.documentUrl === sender.url;
       return item.documentId && item.contextId && samePage &&
         (!documentId || item.documentId === documentId) &&
         (!pinned || item.contextId === pinned.contextId) && (topTab || sidePanel);
@@ -205,7 +172,8 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     }
   };
   const actorFor = async (input: Input, sender: chrome.runtime.MessageSender): Promise<Actor> => {
-    if ((input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" || input.type === "pdf.returnOriginal" || input.type.startsWith('pdf.prepared.')) && !ownPage(sender.url, "pdf.html"))
+    if ((input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke" || input.type === "pdf.returnOriginal" ||
+      input.type.startsWith('pdf.prepared.')) && !ownPage(sender.url, "pdf.html"))
       throw new PdfNavigationError("FORBIDDEN", "Return to the original page from its PDF reader.");
     if (ownPage(sender.url, "sidepanel.html")) {
       const context = await ownContext(sender, "sidepanel.html");
@@ -231,11 +199,9 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
       if (input.tabId !== undefined && input.tabId !== context.tabId) throw new PdfNavigationError("FORBIDDEN", "This return session belongs to another tab.");
       return { kind: "reader", tabId: context.tabId, documentId: context.documentId, contextDocumentId: context.documentId, contextId: context.contextId, sender };
     }
-    if (
-      sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.documentId ||
+    if (sender.id !== chrome.runtime.id || sender.frameId !== 0 || !sender.documentId ||
       sender.tab?.id === undefined || !returnUrl(sender.url) ||
-      (sender.documentLifecycle && sender.documentLifecycle !== "active")
-    )
+      (sender.documentLifecycle && sender.documentLifecycle !== "active"))
       throw new PdfNavigationError("FORBIDDEN", "This PDF action is not available from this page.");
     if (input.tabId !== undefined && input.tabId !== sender.tab.id) throw new PdfNavigationError("FORBIDDEN", "This PDF action belongs to another tab.");
     if (input.windowId !== undefined && input.windowId !== sender.tab.windowId) throw new PdfNavigationError("FORBIDDEN", "This PDF action belongs to another window.");
@@ -300,10 +266,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
       const token = url.searchParams.get("handoff") ?? undefined;
       const source = publicPdfSource(url.searchParams.get("source") ?? "");
       context = {
-        tabId: actor.tabId,
-        url: snapshot.url,
-        kind: "wrapper",
-        currentReader: true,
+        tabId: actor.tabId, url: snapshot.url, kind: "wrapper", currentReader: true,
         candidates: source ? [{ url: source, via: "viewer" }] : [],
         ...(token && UUID.test(token) ? { handoffToken: token } : {}),
       };
@@ -332,6 +295,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     await guard(actor, snapshot);
     return { context, snapshot };
   };
+  /** One flight per tab; identical concurrent requests join it, different ones are rejected. */
   const singleFlight = (actor: Actor, input: Input, run: () => Promise<unknown>) => {
     const key = JSON.stringify([input.type, actor.kind, actor.windowId, actor.contextDocumentId ?? actor.sender.documentId, input.expectedUrl, input.candidateUrl, input.token, input.accessMode]);
     const existing = flights.get(actor.tabId);
@@ -341,9 +305,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     }
     const task = Promise.resolve().then(run);
     flights.set(actor.tabId, { key, task });
-    void task.finally(() => {
-      if (flights.get(actor.tabId)?.task === task) flights.delete(actor.tabId);
-    }).catch(() => undefined);
+    void task.finally(() => { if (flights.get(actor.tabId)?.task === task) flights.delete(actor.tabId); }).catch(() => undefined);
     return task;
   };
   const open = async (actor: Actor, input: Input): Promise<PdfOpenResult> => {
@@ -352,9 +314,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     snapshot.cancelEpoch = cancelEpoch;
     await guard(actor, snapshot);
     if (context.currentReader) return {
-      tabId: actor.tabId,
-      readerUrl: context.url!,
-      navigation: "current-reader",
+      tabId: actor.tabId, readerUrl: context.url!, navigation: "current-reader",
       ...(context.handoffToken ? { token: context.handoffToken } : {}),
       ...(context.candidates[0] ? { sourceUrl: context.candidates[0].url } : {}),
     };
@@ -413,8 +373,7 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
       // Bound retained recovery state to one handoff per live tab.
       await removeTabHandoffs(actor.tabId);
       await chrome.storage.session.set({ [`pdf.handoff.${token}`]: handoff });
-    }
-    catch { if (preparedToken) preparation.releaseTab(actor.tabId); throw new PdfNavigationError("STORAGE_UNAVAILABLE", "Return context could not be saved. Reader navigation was not started."); }
+    } catch { if (preparedToken) preparation.releaseTab(actor.tabId); throw new PdfNavigationError("STORAGE_UNAVAILABLE", "Return context could not be saved. Reader navigation was not started."); }
     try { await guard(actor, snapshot); }
     catch (error) {
       await chrome.storage.session.remove(`pdf.handoff.${token}`).catch(() => undefined);
@@ -423,7 +382,8 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
     }
     if (preparedToken) preparedReaders.set(actor.tabId, token);
     try { await chrome.tabs.update(actor.tabId, { url: reader.href }); }
-    catch { if (preparedToken) preparation.releaseTab(actor.tabId); throw new PdfNavigationError("NAVIGATION_FAILED", "Reader navigation could not be confirmed. Saved return context is retained for recovery."); }
+    catch { if (preparedToken) preparation.releaseTab(actor.tabId); throw new PdfNavigationError("NAVIGATION_FAILED",
+      "Reader navigation could not be confirmed. Saved return context is retained for recovery."); }
     return { tabId: actor.tabId, readerUrl: reader.href, navigation: "same-tab", token, ...(source ? { sourceUrl: source } : {}) };
   };
   const readerHandoff = async (actor: Actor, token: string) => {
@@ -449,20 +409,15 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
       if (!expired && handoff.readerDocumentId) return handoff;
       if (expired && handoff.expiresAt === 0 && !handoff.sourceUrl) return handoff;
       const updated = { ...handoff };
-      if (expired) {
-        updated.expiresAt = 0;
-        delete updated.sourceUrl;
-        preparation.releaseTab(actor.tabId);
-      } else updated.readerDocumentId = actor.documentId!;
+      if (expired) { updated.expiresAt = 0; delete updated.sourceUrl; preparation.releaseTab(actor.tabId); }
+      else updated.readerDocumentId = actor.documentId!;
       try { await chrome.storage.session.set({ [`pdf.handoff.${token}`]: updated }); }
       catch { throw new PdfNavigationError("STORAGE_UNAVAILABLE", "Session access could not be saved. Return to IEEE and open again."); }
       await guard(actor, snapshot);
       return updated;
     });
     grantUpdates.set(actor.tabId, task);
-    void task.finally(() => {
-      if (grantUpdates.get(actor.tabId) === task) grantUpdates.delete(actor.tabId);
-    }).catch(() => undefined);
+    void task.finally(() => { if (grantUpdates.get(actor.tabId) === task) grantUpdates.delete(actor.tabId); }).catch(() => undefined);
     return task;
   };
   return async (raw: unknown, sender: chrome.runtime.MessageSender): Promise<Result<unknown>> => {
@@ -487,7 +442,10 @@ export function createPdfHandoffHandler(getGeneration: () => Promise<string>) {
         if (input.type === 'pdf.prepared.chunk') return { ok: true, data: data.chunk(handoff.preparedToken, owner, input.index!) };
         if (input.type === 'pdf.prepared.release') { data.release(handoff.preparedToken, owner); return { ok: true, data: undefined }; }
       }
-      if (input.type === "pdf.context.get") return { ok: true, data: (await inspect(actor, input)).context };
+      if (input.type === "pdf.context.get") {
+        const { context } = await inspect(actor, input);
+        return { ok: true, data: context };
+      }
       if (input.type === "pdf.openCurrent") return { ok: true, data: await singleFlight(actor, input, () => open(actor, input)) };
       if (input.type === "pdf.handoff.get" || input.type === "pdf.handoff.revoke")
         return { ok: true, data: await updateGrant(actor, input.token!, input.type === "pdf.handoff.revoke") };

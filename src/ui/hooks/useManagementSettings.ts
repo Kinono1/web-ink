@@ -6,7 +6,7 @@ import {
   SELECTION_TOOLBAR_KEY,
   writeSelectionToolbarEnabled,
 } from "../../core/selection-toolbar";
-import { applyPageTheme } from "../page-theme";
+import { applyPageTheme } from "../../core/theme";
 import { COPY } from "../management/copy";
 import type { NoticeMessage } from "../management/types";
 

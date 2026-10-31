@@ -1,7 +1,6 @@
-import type { PdfAnnotation } from "./types";
-import { pdfHash } from "./source";
+import type { PdfAnnotation } from "../core/pdf-types";
+import { pdfHash } from "../core/pdf-source";
 import { PdfExportError, checkExportBytes, validateExportRecords } from "./export-contract";
-
 type NativeAnnotation = {
   id: string; subtype: string; rect: number[] | null; annotationFlags: number;
   quadPoints?: Float32Array; color?: Uint8ClampedArray; contentsObj?: { str: string };
@@ -10,9 +9,7 @@ type NativeAnnotation = {
   [key: string]: unknown;
 };
 type PageReadback = { view: number[]; rotation: number; annotations: NativeAnnotation[] };
-
 function failed(message: string): never { throw new PdfExportError("verification", message); }
-
 // Object numbers and derived extracted text are deliberately outside the
 // fingerprint. Relationship IDs are checked after matching the original nodes.
 const semanticFields = [
@@ -22,7 +19,6 @@ const semanticFields = [
   "inkLists", "vertices", "lineCoordinates", "interiorColor", "fieldName", "fieldType",
   "fieldValue", "defaultFieldValue", "buttonValue", "alternativeText", "exportValues", "dest", "url", "unsafeUrl",
 ] as const;
-
 function canonical(value: unknown): unknown {
   if (typeof value === "number") return Math.round(value * 10_000) / 10_000;
   if (ArrayBuffer.isView(value)) return Array.from(value as unknown as ArrayLike<number>, canonical);
@@ -36,7 +32,6 @@ function canonical(value: unknown): unknown {
 function fingerprint(annotation: NativeAnnotation): string {
   return JSON.stringify(semanticFields.map(field => canonical(annotation[field])));
 }
-
 async function readPdf(bytes: Uint8Array, signal: AbortSignal): Promise<PageReadback[]> {
   signal.throwIfAborted();
   // The reader configures its PDF.js worker asset. This import shares that
@@ -70,12 +65,10 @@ async function readPdf(bytes: Uint8Array, signal: AbortSignal): Promise<PageRead
     await task.destroy().catch(() => undefined);
   }
 }
-
 function coordinatesMatch(actual: ArrayLike<number> | null | undefined, expected: number[]): boolean {
   return !!actual && actual.length === expected.length && expected.every((value, index) =>
     Number.isFinite(actual[index]) && Math.abs(actual[index]! - value) <= 0.0001);
 }
-
 function checkAdded(annotation: NativeAnnotation, record: PdfAnnotation, view: number[]): boolean {
   const [x0, y0, x1, y1] = view as [number, number, number, number];
   const rects = record.target.rects.map(rect => [x0 + rect.x * (x1 - x0), y0 + rect.y * (y1 - y0),
@@ -96,8 +89,7 @@ function checkAdded(annotation: NativeAnnotation, record: PdfAnnotation, view: n
 
 export async function verifyPdfExport(
   sourceBytes: Uint8Array, outputBytes: Uint8Array, sourceHash: string,
-  records: readonly PdfAnnotation[], signal: AbortSignal,
-): Promise<{ count: number; sourceHash: string; outputHash: string }> {
+  records: readonly PdfAnnotation[], signal: AbortSignal) : Promise<{ count: number; sourceHash: string; outputHash: string }> {
   signal.throwIfAborted();
   checkExportBytes(sourceBytes); checkExportBytes(outputBytes);
   const snapshot = validateExportRecords(sourceHash, records);

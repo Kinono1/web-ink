@@ -1,12 +1,11 @@
-import { type PdfNoteDraft } from "../PdfNote";
-import { errorText, type PdfAnnotation, type SelectionTarget } from "../types";
+import type { PdfNoteDraft } from "../../core/sidebar";
+import { errorText, type PdfAnnotation, type SelectionTarget } from "../../core/pdf-types";
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { request, RequestError, releaseChromeListener } from "../../core/client";
 import { type Annotation, type PdfTarget } from "../../core/model";
-import { isIeeeSessionPage } from "../context";
+import { isIeeeSessionPage } from "../../core/pdf-context";
 import { doiUrl } from "../paper-identity";
-import { isPdf, noteTags, dirtyDraft } from "./reader-utils";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { isPdf, noteTags, dirtyDraft, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
 
 export function useAnnotationsState() {
   const [records, setRecords] = useState<PdfAnnotation[]>([]);
@@ -56,7 +55,6 @@ export function useAnnotationsState() {
     }
     return pages;
   }, [records]);
-
   return {
     savedIds, deletedDrafts, sortedNotes, recordsByPage,
     records, setRecords, recordsRef, picked, setPicked, undoRecord, setUndoRecord, unsaved,
@@ -66,30 +64,15 @@ export function useAnnotationsState() {
     annotationChangeEpoch,
   };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "annotationChangeEpoch" | "annotationWrites" | "color" | "documentSession" |
-  "documentSessionRef" | "draftsRef" | "fallbackNotes" | "key" | "locked" | "noteAfterSave" |
-  "opened" | "paperDoi" | "records" | "recordsRef" | "removing" | "saving" | "setError" |
-  "setNoteConflicts" | "setNoteDrafts" | "setNoteSaving" | "setNotesLimit" | "setNotesOpen" |
-  "setPicked" | "setRecords" | "setRemoving" | "setSaving" | "setSelection" |
-  "setUndoRecord" | "setUnsaved" | "setWriteCount" | "supportsSidebar" | "t" | "undoRecord" |
-  "unsaved" | "unsavedRef"
->;
+  "annotationChangeEpoch" | "annotationWrites" | "color" | "documentSession" | "documentSessionRef" | "draftsRef" | "fallbackNotes" | "key" | "locked" | "noteAfterSave" | "opened" | "paperDoi" | "records" | "recordsRef" | "removing" | "saving" |
+  "setError" | "setNoteConflicts" | "setNoteDrafts" | "setNoteSaving" | "setNotesLimit" | "setNotesOpen" | "setPicked" | "setRecords" | "setRemoving" | "setSaving" | "setSelection" | "setUndoRecord" | "setUnsaved" | "setWriteCount" | "supportsSidebar" | "t" | "undoRecord" |
+  "unsaved" | "unsavedRef">;
 
-export function useAnnotations(
-  state: Inputs,
-  actions: ReaderActionsRef<"tell">,
-) {
-  const {
-    annotationChangeEpoch, annotationWrites, color, documentSession, documentSessionRef,
-    draftsRef, fallbackNotes, key, locked, noteAfterSave, opened, paperDoi,
-    recordsRef, removing, saving, setError, setNoteConflicts, setNoteDrafts, setNoteSaving,
-    setNotesLimit, setNotesOpen, setPicked, setRecords, setRemoving, setSaving, setSelection,
-    setUndoRecord, setUnsaved, setWriteCount, supportsSidebar, t, undoRecord, unsaved,
-    unsavedRef,
-  } = state;
-
+export function useAnnotations(state: Inputs, actions: ReaderActionsRef<"tell">,) {
+  const { annotationChangeEpoch, annotationWrites, color, documentSession, documentSessionRef, draftsRef, fallbackNotes, key, locked,
+    noteAfterSave, opened, paperDoi, recordsRef, removing, saving, setError, setNoteConflicts, setNoteDrafts, setNoteSaving, setNotesLimit,
+    setNotesOpen, setPicked, setRecords, setRemoving, setSaving, setSelection, setUndoRecord, setUnsaved, setWriteCount, supportsSidebar, t, undoRecord, unsaved, unsavedRef, } = state;
   // Remote deletion must reach pending save callbacks before React renders.
   const updateRecords = useCallback((next: PdfAnnotation[] | ((current: PdfAnnotation[]) => PdfAnnotation[])) => {
     const values = typeof next === "function" ? next(recordsRef.current) : next;
@@ -104,7 +87,6 @@ export function useAnnotations(
     recordsRef.current = values;
     setRecords(values);
   }, [recordsRef, draftsRef, setNotesOpen, setRecords]);
-
   const updateDraft = useCallback((id: string, draft?: PdfNoteDraft, resolveConflict = false) => {
     if (documentSession !== documentSessionRef.current) return;
     const next = { ...draftsRef.current };
@@ -114,7 +96,6 @@ export function useAnnotations(
     setNoteDrafts(next);
     if (!draft || resolveConflict) setNoteConflicts((current) => ({ ...current, [id]: false }));
   }, [documentSession, documentSessionRef, draftsRef, setNoteDrafts, setNoteConflicts]);
-
   const trackWrite = useCallback(async <T,>(operation: () => Promise<T>): Promise<T> => {
     const pending = operation();
     annotationWrites.current.add(pending);
@@ -126,7 +107,6 @@ export function useAnnotations(
       setWriteCount(annotationWrites.current.size);
     }
   }, [annotationWrites, setWriteCount]);
-
   const refresh = useCallback(async (): Promise<void> => {
     if (!key || documentSession !== documentSessionRef.current) return;
     const active = documentSession;
@@ -145,7 +125,6 @@ export function useAnnotations(
       setError(errorText(cause));
     }
   }, [key, documentSession, documentSessionRef, annotationChangeEpoch, updateRecords, setError]);
-
   useEffect(() => {
     if (!key) return;
     const active = documentSession;
@@ -179,11 +158,9 @@ export function useAnnotations(
     void refresh();
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, [key, documentSession, refresh]);
-
   useEffect(() => {
     setNotesLimit(50);
   }, [documentSession]);
-
   const save = useCallback(async (record: PdfAnnotation, editNote = false): Promise<PdfAnnotation> => {
     if (documentSession !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
     setSaving(true);
@@ -218,12 +195,8 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setSaving(false);
     } });
-  }, [
-    documentSession, documentSessionRef, trackWrite, updateRecords, updateDraft, setSaving,
-    setUnsaved, unsavedRef, noteAfterSave, setError, setSelection, actions, t, setNotesOpen,
-    supportsSidebar, fallbackNotes, setNotesLimit, recordsRef,
-  ]);
-
+  }, [documentSession, documentSessionRef, trackWrite, updateRecords, updateDraft, setSaving, setUnsaved, unsavedRef,
+    noteAfterSave, setError, setSelection, actions, t, setNotesOpen, supportsSidebar, fallbackNotes, setNotesLimit, recordsRef,]);
   const saveNote = useCallback(async (id: string, draft: PdfNoteDraft): Promise<void> => {
     if (documentSession !== documentSessionRef.current) throw new DOMException("Document changed", "AbortError");
     const deletedMessage = t(
@@ -255,11 +228,7 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setNoteSaving(undefined);
     } });
-  }, [
-    documentSession, documentSessionRef, recordsRef, t, setNotesOpen, setError, setNoteSaving,
-    trackWrite, updateRecords, updateDraft, setNoteConflicts,
-  ]);
-
+  }, [documentSession, documentSessionRef, recordsRef, t, setNotesOpen, setError, setNoteSaving, trackWrite, updateRecords, updateDraft, setNoteConflicts,]);
   const remove = useCallback(async (record: PdfAnnotation) => {
     if (documentSession !== documentSessionRef.current || removing || saving || unsaved || record.pageUrl !== key) return;
     setRemoving(true);
@@ -285,11 +254,7 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setRemoving(false);
     }
-  }, [
-    documentSession, documentSessionRef, removing, saving, unsaved, key, setRemoving, setError,
-    trackWrite, updateRecords, setNoteDrafts, setPicked, setUndoRecord, actions, t,
-  ]);
-
+  }, [documentSession, documentSessionRef, removing, saving, unsaved, key, setRemoving, setError, trackWrite, updateRecords, setNoteDrafts, setPicked, setUndoRecord, actions, t,]);
   const restoreRemoved = useCallback(async () => {
     if (
       documentSession !== documentSessionRef.current ||
@@ -320,11 +285,7 @@ export function useAnnotations(
     } finally {
       if (active === documentSessionRef.current) setRemoving(false);
     }
-  }, [
-    documentSession, documentSessionRef, undoRecord, removing, saving, unsaved, key, setRemoving,
-    setError, trackWrite, updateRecords, setUndoRecord, actions, t,
-  ]);
-
+  }, [documentSession, documentSessionRef, undoRecord, removing, saving, unsaved, key, setRemoving, setError, trackWrite, updateRecords, setUndoRecord, actions, t,]);
   const mark = useCallback((
     target: SelectionTarget,
     kind: "pdf-text" | "pdf-area",
