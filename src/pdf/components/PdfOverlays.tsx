@@ -3,7 +3,8 @@ import { usePdfDocument } from "../contexts/PdfDocumentContext";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
 /** Reader status/error notices and the unsaved-changes dialog share one module. */
-export function PdfReaderMessages({ state, actions }: { state: ReaderSnapshot; actions: ReaderActions }) {
+export function PdfReaderMessages({ state, actions, onReviewPrevious, onRetrySaved, recovering }: { state: ReaderSnapshot; actions: ReaderActions;
+  onReviewPrevious: () => void; onRetrySaved: () => void; recovering: boolean }) {
   const {
     backAction, backLabel, busy, error, exportStage, handoff, handoffReady, handoffToken,
     ieeeRecovery, leaving, locked, noteAfterSave, notice, paperUrl, positionError, previousHash,
@@ -21,7 +22,7 @@ export function PdfReaderMessages({ state, actions }: { state: ReaderSnapshot; a
         <span>{error}</span>
         {!opened && <p>{t("无法直接读取？下载 PDF 后，点击「选择本地 PDF」继续。", "Can't open the link? Download the PDF, then choose the local file.")}</p>}
         {unsaved ? <>
-          <button disabled={saving} onClick={() => void save(unsaved, noteAfterSave.current).catch(() => undefined)}>{t("重试保存", "Retry save")}</button>
+          <button disabled={saving} onClick={() => void save(unsaved, noteAfterSave.current).then(onRetrySaved).catch(() => undefined)}>{t("重试保存", "Retry save")}</button>
           <button disabled={saving} onClick={() => { unsavedRef.current = undefined; setUnsaved(undefined); setSelection(undefined); getSelection()?.removeAllRanges(); setError(""); }}>
             {t("放弃本次修改", "Discard change")}</button>
         </> : <button onClick={() => setError("")}>{t("关闭", "Dismiss")}</button>}
@@ -29,8 +30,9 @@ export function PdfReaderMessages({ state, actions }: { state: ReaderSnapshot; a
   {positionError && <div className="pdf-message error" role="status"><span>{positionError}</span>
         <button onClick={() => void flushPosition()}>{t("重试保存阅读位置", "Retry reading position")}</button>
         <button onClick={() => setPositionError("")}>{t("关闭", "Dismiss")}</button></div>}
-  {notice && <div className="pdf-message" role="status"><span>{notice}</span>
-        {previousHash && <button disabled={locked} onClick={() => requestLeave({ kind: "previous" })}>{t("查看之前的标注", "View previous annotations")}</button>}
+  {!recovering && (notice || previousHash) && <div className="pdf-message" role="status"><span>{notice || t("旧版本标注已保留。", "Previous annotations are preserved.")}</span>
+        {previousHash && <><button disabled={locked} onClick={onReviewPrevious}>{t("找回旧标注", "Recover previous annotations")}</button>
+          <button disabled={locked} onClick={() => requestLeave({ kind: "previous" })}>{t("查看之前的标注", "View previous annotations")}</button></>}
       </div>}
   {!opened && ieeeRecovery && (error || notice) && <div className="pdf-message">
         {ieeeRecovery === "return" ? <button disabled={busy || leaving} onClick={() => requestLeave(paperUrl ? { kind: "paper" } : backAction)}>{t("返回 IEEE", "Return to IEEE")}</button>

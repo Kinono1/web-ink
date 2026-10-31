@@ -316,6 +316,61 @@ it("rolls back a failed pencil-size write to the latest external value", async (
 });
 
 describe("management UI", () => {
+  it("does not export the previous page when the active tab changes before the UI updates", async () => {
+    const tab = { id: 7, windowId: 1, url: "https://example.test/article", title: "Article" };
+    let activated!: TabActivatedListener;
+    const sendMessage = installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: tab.id, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      if (message.type === "annotations.list") return { ok: true, data: [record] };
+      return { ok: true, data: true };
+    }, tab, undefined, undefined, listener => { activated = listener; });
+    const host = await mount("sidepanel");
+    const exportButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "导出本页标注")!;
+    expect(exportButton).toBeTruthy();
+    await act(async () => {
+      tab.id = 8;
+      tab.url = "https://example.test/other";
+      activated({ tabId: 8, windowId: 1 });
+      exportButton.click();
+    });
+    expect(sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "annotations.list" }));
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain("页面已切换，未导出");
+  });
+
+  it("does not download a page export when the active document changes while records load", async () => {
+    const tab = { id: 7, windowId: 1, url: "https://example.test/article", title: "Article" };
+    let activated!: TabActivatedListener;
+    let finish!: (value: unknown) => void;
+    installChrome(message => {
+      if (message.type === "settings.get") return { ok: true, data: settings };
+      if (message.type === "annotations.query") return { ok: true, data: { items: [record] } };
+      if (message.type === "pdf.context.get") return { ok: true, data: { tabId: tab.id, kind: "unavailable", currentReader: false, candidates: [] } };
+      if (message.type === "page.state.get") return { ok: true, data: { states: [] } };
+      if (message.type === "page.mode.get") return { ok: true, data: { enabled: true } };
+      if (message.type === "annotations.list") return new Promise(resolve => { finish = resolve; });
+      return { ok: true, data: true };
+    }, tab, undefined, undefined, listener => { activated = listener; });
+    const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    try {
+      const host = await mount("sidepanel");
+      const exportButton = [...host.querySelectorAll<HTMLButtonElement>("button")].find(button => button.textContent === "导出本页标注")!;
+      await act(async () => exportButton.click());
+      expect(finish).toBeDefined();
+      await act(async () => {
+        tab.id = 8;
+        tab.url = "https://example.test/other";
+        activated({ tabId: 8, windowId: 1 });
+        finish({ ok: true, data: [record] });
+      });
+      expect(clickDownload).not.toHaveBeenCalled();
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("页面已切换，未导出");
+    } finally { clickDownload.mockRestore(); }
+  });
+
   it("persists the webpage selection toolbar preference and accepts live storage updates", async () => {
     const changes = new Set<(changes: Record<string, chrome.storage.StorageChange>, areaName: string) => void>();
     const stored: Record<string, unknown> = { "ui.selectionToolbarEnabled": true };

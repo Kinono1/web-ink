@@ -712,6 +712,9 @@ test("linked feed titles survive refresh without binding to reused recommendatio
 
   await page.locator("#target").evaluate(link => link.outerHTML = '<a href="/video/different">烧烤大王 · 店长日记</a>');
   await expect.poll(state).toBe("unresolved");
+  await rpc(manager, { type: "page.action", tabId, action: "rebind", id: record.id });
+  await expect(page.locator(".toast")).toContainText("没有可预览的候选");
+  await expect(page.getByRole("button", { name: "确认此处", exact: true })).toHaveCount(0);
   const backup = await rpc<any>(manager, { type: "backup.export" });
   expect(backup.annotations).toEqual([saved]);
 });
@@ -879,6 +882,69 @@ test("site pause/resume and manual rebind retain the original record", async () 
   const [after] = await rpc<any[]>(manager, { type: "annotations.list" });
   expect(after.id).toBe(before.id);
   expect(after.target.exact).toContain("A revised statement");
+});
+
+test("candidate rebind rejects a changed preview and preserves the original note until confirmation", async () => {
+  await enable();
+  const page = await article();
+  await selectAndMark(page);
+  const [first] = await rpc<any[]>(manager, { type: "annotations.list" });
+  const original = await rpc<any>(manager, { type: "annotations.put",
+    annotation: { ...first, note: "Keep this note", tags: ["research"] }, expectedRevision: first.revision });
+  const tab = (await manager.evaluate(() => chrome.tabs.query({}))).find(t => t.url === page.url())!;
+  const state = async () => (await rpc<any>(manager, { type: "page.state.get", tabId: tab.id })).states
+    .find((item: any) => item.id === original.id)?.status;
+  const resetCandidates = () => page.locator("#selection").evaluate((element) => {
+    element.innerHTML = "New context: <span>Precise highlights survive a return visit.</span> and another: <span>Precise highlights survive a return visit.</span>";
+  });
+  const rebind = () => rpc(manager, { type: "page.action", tabId: tab.id, action: "rebind", id: original.id });
+  await resetCandidates();
+  await expect.poll(state).toBe("unresolved");
+  await rebind();
+  await expect(page.locator(".toast")).toContainText("候选 1/2");
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual([original]);
+
+  await page.locator("#selection span").first().evaluate(element => { element.textContent = "The page changed again."; });
+  await page.getByRole("button", { name: "确认此处", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("页面或标注已改变");
+  expect(await rpc(manager, { type: "annotations.list" })).toEqual([original]);
+
+  await resetCandidates();
+  await rebind();
+  await expect(page.locator(".toast")).toContainText("候选 1/2");
+  await page.getByRole("button", { name: "下一处", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("候选 2/2");
+  await page.getByRole("button", { name: "确认此处", exact: true }).click();
+  await expect.poll(async () => (await rpc<any[]>(manager, { type: "annotations.list" }))[0]?.revision).toBe(original.revision + 1);
+  const [updated] = await rpc<any[]>(manager, { type: "annotations.list" });
+  expect(updated).toMatchObject({ id: original.id, note: "Keep this note", tags: ["research"],
+    target: { exact: "Precise highlights survive a return visit." } });
+  expect(updated.target.start).toBeGreaterThan(original.target.start);
+});
+
+test("page export includes the current page notes and excludes other pages", async () => {
+  await enable();
+  const page = await article();
+  await selectAndMark(page);
+  const [first] = await rpc<any[]>(manager, { type: "annotations.list" });
+  const current = await rpc<any>(manager, { type: "annotations.put", expectedRevision: first.revision,
+    annotation: { ...first, note: "Current page note" } });
+  await rpc(manager, { type: "annotations.put", expectedRevision: 0,
+    annotation: { ...current, id: "other-page-record", pageUrl: "https://example.test/other",
+      pageTitle: "Other article", note: "Private note from another page", revision: 0 } });
+  await openSidepanel(page);
+  await manager.locator('summary[aria-label="更多操作"]').click();
+  const pendingDownload = manager.waitForEvent("download");
+  await manager.getByRole("button", { name: "导出本页标注", exact: true }).click();
+  const download = await pendingDownload;
+  const exported = await readFile((await download.path())!, "utf8");
+  expect(download.suggestedFilename()).toBe("web-ink-page-annotations.md");
+  expect(exported).toContain("http://127.0.0.1:4173/article");
+  expect(exported).toContain("Precise highlights survive a return visit.");
+  expect(exported).toContain("Current page note");
+  expect(exported.replace(/\\-/g, "-")).toContain(current.createdAt);
+  expect(exported).not.toContain("Private note from another page");
+  expect(exported).not.toContain("https://example.test/other");
 });
 
 test("library editing, conflict preservation, JSON download and import work through the UI", async () => {

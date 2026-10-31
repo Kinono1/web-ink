@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react";
 import type { useTabObserver } from "../hooks/useTabObserver";
 
-type TabState = Omit<ReturnType<typeof useTabObserver>, "activeDocument" | "documentVersion">;
+type TabState = ReturnType<typeof useTabObserver>;
 export const TabContext = createContext<TabState | undefined>(undefined);
 
 export function useTabContext() {

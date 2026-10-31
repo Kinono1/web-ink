@@ -1,4 +1,4 @@
-import type { PdfAnnotation } from "../../core/pdf-types";
+import type { PdfAnnotation, SelectionTarget } from "../../core/pdf-types";
 import { PdfPage } from "../PdfPage";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
 import { usePdfPageBindings } from "../hooks/useViewport";
@@ -9,7 +9,10 @@ type Props = { state: ReaderSnapshot; actions: ReaderActions };
 
 const EMPTY_RECORDS: PdfAnnotation[] = [];
 
-export function PdfCanvas({ state, actions }: Props) {
+export function PdfCanvas({ state, actions, recoveryArea, onRecoveryArea }: Props & {
+  recoveryArea?: { target: SelectionTarget; color: string };
+  onRecoveryArea?: (target: SelectionTarget) => void;
+}) {
   const {
     area, color, container, dimensions, layoutIndex, locked, measurementGeneration, pageWindow,
     recordsByPage, rotation, searchMatch, showMarks, zoom,
@@ -32,7 +35,12 @@ export function PdfCanvas({ state, actions }: Props) {
           onNativeRecords={receiveOriginalNotes}
           searchRanges={searchMatch?.pageNumber === number ? searchMatch.itemRanges : undefined}
           area={area && !locked} color={color} measurementGeneration={measurementGeneration}
-          {...pageBindings(number)} />
+          {...pageBindings(number)}
+          {...(onRecoveryArea ? { onArea: (target: SelectionTarget) => {
+            if (state.documentSession === state.documentSessionRef.current && !locked) onRecoveryArea(target);
+          } } : {})}
+          recoveryPreview={recoveryArea?.target.pageNumber === number && recoveryArea.target.rects[0]
+            ? { rect: recoveryArea.target.rects[0], color: recoveryArea.color } : undefined} />
       </div>
     ))}
     <div aria-hidden="true" style={{ height: Math.max(0, layoutIndex.current.totalHeight() - layoutIndex.current.offsetBefore(Math.min(pageWindow.end, opened.document.numPages) + 1)) }} />

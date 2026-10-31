@@ -124,6 +124,47 @@ export class TextAnchorSession {
     return this.resolveInReading(target);
   }
 
+  /** Find exact-text candidates only on explicit request; they are never auto-bound. */
+  candidates(target: TextTarget): Range[] {
+    if (this.disposed || !target.exact) return [];
+    this.flush();
+    const scope = textLinkScope(target, this.doc.URL);
+    let roots: Element[];
+    if (scope) {
+      if (textLinkUrl(target, this.doc.baseURI) !== scope.url) return [];
+      try {
+        roots = Array.from(this.doc.querySelectorAll(scope.selector)).filter((root) =>
+          root instanceof HTMLAnchorElement && textLinkUrl(
+            { rootSelector: `a[href=${JSON.stringify(root.getAttribute("href"))}]` }, this.doc.baseURI,
+          ) === scope.url);
+      } catch {
+        return [];
+      }
+    } else {
+      // A malformed or legacy link selector cannot establish destination identity.
+      if (target.rootSelector.startsWith("a[")) return [];
+      const root = rootFromTarget(target, this.doc);
+      roots = root ? [root] : [];
+    }
+    const results: Range[] = [];
+    let examined = 0;
+    for (const root of roots) {
+      const container = target.containerId ? this.doc.getElementById(target.containerId) : root;
+      if (!container || !root.contains(container)) continue;
+      const reading = this.readingFor(container);
+      for (let index = reading.text.indexOf(target.exact); index !== -1;
+        index = reading.text.indexOf(target.exact, index + 1)) {
+        if (++examined > 50) return results;
+        const range = rangeForOffsets(reading, container, index, index + target.exact.length);
+        if (!range || !container.contains(range.startContainer) || !container.contains(range.endContainer) ||
+          !visibleCandidate(range)) continue;
+        results.push(range);
+        if (results.length === 5) return results;
+      }
+    }
+    return results;
+  }
+
   /** Explicit invalidation remains useful for callers that replace an entire root. */
   invalidate(root?: Element): void {
     if (this.disposed) return;
@@ -319,6 +360,22 @@ export class TextAnchorSession {
     if (this.snapshot && !this.snapshot.root.isConnected)
       this.snapshot = undefined;
   }
+}
+
+function visibleCandidate(range: Range): boolean {
+  if (typeof range.getClientRects !== "function" || !Array.from(range.getClientRects()).some(
+    (rect) => rect.width > 0 && rect.height > 0,
+  )) return false;
+  const view = range.startContainer.ownerDocument?.defaultView;
+  if (!view) return false;
+  for (const boundary of [range.startContainer, range.endContainer]) {
+    for (let element: Element | null = elementFor(boundary); element; element = element.parentElement) {
+      const style = view.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse" ||
+        Number.parseFloat(style.opacity) === 0 || element.hasAttribute("hidden")) return false;
+    }
+  }
+  return true;
 }
 
 

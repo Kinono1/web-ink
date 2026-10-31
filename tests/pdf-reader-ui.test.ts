@@ -289,6 +289,7 @@ beforeEach(() => {
         switch (message.type) {
           case "settings.get": return { ok: true, data: DEFAULT_SETTINGS };
           case "annotations.list": return { ok: true, data: records };
+          case "annotations.get": return { ok: true, data: [...records, ...previousRecords].find(record => record.id === message.id) ?? null };
           case "annotations.query": {
             if (previousQuery) return { ok: true, data: await previousQuery(message.query) };
             const matching = previousRecords.filter(record => JSON.stringify(record).toLowerCase().includes(message.query.text?.toLowerCase() ?? ""));
@@ -1176,6 +1177,65 @@ describe("PDF reader workspace", () => {
     function queries() {
       return messages.filter((message): message is Extract<Request, { type: "annotations.query" }> => message.type === "annotations.query");
     }
+
+    async function choosePrevious() {
+      await click("找回旧标注");
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 5)); });
+      await settle();
+      expect(host.querySelector('[role="dialog"]')?.textContent).toContain("Original note");
+      await click("查找并选择");
+      await selectPage();
+    }
+
+    it("copies a confirmed old highlight to the new PDF without changing the original", async () => {
+      io.pageCount = 1;
+      previousRecords = [{ ...prior(), note: "Original note", tags: ["keep"], color: "#7cc868" }];
+      const original = structuredClone(previousRecords[0]);
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      await choosePrevious();
+      expect(puts()).toHaveLength(0);
+      expect(records).toEqual([]);
+      await click("复制旧标注到此处");
+      expect(previousRecords[0]).toEqual(original);
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ kind: "pdf-text", pageUrl: `urn:web-ink:pdf:${HASH}`,
+        note: "Original note", tags: ["keep"], color: "#7cc868",
+        target: { documentHash: HASH, pageNumber: 1, exact: "selected" } });
+      expect(records[0]!.id).not.toBe(original!.id);
+      expect(puts()).toHaveLength(1);
+    });
+
+    it("keeps a failed copy available for retry and leaves the old annotation untouched", async () => {
+      io.pageCount = 1;
+      previousRecords = [{ ...prior(), note: "Original note", tags: ["keep"] }];
+      const original = structuredClone(previousRecords[0]);
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      await choosePrevious();
+      putError = "Storage temporarily unavailable";
+      await click("复制旧标注到此处");
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("Storage temporarily unavailable");
+      expect(records).toEqual([]);
+      expect(previousRecords[0]).toEqual(original);
+      putError = "";
+      await click("重试保存");
+      expect(records).toHaveLength(1);
+      expect(records[0]).toMatchObject({ note: "Original note", tags: ["keep"], target: { documentHash: HASH } });
+      expect(previousRecords[0]).toEqual(original);
+      expect(puts()).toHaveLength(2);
+    });
+
+    it("rejects a previous annotation changed after the recovery dialog was opened", async () => {
+      io.pageCount = 1;
+      previousRecords = [{ ...prior(), note: "Original note" }];
+      await mount(`?source=${encodeURIComponent(publicSource)}`, false);
+      await choosePrevious();
+      previousRecords[0] = { ...previousRecords[0]!, revision: 4, note: "Edited elsewhere" };
+      await click("复制旧标注到此处");
+      expect(host.querySelector('[role="alert"]')?.textContent).toContain("旧标注或文档已改变");
+      expect(puts()).toHaveLength(0);
+      expect(records).toEqual([]);
+      expect(previousRecords[0]!.note).toBe("Edited elsewhere");
+    });
 
     it("finds legacy source-only annotations when the new PDF exposes a DOI", async () => {
       io.metadataDoi = doi;

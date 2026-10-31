@@ -38,6 +38,7 @@ export const PdfPage = memo(function PdfPage({
   onDimensions,
   onError,
   onNativeRecords,
+  recoveryPreview,
 }: {
   language?: Language;
   opened: OpenDocument;
@@ -56,6 +57,7 @@ export const PdfPage = memo(function PdfPage({
   onDimensions: (generation: number, w: number, h: number) => void;
   onError: (e: string) => void;
   onNativeRecords?: (records: NativePdfAnnotation[]) => void;
+  recoveryPreview?: { rect: PdfRect; color: string };
 }) {
   const t = textFor(language);
   const [ready, setReady] = useState(false);
@@ -435,7 +437,7 @@ export const PdfPage = memo(function PdfPage({
         <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
       </div>}
       {geometry && !failure && geometry.opened === opened && geometry.number === number &&
-        <PdfMarks geometry={geometry} marks={marks} preview={preview} color={color} />}
+        <PdfMarks geometry={geometry} marks={marks} preview={preview ?? recoveryPreview?.rect} color={preview ? color : recoveryPreview?.color ?? color} />}
       {ready && geometry && searchRects.length > 0 &&
         <PdfSearchMarks geometry={geometry} rects={searchRects} />}
       {area && ready && geometry && (

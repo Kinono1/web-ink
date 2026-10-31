@@ -16,6 +16,7 @@ export interface NotificationOptions {
   sticky?: boolean;
   actions?: NotificationAction[];
   dismissLabel?: string;
+  onDismiss?: () => void;
 }
 export interface Notifications {
   show: (message: string, options?: NotificationOptions) => void;
@@ -73,9 +74,10 @@ export function createNotifications(container: HTMLElement): Notifications {
     container.classList.remove("success");
     container.style.display = "none";
   };
-  const dismiss = () => {
+  const dismiss = (onDismiss?: () => void) => {
     if (active?.passive && active.key) dismissedPassive.add(active.key);
     hide();
+    onDismiss?.();
   };
   const clear = (key: string) => {
     if (active?.key === key) hide();
@@ -123,7 +125,7 @@ export function createNotifications(container: HTMLElement): Notifications {
     close.className = "toast-dismiss";
     close.type = "button";
     close.setAttribute("aria-label", options.dismissLabel ?? "Dismiss");
-    close.addEventListener("click", dismiss);
+    close.addEventListener("click", () => dismiss(options.onDismiss));
     close.append(dismissIcon());
     content.append(close);
     container.append(content);

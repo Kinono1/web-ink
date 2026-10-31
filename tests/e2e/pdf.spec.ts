@@ -323,6 +323,75 @@ test("original PDF notes stay read-only and new notes travel in one exported PDF
   expect(original).toEqual(Buffer.from(await createNativePdfFixture()));
 });
 
+test("recovery copies an old PDF highlight only after selecting the new version", async () => {
+  await open(fixturePdf(1, "Original scientific result"), "paper.pdf");
+  const selectFirstText = () => page.locator(".textLayer span").first().evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    getSelection()!.removeAllRanges();
+    getSelection()!.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+  await selectFirstText();
+  await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  const [created] = await rpc({ type: "annotations.list" });
+  const original = await rpc({ type: "annotations.put", expectedRevision: created.revision,
+    annotation: { ...created, note: "Keep original note", tags: ["research"] } });
+  await open(fixturePdf(1, "Updated scientific result"), "paper.pdf");
+  await expect(page.getByText("已打开另一份 PDF", { exact: false })).toBeVisible();
+  expect(await rpc({ type: "annotations.list" })).toEqual([original]);
+  await page.getByRole("button", { name: "找回旧标注", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "找回旧标注", exact: true });
+  await expect(dialog).toContainText("Keep original note");
+  await dialog.getByRole("button", { name: "查找并选择", exact: true }).click();
+  await selectFirstText();
+  expect(await rpc({ type: "annotations.list" })).toEqual([original]);
+  await page.getByRole("button", { name: "复制旧标注到此处", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(2);
+  const all = await rpc({ type: "annotations.list" });
+  expect(all.find((item: { id: string }) => item.id === original.id)).toEqual(original);
+  const copy = all.find((item: { id: string }) => item.id !== original.id);
+  expect(copy).toMatchObject({ note: "Keep original note", tags: ["research"], color: original.color,
+    target: { exact: "Updated scientific result", pageNumber: 1 } });
+  expect(copy.target.documentHash).not.toBe(original.target.documentHash);
+});
+
+test("recovery requires confirmation before copying an old PDF area", async () => {
+  await open(fixturePdf(1, "Original diagram"), "diagram.pdf");
+  const drawArea = async () => {
+    const box = await page.locator(".pdf-area-capture").boundingBox();
+    expect(box).toBeTruthy();
+    await page.mouse.move(box!.x + 70, box!.y + 80);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + 200, box!.y + 190, { steps: 4 });
+    await page.mouse.up();
+  };
+  await moreAction("区域标注");
+  await drawArea();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
+  const [created] = await rpc({ type: "annotations.list" });
+  const original = await rpc({ type: "annotations.put", expectedRevision: created.revision,
+    annotation: { ...created, note: "Keep diagram note", tags: ["diagram"] } });
+  await open(fixturePdf(1, "Updated diagram"), "diagram.pdf");
+  await page.getByRole("button", { name: "找回旧标注", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "找回旧标注", exact: true });
+  await expect(dialog).toContainText("Keep diagram note");
+  await dialog.getByRole("button", { name: "选择新区域", exact: true }).click();
+  await drawArea();
+  await expect(page.getByText("核对框选区域后确认。", { exact: true })).toBeVisible();
+  expect(await rpc({ type: "annotations.list" })).toEqual([original]);
+  await page.getByRole("button", { name: "复制旧标注到此处", exact: true }).click();
+  await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(2);
+  const all = await rpc({ type: "annotations.list" });
+  expect(all.find((item: { id: string }) => item.id === original.id)).toEqual(original);
+  const copy = all.find((item: { id: string }) => item.id !== original.id);
+  expect(copy).toMatchObject({ kind: "pdf-area", note: "Keep diagram note", tags: ["diagram"], color: original.color,
+    target: { pageNumber: 1 } });
+  expect(copy.target.documentHash).not.toBe(original.target.documentHash);
+  expect(copy.target.rects).toHaveLength(1);
+});
+
 test("current-file AI notes include original provenance without becoming a backup", async () => {
   await open(Buffer.from(await createNativePdfFixture(12)), "native-ai-notes.pdf");
   await openPdfSidebar();

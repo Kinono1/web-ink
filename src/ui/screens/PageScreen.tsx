@@ -2,25 +2,29 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { PdfSidebar } from "../PdfSidebar";
 import { WebSelection } from "../WebSelection";
 import { pdfPreparationLabel } from "../../pdf/public";
+import { toMarkdown } from "../../core/backup";
+import { request } from "../../core/client";
+import type { Annotation } from "../../core/model";
 import { useManagementContext } from "../contexts/ManagementContext";
 import { useTabContext } from "../contexts/TabContext";
 import { isPdfSurface } from "../hooks/useTabObserver";
 import type { PdfActions } from "../hooks/usePdfActions";
 import { AnnotationBrowser, Empty, PageHeader, SelectionToolbarSwitch } from "../management/components";
-import { Icon } from "../management/helpers";
+import { download, Icon } from "../management/helpers";
 
 export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions }) {
-  const { preferences, annotations, setError } = useManagementContext();
+  const { preferences, annotations, setError, setNotice } = useManagementContext();
   const { settings, language, t, setOriginPaused, selectionToolbarEnabled,
     selectionToolbarSaving, toggleSelectionToolbar } = preferences;
   const { records, nextCursor, loading, loadRecords, selectionSaved } = annotations;
   const { tab, pdfContext, pageUrl, pageEnabled, states, selectionConnectionVersion,
-    toggleCurrentPage, pageAction, refreshContext } = useTabContext();
+    pageToggling, toggleCurrentPage, pageAction, refreshContext, activeDocument } = useTabContext();
   const { openingPdf, preparationStage, isIeeeSession, ieeeCandidates, publicCandidates,
     openCurrentPdf, openIeeeSessionPdf, openLocalPdf, openLibrary, openPdf, cancelCurrentPdf } = pdf;
   const origin = pageUrl ? new URL(pageUrl).origin : undefined;
   const paused = Boolean(origin && settings.disabledOrigins.includes(origin));
   const [moreOpen, setMoreOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const moreMenu = useRef<HTMLDetailsElement>(null);
   const moreTrigger = useRef<HTMLElement>(null);
   const closeMore = useCallback(() => {
@@ -43,6 +47,31 @@ export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions
       document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [closeMore, moreOpen]);
+  const exportPage = async () => {
+    if (!pageUrl || exporting) return;
+    const current = activeDocument.current;
+    if (tab.id === undefined || !tab.url || current.id !== tab.id || current.url !== tab.url) {
+      setError(t.exportPageChanged);
+      return;
+    }
+    const version = current.version;
+    setExporting(true);
+    setNotice(undefined);
+    try {
+      const saved = await request<Annotation[]>({ type: "annotations.list", pageUrl });
+      if (activeDocument.current.version !== version) {
+        setError(t.exportPageChanged);
+      } else if (!saved.length) {
+        setNotice(t.exportPageEmpty);
+      } else {
+        download("web-ink-page-annotations.md", toMarkdown(saved), "text/markdown;charset=utf-8");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setExporting(false);
+    }
+  };
   if (!visible) return null;
   const host = pageUrl ? new URL(pageUrl).host : undefined;
   const candidates = pdfContext?.candidates ?? [];
@@ -69,7 +98,8 @@ export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions
   return (
     <>
       {pageUrl ? <PageHeader title={tab.title || host!} host={host} enabled={pageEnabled}
-        onToggle={toggleCurrentPage} toggleLabel={t.showAnnotations} disabled={paused} /> : null}
+        onToggle={toggleCurrentPage} toggleLabel={t.showAnnotations} scopeLabel={t.pageScope}
+        disabled={paused || pageToggling} pending={pageToggling} /> : null}
       <div className="sidepanel-content">
         {pageUrl && !paused ? <SelectionToolbarSwitch enabled={selectionToolbarEnabled}
           saving={selectionToolbarSaving} onToggle={() => void toggleSelectionToolbar()} t={t} /> : null}
@@ -115,6 +145,7 @@ export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions
           <section className="notice-card warning">
             <strong>{t.paused}</strong>
             <button className="quiet" onClick={() => setOriginPaused(origin, false)}>{t.resume}</button>
+            <button className="quiet" disabled={exporting} onClick={() => void exportPage()}>{t.exportPage}</button>
           </section>
         ) : null}
         {pageUrl && !paused && records.length > 0 ? (
@@ -137,6 +168,9 @@ export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions
             onToggle={(event) => setMoreOpen(event.currentTarget.open)}>
             <summary ref={moreTrigger} aria-label={t.moreActions} title={t.moreActions}><Icon name="more" /></summary>
             <div className="sidepanel-more-actions">
+              <button className="quiet" disabled={exporting} onClick={() => { closeMore(); void exportPage(); }}>
+                {t.exportPage}
+              </button>
               <button className="quiet" onClick={openLibrary}>{t.openLibrary}</button>
               <button className="quiet" onClick={openLocalPdf}>{t.chooseLocalPdf}</button>
               <button className="danger" onClick={() => setOriginPaused(origin, true)}>{t.pause}</button>

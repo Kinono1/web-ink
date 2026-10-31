@@ -35,11 +35,13 @@ export function WebSelection({
   const onSavedRef = useRef(onSaved);
   const onErrorRef = useRef(onError);
   const defaultColorRef = useRef(defaultColor);
+  const languageRef = useRef(language);
   const portRef = useRef<chrome.runtime.Port | undefined>(undefined);
   const pendingRef = useRef(new Map<string, boolean>());
   onSavedRef.current = onSaved;
   onErrorRef.current = onError;
   defaultColorRef.current = defaultColor;
+  languageRef.current = language;
 
   useEffect(() => {
     setSelection(pageUrl ? { type: "selection", pageUrl, status: "empty" } : undefined);
@@ -54,6 +56,9 @@ export function WebSelection({
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let port: chrome.runtime.Port | undefined;
     let detachPort: (() => void) | undefined;
+    const connectionClosed = () => languageRef.current === "zh-CN"
+      ? "选区连接已断开，请刷新网页后重试。"
+      : "Selection connection closed. Refresh the page and try again.";
     const clearRetry = () => {
       if (retryTimer === undefined) return;
       clearTimeout(retryTimer);
@@ -106,7 +111,7 @@ export function WebSelection({
           pending.clear();
           setLocalPending(0);
           setSelection({ type: "selection", pageUrl, status: "empty" });
-          setError("Selection connection closed. Refresh the page and try again.");
+          setError(connectionClosed());
           retry();
         };
         detachPort = () => {
@@ -116,7 +121,7 @@ export function WebSelection({
         nextPort.onMessage.addListener(receive);
         nextPort.onDisconnect.addListener(disconnected);
       } catch {
-        setError("Selection connection closed. Refresh the page and try again.");
+        setError(connectionClosed());
         retry();
       }
     };

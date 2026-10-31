@@ -81,7 +81,8 @@ function PdfMoreMenu({ state, actions }: { state: ReaderSnapshot; actions: Reade
   );
 }
 
-export function PdfToolbar({ state, actions }: { state: ReaderSnapshot; actions: ReaderActions }) {
+export function PdfToolbar({ state, actions, requestedSearch, recoveryOpen }: { state: ReaderSnapshot; actions: ReaderActions;
+  requestedSearch?: { id: number; text: string }; recoveryOpen?: boolean }) {
   const {
     backAction, backLabel, exportStage, fitWidth, focusMode, guardSaving, handoffReady,
     intentEpoch, leaving, locked, pageNumber, pendingLeave, pendingSearchPosition, presetsOpen,
@@ -107,7 +108,7 @@ export function PdfToolbar({ state, actions }: { state: ReaderSnapshot; actions:
       <div className="pdf-zoom-controls"><PdfZoomControls state={state} actions={actions} /></div>
       <button className="quiet icon-button pdf-view-action" aria-label={t("适合宽度", "Fit to width")} title={t("适合宽度", "Fit to width")} aria-pressed={fitWidth}
         disabled={locked} onClick={() => { userIntent(); setFitWidth(true); }}><Icon name="fitWidth" /></button>
-      <PdfFind opened={opened} language={language} blocked={focusMode || presetsOpen || leaving || guardSaving || !!pendingLeave || sourceOpen || !!exportStage}
+      <PdfFind opened={opened} language={language} requestedSearch={requestedSearch} blocked={focusMode || presetsOpen || leaving || guardSaving || !!pendingLeave || sourceOpen || !!exportStage || !!recoveryOpen}
         onMatch={(match) => { pendingSearchPosition.current = undefined; setSearchMatch(match); }}
         onNavigate={(page) => { jump(page); pendingSearchPosition.current = { pageNumber: page, intent: intentEpoch.current }; }} />
       <PdfMoreMenu state={state} actions={actions} />
