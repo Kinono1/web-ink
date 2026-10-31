@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { PdfPage } from "../src/pdf/PdfPage";
-import type { OpenDocument } from "../src/pdf/types";
+import type { OpenDocument } from "../src/core/pdf-types";
 
 function deferred() {
   let resolve!: () => void;

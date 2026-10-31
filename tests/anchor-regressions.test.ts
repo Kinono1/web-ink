@@ -5,7 +5,7 @@ import {
   resolveText,
   createTextResolver,
   TextAnchorSession,
-} from "../src/core/text-anchor";
+} from "./helpers/text-anchor";
 import type { TextTarget } from "../src/core/model";
 
 describe("real selection boundaries and large restore batches", () => {

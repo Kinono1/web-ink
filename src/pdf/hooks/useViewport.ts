@@ -1,14 +1,16 @@
 import type { PdfSearchMatch } from "../search";
-import { errorText, type SelectionPreview } from "../types";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-
-import { PageLayoutIndex } from "../layout";
+import {
+  errorText, type PdfAnnotation, type SelectionPreview, type SelectionTarget,
+} from "../../core/pdf-types";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { PageLayoutIndex } from "../reading-position";
 import {
   PDF_MIN_ZOOM, PDF_MAX_ZOOM, capturePdfReadingPosition, restorePdfReadingPosition,
   type PdfRotation,
 } from "../reading-position";
-import { type PositionSession } from "./reader-utils";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import {
+  type PositionSession, type ReaderSnapshot, type ReaderActions, type ReaderActionsRef,
+} from "./contracts";
 
 export function useViewportState() {
   const nativeFocus = useRef<{ session: number; pageNumber: number; top: number; intent: number } | undefined>(undefined);
@@ -51,7 +53,6 @@ export function useViewportState() {
     layoutEpoch, setLayoutEpoch, measurementGeneration, setMeasurementGeneration,
   };
 }
-
 type Inputs = Pick<ReaderSnapshot,
   "container" | "currentView" | "dimensions" | "documentSession" | "documentSessionRef" |
   "fitWidth" | "focusMode" | "intentEpoch" | "intrinsicDimensions" | "layoutEpoch" |
@@ -63,10 +64,7 @@ type Inputs = Pick<ReaderSnapshot,
   "setSelectionStyle" | "setZoom" | "setZoomText" | "t" | "zoom"
 >;
 
-export function useViewport(
-  state: Inputs,
-  actions: ReaderActionsRef<"tell">,
-) {
+export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const {
     container, currentView, dimensions, documentSession, documentSessionRef, fitWidth,
     focusMode, intentEpoch, intrinsicDimensions, layoutEpoch, layoutGeneration, layoutIndex,
@@ -76,7 +74,6 @@ export function useViewport(
     setPositionEpoch, setPositionError, setRotation, setSelection, setSelectionStyle, setZoom,
     setZoomText, t, zoom,
   } = state;
-
   useEffect(() => () => {
     const position = positionSession.current;
     positionSession.current = undefined;
@@ -84,18 +81,15 @@ export function useViewport(
     cancelAnimationFrame(measureFrame.current);
     measureFrame.current = 0;
   }, []);
-
   const userIntent = useCallback(() => {
     intentEpoch.current++;
     nativeFocus.current = undefined;
     if (positionSession.current) positionSession.current.pending = undefined;
     setPositionEpoch((epoch) => epoch + 1);
   }, [intentEpoch, nativeFocus, positionSession, setPositionEpoch]);
-
   const pagesPadding = useCallback(() => {
     return container.current ? parseFloat(getComputedStyle(container.current).paddingTop) || 0 : 0;
   }, [container]);
-
   function currentPosition() {
     const active = positionSession.current;
     const scroller = container.current;
@@ -104,12 +98,10 @@ export function useViewport(
     if (!dimensions.current.has(layoutIndex.current.pageAt(top))) return;
     return capturePdfReadingPosition(layoutIndex.current, top, zoom, rotation);
   }
-
   function savePosition() {
     const snapshot = currentPosition();
     if (snapshot) positionSession.current?.writer.save(snapshot);
   }
-
   async function flushPosition() {
     savePosition();
     try {
@@ -119,7 +111,6 @@ export function useViewport(
       setPositionError(t("阅读位置暂未保存，可重试；标注不受影响。", "Reading position was not saved. Retry is available; annotations are unaffected."));
     }
   }
-
   useLayoutEffect(() => {
     if (!opened) return;
     const scroller = container.current;
@@ -147,7 +138,6 @@ export function useViewport(
       : 0;
     setLayoutEpoch((value) => value + 1);
   }, [documentSession, zoom, rotation]);
-
   const onPageDimensions = useCallback(
     (page: number, generation: number, width: number, height: number) => {
       if (generation !== layoutGeneration.current) return;
@@ -191,7 +181,6 @@ export function useViewport(
     },
     [],
   );
-
   useLayoutEffect(() => {
     const adjustment = pendingScrollAdjustment.current;
     if (!adjustment) return;
@@ -199,7 +188,6 @@ export function useViewport(
     if (scroller) scroller.scrollTop += adjustment;
     pendingScrollAdjustment.current = 0;
   }, [layoutEpoch]);
-
   useLayoutEffect(() => {
     const pending = nativeFocus.current;
     const scroller = container.current;
@@ -208,7 +196,6 @@ export function useViewport(
     const start = layoutIndex.current.offsetBefore(pending.pageNumber) + pagesPadding();
     scroller.scrollTo({ top: Math.max(start, start + pending.top - scroller.clientHeight / 4), behavior: "instant" });
   }, [layoutEpoch, positionEpoch]);
-
   useLayoutEffect(() => {
     const active = positionSession.current;
     const pending = active?.pending;
@@ -224,7 +211,6 @@ export function useViewport(
     setPageNumber(pending.pageNumber);
     setPositionEpoch((epoch) => epoch + 1);
   }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
-
   useLayoutEffect(() => {
     const bar = selectionBar.current;
     const scroller = container.current;
@@ -243,9 +229,7 @@ export function useViewport(
     setSelectionStyle({ left: Math.max(left, Math.min(right - bounds.width, (anchor.left + anchor.right - bounds.width) / 2)),
       top: above >= top ? above : below, bottom: "auto", transform: "none" });
   }, [selection, layoutEpoch, focusMode]);
-
   useEffect(() => { savePosition(); }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
-
   useEffect(() => {
     const scroller = container.current;
     if (!opened || !scroller) return;
@@ -296,7 +280,6 @@ export function useViewport(
       cancelAnimationFrame(frame);
     };
   }, [opened?.hash, layoutEpoch, positionEpoch, zoom, rotation]);
-
   const jump = useCallback((n: number) => {
     if (!opened || documentSession !== documentSessionRef.current) return;
     userIntent();
@@ -314,7 +297,6 @@ export function useViewport(
     opened, documentSession, documentSessionRef, userIntent, setPageNumber, setPageWindow,
     container, layoutIndex, pagesPadding,
   ]);
-
   function applyView(nextZoom: number, nextRotation: PdfRotation = rotation) {
     if (nextZoom === zoom && nextRotation === rotation) return;
     const anchor = positionSession.current?.pending ?? currentPosition();
@@ -331,12 +313,10 @@ export function useViewport(
     setZoom(nextZoom);
     setRotation(nextRotation);
   }
-
   function changeZoom(delta: number) {
     setFitWidth(false);
     applyView(Math.max(PDF_MIN_ZOOM, Math.min(PDF_MAX_ZOOM, Math.round((zoom + delta) * 1000) / 1000)));
   }
-
   function commitZoom(raw: string) {
     const value = /^\d+(?:\.\d+)?\s*%?$/.test(raw.trim()) ? Number(raw.trim().replace(/%$/, "").trim()) / 100 : NaN;
     if (Number.isFinite(value) && value >= PDF_MIN_ZOOM && value <= PDF_MAX_ZOOM) {
@@ -348,9 +328,7 @@ export function useViewport(
       actions.current.tell(t("请输入 10%～500% 的缩放比例。", "Enter a zoom percentage between 10% and 500%."));
     }
   }
-
   useEffect(() => { setZoomText(`${Math.round(zoom * 100)}%`); }, [zoom]);
-
   useEffect(() => {
     const scroller = container.current;
     if (!fitWidth || !opened || !scroller) return;
@@ -376,4 +354,71 @@ export function useViewport(
     userIntent, pagesPadding, currentPosition, savePosition, flushPosition, onPageDimensions,
     jump, applyView, changeZoom, commitZoom,
   };
+}
+type PageBindingsInputs = Pick<ReaderSnapshot,
+  "annotationWrites" | "container" | "documentSession" | "documentSessionRef" |
+  "intentEpoch" | "layoutIndex" | "pendingSearchPosition" | "setError" |
+  "setNativeError" | "setPicked" | "setSelection" | "unsavedRef"
+>;
+type Commands = Pick<ReaderActions, "mark" | "onPageDimensions" | "pagesPadding">;
+type PageProps = { onSelection: (value: SelectionPreview | undefined) => void; onPick: (record: PdfAnnotation) => void; onArea: (target:
+  SelectionTarget) => void; onError: (message: string) => void; onDimensions: (generation: number, width: number, height: number) => void;
+  onSearchPosition?: (top: number) => void; };
+// Page callbacks keep their identity across toolbar/draft updates, but read the
+// current commands. Their captured session prevents a removed page from writing
+// to a later document, including a replacement with the same byte hash.
+export function usePdfPageBindings(state: PageBindingsInputs, actions: Commands) {
+  const latest = useRef({ state, actions });
+  latest.current = { state, actions };
+  return useMemo(() => {
+    const active = state.documentSession;
+    const current = () => active === latest.current.state.documentSessionRef.current
+      ? latest.current : undefined;
+    const shared = {
+      onSelection: ((next) => {
+        const value = current();
+        if (value && !value.state.unsavedRef.current && !value.state.annotationWrites.current.size) {
+          value.state.setSelection(next);
+          value.state.setPicked(undefined);
+        }
+      }) satisfies PageProps["onSelection"],
+      onPick: ((record) => {
+        const value = current();
+        if (!value) return;
+        value.state.setPicked(record);
+        if (!value.state.unsavedRef.current) value.state.setSelection(undefined);
+      }) satisfies PageProps["onPick"],
+      onArea: ((target) => current()?.actions.mark(target, "pdf-area")) satisfies PageProps["onArea"],
+      onError: ((message) => {
+        const value = current();
+        if (!value) return;
+        value.state.setError(message);
+        if (/原文件|Original-file/.test(message)) value.state.setNativeError(message);
+      }) satisfies PageProps["onError"],
+    };
+    const pages = new Map<number, Pick<PageProps, "onSearchPosition" | "onDimensions">>();
+    return (number: number) => {
+      let bindings = pages.get(number);
+      if (!bindings) {
+        bindings = {
+          onDimensions: (generation, width, height) => {
+            current()?.actions.onPageDimensions(number, generation, width, height);
+          },
+          onSearchPosition: (top) => {
+            const value = current();
+            if (!value) return;
+            const { pendingSearchPosition, container, intentEpoch, layoutIndex } = value.state;
+            const pending = pendingSearchPosition.current;
+            const scroller = container.current;
+            if (!pending || pending.pageNumber !== number || pending.intent !== intentEpoch.current || !scroller) return;
+            pendingSearchPosition.current = undefined;
+            const start = layoutIndex.current.offsetBefore(number) + value.actions.pagesPadding();
+            scroller.scrollTo({ top: Math.max(start, start + top - scroller.clientHeight / 4), behavior: "instant" });
+          },
+        };
+        pages.set(number, bindings);
+      }
+      return { ...shared, ...bindings };
+    };
+  }, [state.documentSession]);
 }

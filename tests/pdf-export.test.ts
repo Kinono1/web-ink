@@ -6,11 +6,11 @@ import {
   PDFDocument, PDFArray, PDFDict, PDFHexString, PDFName, PDFNull, PDFNumber, PDFRawStream,
   PDFString, PDFStream, decodePDFRawStream,
 } from "pdf-lib";
-import type { PdfAnnotation } from "../src/pdf/types";
+import type { PdfAnnotation } from "../src/core/pdf-types";
 import { COLORS } from "../src/core/model";
 import { exportAnnotatedPdf } from "../src/pdf/export";
 import { verifyPdfExport } from "../src/pdf/export-verify";
-import { MAX_PDF_BYTES, pdfHash } from "../src/pdf/source";
+import { MAX_PDF_BYTES, pdfHash } from "../src/core/pdf-source";
 import {
   createNativePdfFixture, NATIVE_FIXTURE_ANNOTATION_COUNT, NATIVE_FIXTURE_NOTES,
 } from "./pdf-native-fixture";

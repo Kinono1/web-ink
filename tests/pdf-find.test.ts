@@ -3,7 +3,7 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/types/src/display/api";
 import { PdfFind } from "../src/pdf/PdfFind";
-import type { OpenDocument } from "../src/pdf/types";
+import type { OpenDocument } from "../src/core/pdf-types";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

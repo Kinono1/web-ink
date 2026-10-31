@@ -191,9 +191,7 @@ export function createWebSelection(options: {
       const error = (message: string) => post(port, { type: "error", requestId, error: message });
       if (Object.keys(value).some((key) => !["type", "requestId", "token", "color"].includes(key)) ||
         value.type !== "annotate" || !requestId || typeof value.token !== "string" || !value.token || value.token.length > 128 ||
-        typeof value.color !== "string" || !/^#[0-9a-f]{6}$/i.test(value.color)) {
-        error("Invalid selection annotation request."); return;
-      }
+        typeof value.color !== "string" || !/^#[0-9a-f]{6}$/i.test(value.color)) { error("Invalid selection annotation request."); return; }
       if (saving) { error("A selection save is already in progress."); return; }
       if (requests.has(requestId)) { error("This save request was already processed."); return; }
       flush();

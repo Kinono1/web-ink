@@ -1,7 +1,7 @@
-import { IeeePdfError, readIeeePdf } from '../pdf/ieee';
-import { IEEE_PREPARE_PORT, PDF_CHUNK_BYTES, encodePdfChunk } from '../pdf/prepared';
+import { readIeeePdf } from '../core/ieee-reader';
+import { IeeePdfError } from '../core/ieee-contract';
+import { IEEE_PREPARE_PORT, PDF_CHUNK_BYTES, encodePdfChunk } from '../core/prepared-contract';
 import type { RuntimeHealth, Result } from '../core/model';
-
 /** Installed only into the verified source document for an explicit PDF action. */
 export function installIeeePreparation(): () => void {
   const active = new Map<chrome.runtime.Port, AbortController>();

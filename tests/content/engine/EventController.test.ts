@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { EventController } from "../../../src/content/engine/EventController";
-import type { AnnotationController } from "../../../src/content/engine/AnnotationController";
+import { UIController, type UIControllerHost } from "../../../src/content/engine/UIController";
 import { createView } from "../../../src/content/view-lite";
+import { DEFAULT_SETTINGS } from "../../../src/core/model";
 
 afterEach(() => { document.body.replaceChildren(); vi.unstubAllGlobals(); });
 it("releases DOM and Chrome storage callbacks even if extension APIs are invalidated", () => {
@@ -14,13 +14,10 @@ it("releases DOM and Chrome storage callbacks even if extension APIs are invalid
     removeListener: (listener: unknown) => { expect(listener).toBe(storageListener); throw Error("Extension context invalidated."); },
   } } });
   const engine = {
-    view: createView(), enabled: () => false,
-    render: { schedulePaint: () => { paints++; } },
-    mode: { onPointerDown() {}, onPointerMove() {}, onPointerUp() {}, onPointerCancel() {} },
-    interactions: { onPointerDown() {}, onMouseUp() {}, onKeyDown() {}, onScroll() {}, selectedRange: undefined, hideSelection() {} },
-    sync: { queueRefresh() {} },
-  } as unknown as AnnotationController;
-  const events = new EventController(engine);
+    view: createView(), enabled: () => false, settings: DEFAULT_SETTINGS,
+    data: { schedulePaint: () => { paints++; }, queueRefresh() {} },
+  } as unknown as UIControllerHost;
+  const events = new UIController(engine);
   events.start();
   window.dispatchEvent(new Event("resize"));
   expect(paints).toBe(1);

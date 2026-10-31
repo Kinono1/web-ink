@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { parseDoi, pdfDoi, type PdfMetadataInput } from "../src/pdf/metadata";
+import { parseDoi, pdfDoi, type PdfMetadataInput } from "../src/pdf/paper-identity";
 import { doiUrl, learnPdfPaperIdentity, readPdfPaperIdentity } from "../src/pdf/paper-identity";
 
 const hash = "a".repeat(64);

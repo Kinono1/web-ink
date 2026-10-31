@@ -1,8 +1,16 @@
-import { createPreparedPdfStore, type Owner, type PreparedInfo, type PreparedPdfStore } from './pdf-prepared';
-import { IEEE_PREPARE_PORT, encodePdfChunk, PDF_CHUNK_BYTES } from '../pdf/prepared';
-import { IeeePdfError, ieeeSourceUrl, readIeeePdf, type IeeePdfReason } from '../pdf/ieee';
-import { createIeeePdfDiagnostic, type IeeePdfDiagnostic } from '../pdf/ieee-diagnostics';
-import { PdfResponseError } from '../pdf/source';
+import { createPreparedPdfStore, type Owner, type PreparedPdfStore } from './pdf-prepared';
+import type { PreparedInfo } from '../core/prepared-contract';
+import { IEEE_PREPARE_PORT, encodePdfChunk, PDF_CHUNK_BYTES } from '../core/prepared-contract';
+import { readIeeePdf } from '../core/ieee-reader';
+import { IeeePdfError, ieeeSourceUrl, type IeeePdfReason } from '../core/ieee-contract';
+import { createIeeePdfDiagnostic, type IeeePdfDiagnostic } from '../core/ieee-contract';
+import { PdfResponseError } from '../core/pdf-source';
+
+type ProgressMessage = { type: 'pdf.preparation.changed'; tabId: number; diagnostic?: IeeePdfDiagnostic; stage?: string };
+type PortMessage = {
+  type?: string; token?: string; index?: number; data?: string; byteLength?: number;
+  diagnostic?: IeeePdfDiagnostic; reason?: IeeePdfReason; stage?: string;
+};
 
 export function createIeeePreparation(getGeneration: () => Promise<string>) {
   let store: PreparedPdfStore | undefined;
@@ -10,7 +18,7 @@ export function createIeeePreparation(getGeneration: () => Promise<string>) {
   let flight: { owner: Owner; token: string; cancel: () => void } | undefined;
   const getStore = () => storeTask ??= getGeneration().then(generation => store = createPreparedPdfStore(generation));
   const progress = (tabId: number, diagnostic: IeeePdfDiagnostic | undefined, stage?: string) => {
-    const message = { type: 'pdf.preparation.changed', tabId, ...(diagnostic ? { diagnostic } : {}), ...(stage ? { stage } : {}) };
+    const message: ProgressMessage = { type: 'pdf.preparation.changed', tabId, ...(diagnostic ? { diagnostic } : {}), ...(stage ? { stage } : {}) };
     void chrome.tabs.sendMessage(tabId, message).catch(() => undefined);
     void chrome.runtime.sendMessage(message).catch(() => undefined);
   };
@@ -19,9 +27,8 @@ export function createIeeePreparation(getGeneration: () => Promise<string>) {
     const owner = { tabId, documentId, generation: await getGeneration() };
     const token = data.begin(owner);
     return new Promise<PreparedInfo>((resolve, reject) => {
-      let ended = false;
-      let finishing = false;
-      let sourcePort: chrome.runtime.Port | undefined;
+      let ended = false, finishing = false, sourcePort: chrome.runtime.Port | undefined;
+      let timeout: ReturnType<typeof setTimeout>;
       const fail = (error: Error) => {
         if (ended) return;
         ended = true;
@@ -31,7 +38,6 @@ export function createIeeePreparation(getGeneration: () => Promise<string>) {
         if (flight?.token === token) flight = undefined;
         reject(error);
       };
-      let timeout: ReturnType<typeof setTimeout>;
       const activity = () => {
         data.touch(token, owner);
         clearTimeout(timeout);
@@ -50,7 +56,7 @@ export function createIeeePreparation(getGeneration: () => Promise<string>) {
         port.onDisconnect.addListener(() => { if (!ended) fail(Error('IEEE source connection closed. Original PDF retained.')); });
         port.onMessage.addListener((raw: unknown) => {
           if (ended || finishing || !raw || typeof raw !== 'object') return;
-          const message = raw as { type?: string; token?: string; index?: number; data?: string; byteLength?: number; diagnostic?: IeeePdfDiagnostic; reason?: IeeePdfReason; stage?: string };
+          const message = raw as PortMessage;
           if (message.token !== token) return;
           void (async () => {
             if (message.type === 'waiting') return;
@@ -58,9 +64,8 @@ export function createIeeePreparation(getGeneration: () => Promise<string>) {
             if (message.type === 'progress') {
               const item = message.diagnostic;
               if (!item || !['identify', 'wrapper', 'file', 'validate'].includes(item.phase) || typeof item.id !== 'string' || !/^[a-f0-9-]{36}$/.test(item.id)) return;
-              const diagnostic = createIeeePdfDiagnostic({ ...item, startedAt: 0, now: item.elapsedMs });
+              progress(tabId, createIeeePdfDiagnostic({ ...item, startedAt: 0, now: item.elapsedMs }));
               activity();
-              progress(tabId, diagnostic);
             } else if (message.type === 'chunk') {
               data.append(token, owner, message.index!, message.data!);
               activity();

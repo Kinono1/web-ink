@@ -6,9 +6,9 @@ import {
   readLocalPdf,
   readRemotePdf,
   verifyPdf,
-} from "../src/pdf/source";
-import { PageLayoutIndex } from "../src/pdf/layout";
-import { PdfSession } from "../src/pdf/session";
+} from "../src/core/pdf-source";
+import { PageLayoutIndex } from "../src/pdf/reading-position";
+import { PdfSession } from "../src/pdf/hooks/useDocumentSession";
 import { fixturePdf } from "./pdf-fixture";
 function viewport(rotation: number, scale: number): PdfViewport {
   const transform = (x: number, y: number): number[] =>

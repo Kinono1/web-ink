@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { pdfDisplayName } from "../src/pdf/metadata";
+import { pdfDisplayName } from "../src/pdf/paper-identity";
 
 function metadata(values: Record<string, unknown>) {
   return { get: (name: string) => values[name] };

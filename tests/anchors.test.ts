@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { captureImage, resolveImage } from "../src/core/image-anchor";
-import { captureText, resolveText } from "../src/core/text-anchor";
-import { createTextResolver } from "../src/core/text-anchor";
+import { captureText, resolveText } from "./helpers/text-anchor";
+import { createTextResolver } from "./helpers/text-anchor";
 import type { TextTarget } from "../src/core/model";
 
 function select(

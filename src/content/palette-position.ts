@@ -8,25 +8,14 @@ export type PaletteGeometry = {
 };
 
 /** A drag begins at six pixels of Euclidean, straight-line displacement. */
-export function isPaletteDrag(dx: number, dy: number): boolean {
-  return Math.hypot(dx, dy) >= 6;
-}
+export function isPaletteDrag(dx: number, dy: number): boolean { return Math.hypot(dx, dy) >= 6; }
 
 export function readPalettePosition(value: unknown): PalettePosition | undefined {
   if (typeof value !== 'object' || value === null) return undefined;
 
   const candidate = value as { x?: unknown; y?: unknown };
   const { x, y } = candidate;
-  if (
-    typeof x !== 'number' ||
-    typeof y !== 'number' ||
-    !Number.isFinite(x) ||
-    !Number.isFinite(y) ||
-    x < 0 ||
-    x > 1 ||
-    y < 0 ||
-    y > 1
-  ) {
+  if (typeof x !== 'number' || typeof y !== 'number' || !Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
     return undefined;
   }
 
@@ -39,9 +28,7 @@ function axisGeometry(viewportSize: number, buttonSize: number): { margin: numbe
   return { margin, range };
 }
 
-function clampCoordinate(value: number, margin: number, range: number): number {
-  return Math.min(margin + range, Math.max(margin, value));
-}
+function clampCoordinate(value: number, margin: number, range: number): number { return Math.min(margin + range, Math.max(margin, value)); }
 
 export function clampPalettePoint(point: PalettePoint, geometry: PaletteGeometry): PalettePoint {
   const horizontal = axisGeometry(geometry.width, geometry.buttonWidth);
@@ -62,9 +49,7 @@ export function toPalettePosition(point: PalettePoint, geometry: PaletteGeometry
   };
 }
 
-function clampRatio(value: number): number {
-  return Math.min(1, Math.max(0, value));
-}
+function clampRatio(value: number): number { return Math.min(1, Math.max(0, value)); }
 
 export function fromPalettePosition(position: PalettePosition, geometry: PaletteGeometry): PalettePoint {
   const horizontal = axisGeometry(geometry.width, geometry.buttonWidth);

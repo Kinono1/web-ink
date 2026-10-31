@@ -1,11 +1,11 @@
-import { MAX_PDF_BYTES, pdfHash, verifyPdf } from "../pdf/source";
+import { MAX_PDF_BYTES, pdfHash, verifyPdf } from "../core/pdf-source";
+import { PDF_CHUNK_BYTES, type PreparedInfo } from "../core/prepared-contract";
 
-export const PREPARED_CHUNK_BYTES = 256 * 1024;
+export const PREPARED_CHUNK_BYTES = PDF_CHUNK_BYTES;
 export const PREPARED_TTL_MS = 120_000;
 const UPLOAD_TTL_MS = 60_000;
 
 export type Owner = { tabId: number; documentId: string; generation: string };
-export type PreparedInfo = { token: string; byteLength: number; hash: string; chunks: number };
 export interface PreparedPdfStore {
   begin(owner: Owner): string;
   touch(token: string, owner: Owner): void;
@@ -19,31 +19,15 @@ export interface PreparedPdfStore {
   peekToken(tabId: number): string | undefined;
 }
 
-type RecordLifetime = {
-  token: string;
-  source: Owner;
-  expiresAt: number;
-  timer?: ReturnType<typeof setTimeout>;
+type Lifetime = { token: string; source: Owner; expiresAt: number; timer?: ReturnType<typeof setTimeout> };
+type UploadRecord = Lifetime & {
+  stage: "uploading" | "finishing"; pages: Uint8Array[]; byteLength: number; nextUploadIndex: number; bytes?: Uint8Array;
 };
-type UploadRecord = RecordLifetime & {
-  stage: "uploading" | "finishing";
-  pages: Uint8Array[];
-  byteLength: number;
-  nextUploadIndex: number;
-  bytes?: Uint8Array;
-};
-type ReadyRecord = RecordLifetime & {
-  stage: "ready";
-  bytes: Uint8Array;
-  hash: string;
-  reader?: Owner;
-  nextReadIndex: number;
-};
+type ReadyRecord = Lifetime & { stage: "ready"; bytes: Uint8Array; hash: string; reader?: Owner; nextReadIndex: number };
 type ActiveRecord = UploadRecord | ReadyRecord;
 
-function sameOwner(left: Owner, right: Owner): boolean {
-  return left.tabId === right.tabId && left.documentId === right.documentId && left.generation === right.generation;
-}
+const sameOwner = (left: Owner, right: Owner): boolean =>
+  left.tabId === right.tabId && left.documentId === right.documentId && left.generation === right.generation;
 
 function decodeChunk(data: string): Uint8Array {
   if (typeof data !== "string" || !data.length) throw Error("Empty or invalid prepared PDF chunk.");
@@ -58,14 +42,10 @@ function decodeChunk(data: string): Uint8Array {
   return bytes;
 }
 
-function infoFor(record: ReadyRecord): PreparedInfo {
-  return {
-    token: record.token,
-    byteLength: record.bytes.length,
-    hash: record.hash,
-    chunks: Math.ceil(record.bytes.length / PREPARED_CHUNK_BYTES),
-  };
-}
+const infoFor = (record: ReadyRecord): PreparedInfo => ({
+  token: record.token, byteLength: record.bytes.length, hash: record.hash,
+  chunks: Math.ceil(record.bytes.length / PREPARED_CHUNK_BYTES),
+});
 
 /** One background-owned RAM slot; retained buffers are wiped on disposal. */
 export function createPreparedPdfStore(generation: string): PreparedPdfStore {
@@ -103,9 +83,7 @@ export function createPreparedPdfStore(generation: string): PreparedPdfStore {
   function expireAfter(record: ActiveRecord, milliseconds: number): void {
     clearTimeout(record.timer);
     record.expiresAt = Date.now() + milliseconds;
-    record.timer = setTimeout(() => {
-      if (active === record) clear();
-    }, milliseconds);
+    record.timer = setTimeout(() => { if (active === record) clear(); }, milliseconds);
   }
 
   function recordFor(token: string): ActiveRecord {
@@ -155,10 +133,7 @@ export function createPreparedPdfStore(generation: string): PreparedPdfStore {
       while (offset < bytes.length) {
         const pageIndex = Math.floor(record.byteLength / PREPARED_CHUNK_BYTES);
         let page = record.pages[pageIndex];
-        if (!page) {
-          page = new Uint8Array(PREPARED_CHUNK_BYTES);
-          record.pages.push(page);
-        }
+        if (!page) { page = new Uint8Array(PREPARED_CHUNK_BYTES); record.pages.push(page); }
         const pageOffset = record.byteLength % PREPARED_CHUNK_BYTES;
         const length = Math.min(bytes.length - offset, PREPARED_CHUNK_BYTES - pageOffset);
         page.set(bytes.subarray(offset, offset + length), pageOffset);
@@ -238,13 +213,8 @@ export function createPreparedPdfStore(generation: string): PreparedPdfStore {
         throw Error("Prepared PDF belongs to another document.");
       clear();
     },
-    releaseTab(tabId) {
-      if (current()?.source.tabId === tabId) clear();
-    },
-    dispose() {
-      disposed = true;
-      clear();
-    },
+    releaseTab(tabId) { if (current()?.source.tabId === tabId) clear(); },
+    dispose() { disposed = true; clear(); },
     peekToken(tabId) {
       const record = current();
       return record?.source.tabId === tabId ? record.token : undefined;

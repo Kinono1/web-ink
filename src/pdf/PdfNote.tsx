@@ -1,14 +1,9 @@
 import "./notes.css";
 import { memo } from "react";
 import type { Settings } from "../core/model";
-import type { PdfAnnotation } from "./types";
-export type PdfNoteDraft = {
-  note: string;
-  tags: string;
-  color: string;
-  base: PdfAnnotation;
-  editing: boolean;
-};
+import type { PdfAnnotation } from "../core/pdf-types";
+import type { PdfNoteDraft } from "../core/sidebar";
+import { textFor } from "./components/labels";
 export const PdfNote = memo(function PdfNote({
   record,
   language,
@@ -43,8 +38,7 @@ export const PdfNote = memo(function PdfNote({
   const tags = draft?.tags ?? record.tags.join(", ");
   const color = draft?.color ?? record.color;
   const base = draft?.base ?? record;
-  const zh = language === "zh-CN";
-  const t = (cn: string, en: string) => (zh ? cn : en);
+  const t = textFor(language);
   const edit = () => {
     onDraft({
       note: record.note,

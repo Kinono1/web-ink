@@ -1,16 +1,9 @@
-import {
-  PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName,
-  PDFString, PDFStream, fill, popGraphicsState, pushGraphicsState, rectangle,
-  setFillingRgbColor, setGraphicsState, setLineWidth, setStrokingRgbColor, stroke,
-  type PDFPage,
-} from "pdf-lib";
-import type { PdfAnnotation } from "./types";
-import { pdfHash } from "./source";
-import {
-  PdfExportError, checkExportBytes, validateExportRecords, type PdfExportResult,
-} from "./export-contract";
+import { PDFArray, PDFDict, PDFDocument, PDFHexString, PDFName, PDFString, PDFStream, fill, popGraphicsState, pushGraphicsState,
+  rectangle, setFillingRgbColor, setGraphicsState, setLineWidth, setStrokingRgbColor, stroke, type PDFPage, } from "pdf-lib";
+import type { PdfAnnotation } from "../core/pdf-types";
+import { pdfHash } from "../core/pdf-source";
+import { PdfExportError, checkExportBytes, validateExportRecords, type PdfExportResult, } from "./export-contract";
 export { PdfExportError, type PdfExportResult } from "./export-contract";
-
 function checkCapabilities(document: PDFDocument): void {
   // Any encrypted input is rejected by load; no password/permission bypass exists.
   if (document.isEncrypted) throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported.");
@@ -52,7 +45,6 @@ function pageView(page: PDFPage): [number, number, number, number] {
   if (view[2] <= view[0] || view[3] <= view[1]) throw new PdfExportError("parse", "The PDF has an empty page view.");
   return view;
 }
-
 function pdfDate(iso: string): PDFString {
   return PDFString.of(`D:${new Date(iso).toISOString().slice(0, 19).replace(/[-:T]/g, "")}Z`);
 }
@@ -61,8 +53,7 @@ export async function exportAnnotatedPdf(
   sourceBytes: Uint8Array,
   sourceHash: string,
   records: readonly PdfAnnotation[],
-  signal: AbortSignal,
-): Promise<PdfExportResult> {
+  signal: AbortSignal) : Promise<PdfExportResult> {
   signal.throwIfAborted();
   checkExportBytes(sourceBytes);
   const snapshot = validateExportRecords(sourceHash, records);

@@ -1,6 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { RenderScheduler } from "../../../src/content/engine/RenderScheduler";
-import type { AnnotationController } from "../../../src/content/engine/AnnotationController";
+import { DataEngine, type DataEngineHost } from "../../../src/content/engine/DataEngine";
 import { createView } from "../../../src/content/view-lite";
 import type { TextAnnotation } from "../../../src/core/model";
 
@@ -9,7 +8,7 @@ const record = (id: string, color: string): TextAnnotation => ({
   createdAt: "2026-10-26", updatedAt: "2026-10-26", revision: 1,
   target: { rootSelector: "body", exact: id, prefix: "", suffix: "", start: 0, end: id.length },
 });
-const sessions: RenderScheduler[] = [];
+const sessions: DataEngine[] = [];
 afterEach(() => {
   for (const render of sessions.splice(0)) render.textSession.dispose();
   document.body.replaceChildren();
@@ -22,15 +21,15 @@ it("replaces obsolete highlight groups and releases its owned ranges on clear", 
   vi.stubGlobal("CSS", { highlights });
   vi.stubGlobal("Highlight", class { constructor(..._ranges: Range[]) {} });
   const view = createView();
-  const store = { annotations: [record("one", "#ffff00"), record("two", "#00ff00")] };
-  const render = new RenderScheduler({ view, store } as AnnotationController);
+  const render = new DataEngine({ view } as unknown as DataEngineHost);
   sessions.push(render);
+  render.prepareRestore([record("one", "#ffff00"), record("two", "#00ff00")]);
   const range = document.createRange();
   render.textRanges.set("one", range);
   render.textRanges.set("two", range);
   render.applyTextStyles();
   expect([...highlights.keys()]).toEqual(["web-ink-ffff00", "web-ink-00ff00"]);
-  store.annotations = [record("two", "#00ff00")];
+  render.prepareRestore([record("two", "#00ff00")]);
   render.applyTextStyles();
   expect([...highlights.keys()]).toEqual(["web-ink-00ff00"]);
   render.clearText();
@@ -45,8 +44,8 @@ it("coalesces paint requests and refuses work after disposal", () => {
     frames.push(callback);
     return frames.length;
   });
-  const engine = { view: createView(), disposed: false, enabled: () => false } as AnnotationController;
-  const render = new RenderScheduler(engine);
+  const engine = { view: createView(), disposed: false, enabled: () => false } as unknown as DataEngineHost;
+  const render = new DataEngine(engine);
   sessions.push(render);
   render.schedulePaint();
   render.schedulePaint();
@@ -68,10 +67,10 @@ it("disposes pending paint, DOM markers, and transient image output", () => {
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
   const view = createView();
-  const render = new RenderScheduler({ view, disposed: false } as AnnotationController);
+  const render = new DataEngine({ view, disposed: false } as unknown as DataEngineHost);
   render.schedulePaint();
   view.svg.append(document.createElementNS("http://www.w3.org/2000/svg", "g"));
-  render.dispose();
+  render.disposeRender();
   expect(frames.size).toBe(0);
   expect(render.highlightStyle.isConnected).toBe(false);
   expect(view.svg.children).toHaveLength(0);

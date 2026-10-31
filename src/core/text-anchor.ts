@@ -2,52 +2,12 @@ import type { AnchorStatus, TextTarget } from "./model";
 import { textLinkScope, textLinkSelector, textLinkUrl } from "./text-link";
 
 const CONTEXT_LENGTH = 64;
-const BLOCK_TAGS = new Set([
-  "ADDRESS",
-  "ARTICLE",
-  "ASIDE",
-  "BLOCKQUOTE",
-  "DIV",
-  "DL",
-  "DT",
-  "DD",
-  "FIGCAPTION",
-  "FIGURE",
-  "FOOTER",
-  "FORM",
-  "H1",
-  "H2",
-  "H3",
-  "H4",
-  "H5",
-  "H6",
-  "HEADER",
-  "HR",
-  "LI",
-  "MAIN",
-  "NAV",
-  "OL",
-  "P",
-  "PRE",
-  "SECTION",
-  "TABLE",
-  "TBODY",
-  "TD",
-  "TH",
-  "THEAD",
-  "TR",
-  "UL",
+const BLOCK_TAGS = new Set(["ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "DIV", "DL", "DT", "DD",
+  "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER", "HR", "LI", "MAIN",
+  "NAV", "OL", "P", "PRE", "SECTION", "TABLE", "TBODY", "TD", "TH", "THEAD", "TR", "UL",
 ]);
-const EXCLUDED_TAGS = new Set([
-  "SCRIPT",
-  "STYLE",
-  "NOSCRIPT",
-  "TEMPLATE",
-  "INPUT",
-  "TEXTAREA",
-  "SELECT",
-  "OPTION",
-  "BUTTON",
+const EXCLUDED_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "INPUT", "TEXTAREA", "SELECT",
+  "OPTION", "BUTTON",
 ]);
 
 type Boundary = { node: Node; offset: number };
@@ -98,20 +58,14 @@ export class TextAnchorSession {
   private epoch = 0;
   private disposed = false;
 
-  constructor(
-    private readonly doc: Document = document,
+  constructor(private readonly doc: Document = document,
     private readonly options: TextAnchorSessionOptions = {},
   ) {
-    this.observer = new MutationObserver((mutations) =>
-      this.applyMutations(mutations),
-    );
+    this.observer = new MutationObserver((mutations) => this.applyMutations(mutations));
     // documentElement survives a body replacement and lets us release indexes
     // for roots removed during a route transition.
     this.observer.observe(this.doc.documentElement, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-      attributes: true,
+      childList: true, subtree: true, characterData: true, attributes: true,
       attributeFilter: ["class", "style", "contenteditable", "id", "href"],
     });
   }
@@ -131,11 +85,7 @@ export class TextAnchorSession {
     const target = this.captureFresh(range);
     const root = readingRoot(range, this.doc);
     this.snapshot = {
-      target,
-      root,
-      selector: target.rootSelector,
-      version: this.versionFor(root),
-      epoch: this.epoch,
+      target, root, selector: target.rootSelector, version: this.versionFor(root), epoch: this.epoch,
       start: { node: range.startContainer, offset: range.startOffset },
       end: { node: range.endContainer, offset: range.endOffset },
     };
@@ -148,16 +98,11 @@ export class TextAnchorSession {
       throw new Error("The text anchor session has been disposed.");
     this.flush();
     const snapshot = this.snapshot;
-    if (
-      snapshot &&
-      snapshot.root.isConnected &&
-      (textLinkUrl(snapshot.target, this.doc.URL)
-        ? snapshot.root instanceof HTMLAnchorElement &&
-          textLinkSelector(snapshot.root) === snapshot.selector
+    if (snapshot && snapshot.root.isConnected && (textLinkUrl(snapshot.target, this.doc.URL)
+        ? snapshot.root instanceof HTMLAnchorElement && textLinkSelector(snapshot.root) === snapshot.selector
         : rootFromTarget(snapshot.target, this.doc) === snapshot.root) &&
       snapshot.selector === snapshot.target.rootSelector &&
-      snapshot.version === this.versionFor(snapshot.root) &&
-      snapshot.epoch === this.epoch &&
+      snapshot.version === this.versionFor(snapshot.root) && snapshot.epoch === this.epoch &&
       sameBoundary(range.startContainer, range.startOffset, snapshot.start) &&
       sameBoundary(range.endContainer, range.endOffset, snapshot.end) &&
       rangeBoundariesAreValid(range, snapshot.root)
@@ -173,8 +118,7 @@ export class TextAnchorSession {
   } {
     if (this.disposed)
       return {
-        status: "unresolved",
-        reason: "Text anchor session is disposed.",
+        status: "unresolved", reason: "Text anchor session is disposed.",
       };
     this.flush();
     return this.resolveInReading(target);
@@ -207,22 +151,10 @@ export class TextAnchorSession {
   private captureFresh(range: Range): TextTarget {
     const root = readingRoot(range, this.doc);
     const reading = this.readingFor(root);
-    const start = normalOffset(
-      reading,
-      root,
-      range.startContainer,
-      range.startOffset,
-    );
-    const end = normalOffset(
-      reading,
-      root,
-      range.endContainer,
-      range.endOffset,
-    );
+    const start = normalOffset(reading, root, range.startContainer, range.startOffset);
+    const end = normalOffset(reading, root, range.endContainer, range.endOffset);
     if (start === undefined || end === undefined || start >= end) {
-      throw new Error(
-        "The selection cannot be represented in readable page text.",
-      );
+      throw new Error("The selection cannot be represented in readable page text.");
     }
     const exact = reading.text.slice(start, end);
     if (!exact || rangeForOffsets(reading, root, start, end) === undefined) {
@@ -234,12 +166,8 @@ export class TextAnchorSession {
       ? undefined
       : stableContainer(range, root);
     return {
-      exact,
-      prefix: reading.text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
-      suffix: reading.text.slice(end, end + CONTEXT_LENGTH),
-      start,
-      end,
-      rootSelector: selectorForRoot(root),
+      exact, prefix: reading.text.slice(Math.max(0, start - CONTEXT_LENGTH), start),
+      suffix: reading.text.slice(end, end + CONTEXT_LENGTH), start, end, rootSelector: selectorForRoot(root),
       ...(container?.id ? { containerId: container.id } : {}),
     };
   }
@@ -267,32 +195,26 @@ export class TextAnchorSession {
         this.linkedRoots.set(scope.selector, roots);
       }
       for (const root of roots) {
-        if (
-          !(root instanceof HTMLAnchorElement) ||
-          textLinkUrl(
-            { rootSelector: `a[href=${JSON.stringify(root.getAttribute("href"))}]` },
-            this.doc.baseURI,
+        if ( !(root instanceof HTMLAnchorElement) || textLinkUrl(
+            { rootSelector: `a[href=${JSON.stringify(root.getAttribute("href"))}]` }, this.doc.baseURI,
           ) !== scope.url
         )
           continue;
         const result = this.resolveInRoot(target, root);
-        if (
-          result.status === "unresolved" &&
+        if (result.status === "unresolved" &&
           result.reason === "Exact text is ambiguous in the original scope."
         )
           return result;
         if (result.range) matches.push(result.range);
         if (matches.length > 1)
           return {
-            status: "unresolved",
-            reason: "Exact text is ambiguous in the original scope.",
+            status: "unresolved", reason: "Exact text is ambiguous in the original scope.",
           };
       }
       return matches.length === 1
         ? { range: matches[0], status: "located" }
         : {
-            status: "unresolved",
-            reason: "The original linked text is not currently present.",
+            status: "unresolved", reason: "The original linked text is not currently present.",
           };
     }
     const root = rootFromTarget(target, this.doc);
@@ -311,46 +233,30 @@ export class TextAnchorSession {
       container = this.doc.getElementById(target.containerId) ?? undefined;
       if (!container || !root.contains(container)) {
         return {
-          status: "unresolved",
-          reason: "The original stable container is unavailable.",
+          status: "unresolved", reason: "The original stable container is unavailable.",
         };
       }
     }
     const reading = this.readingFor(root);
     const matches = contextMatches(reading.text, target).filter((start) => {
       if (!container) return true;
-      const range = rangeForOffsets(
-        reading,
-        root,
-        start,
-        start + target.exact.length,
-      );
-      return Boolean(
-        range &&
-        container.contains(range.startContainer) &&
+      const range = rangeForOffsets(reading, root, start, start + target.exact.length);
+      return Boolean(range && container.contains(range.startContainer) &&
         container.contains(range.endContainer),
       );
     });
     if (matches.length !== 1) {
       return {
-        status: "unresolved",
-        reason:
-          matches.length === 0
+        status: "unresolved", reason: matches.length === 0
             ? "Exact text with its surrounding context was not found."
             : "Exact text is ambiguous in the original scope.",
       };
     }
     const start = matches[0]!;
-    const range = rangeForOffsets(
-      reading,
-      root,
-      start,
-      start + target.exact.length,
-    );
+    const range = rangeForOffsets(reading, root, start, start + target.exact.length);
     if (!range)
       return {
-        status: "unresolved",
-        reason: "The resolved text cannot be mapped to DOM positions.",
+        status: "unresolved", reason: "The resolved text cannot be mapped to DOM positions.",
       };
     return { range, status: "located" };
   }
@@ -385,20 +291,16 @@ export class TextAnchorSession {
         this.linkedRoots.clear();
       // class/style are geometry-only changes. They must not force an expensive
       // text rebuild, but the content controller still repaints image overlays.
-      if (
-        mutation.type === "attributes" &&
-        (mutation.attributeName === "class" ||
+      if (mutation.type === "attributes" && (mutation.attributeName === "class" ||
           mutation.attributeName === "style")
       )
         continue;
       for (const root of this.readings.keys())
-        if (
-          (mutation.attributeName !== "href" || root instanceof HTMLAnchorElement) &&
+        if ((mutation.attributeName !== "href" || root instanceof HTMLAnchorElement) &&
           mutationTouchesRoot(mutation, root)
         )
           affected.add(root);
-      if (
-        this.snapshot &&
+      if (this.snapshot &&
         (mutation.attributeName !== "href" || this.snapshot.root instanceof HTMLAnchorElement) &&
         mutationTouchesRoot(mutation, this.snapshot.root)
       )
@@ -419,74 +321,23 @@ export class TextAnchorSession {
   }
 }
 
-export function captureText(range: Range): TextTarget {
-  const session = new TextAnchorSession(
-    range.startContainer.ownerDocument ?? document,
-  );
-  try {
-    return session.capture(range);
-  } finally {
-    session.dispose();
-  }
-}
-
-export function resolveText(
-  target: TextTarget,
-  doc: Document = document,
-): { range?: Range; status: AnchorStatus; reason?: string } {
-  const session = new TextAnchorSession(doc);
-  try {
-    return session.resolve(target);
-  } finally {
-    session.dispose();
-  }
-}
-
-/** Share the text index within one restore pass; discard it whenever the DOM changes. */
-export interface TextResolver {
-  (target: TextTarget): {
-    range?: Range;
-    status: AnchorStatus;
-    reason?: string;
-  };
-  /** Drop cached root indexes after a meaningful DOM mutation. */
-  invalidate: (root?: Element) => void;
-  /** Release observer and all document references when the restore pass ends. */
-  dispose: () => void;
-}
-
-export function createTextResolver(doc: Document = document): TextResolver {
-  const session = new TextAnchorSession(doc);
-  const resolve = ((target: TextTarget) =>
-    session.resolve(target)) as TextResolver;
-  resolve.invalidate = (root?: Element) => session.invalidate(root);
-  resolve.dispose = () => session.dispose();
-  return resolve;
-}
 
 function readingRoot(range: Range, doc: Document): Element {
   const start = elementFor(range.startContainer);
   const end = elementFor(range.endContainer);
   const link = start.closest<HTMLAnchorElement>("a[href]");
   if (link instanceof HTMLAnchorElement && link.contains(end) && textLinkSelector(link)) return link;
-  for (
-    let current: Element | null = start;
+  for (let current: Element | null = start;
     current && current !== doc.body;
     current = current.parentElement
   ) {
-    if (
-      (current.tagName === "ARTICLE" || current.tagName === "MAIN") &&
-      current.contains(end)
-    )
+    if ((current.tagName === "ARTICLE" || current.tagName === "MAIN") && current.contains(end) )
       return current;
   }
   return doc.body;
 }
 
-function rootFromTarget(
-  target: TextTarget,
-  doc: Document,
-): Element | undefined {
+function rootFromTarget(target: TextTarget, doc: Document): Element | undefined {
   if (target.rootSelector === "body") return doc.body;
   try {
     return doc.querySelector(target.rootSelector) ?? undefined;
@@ -500,10 +351,7 @@ function sameBoundary(node: Node, offset: number, boundary: Boundary): boolean {
 }
 
 function rangeBoundariesAreValid(range: Range, root: Element): boolean {
-  if (
-    !root.contains(range.startContainer) ||
-    !root.contains(range.endContainer)
-  )
+  if ( !root.contains(range.startContainer) || !root.contains(range.endContainer) )
     return false;
   try {
     const probe = root.ownerDocument.createRange();
@@ -518,9 +366,7 @@ function rangeBoundariesAreValid(range: Range, root: Element): boolean {
 function mutationTouchesRoot(mutation: MutationRecord, root: Element): boolean {
   if (!root.isConnected) return true;
   if (root.contains(mutation.target)) return true;
-  if (
-    mutation.attributeName === "contenteditable" &&
-    mutation.target instanceof Element &&
+  if (mutation.attributeName === "contenteditable" && mutation.target instanceof Element &&
     mutation.target.contains(root)
   )
     return true;
@@ -533,8 +379,7 @@ function mutationTouchesRoot(mutation: MutationRecord, root: Element): boolean {
 }
 
 function extensionUiMutation(mutation: MutationRecord): boolean {
-  const element =
-    mutation.target.nodeType === Node.ELEMENT_NODE
+  const element = mutation.target.nodeType === Node.ELEMENT_NODE
       ? (mutation.target as Element)
       : mutation.target.parentElement;
   return Boolean(element?.closest("[data-web-ink]"));
@@ -542,8 +387,7 @@ function extensionUiMutation(mutation: MutationRecord): boolean {
 
 function stableContainer(range: Range, root: Element): Element | undefined {
   const end = elementFor(range.endContainer);
-  for (
-    let current: Element | null = elementFor(range.startContainer);
+  for (let current: Element | null = elementFor(range.startContainer);
     current && current !== root.parentElement;
     current = current.parentElement
   ) {
@@ -559,15 +403,11 @@ function elementFor(node: Node): Element {
 }
 
 function excluded(node: Node): boolean {
-  for (
-    let element: Element | null = elementFor(node);
+  for (let element: Element | null = elementFor(node);
     element;
     element = element.parentElement
   ) {
-    if (
-      EXCLUDED_TAGS.has(element.tagName) ||
-      element.hasAttribute("contenteditable")
-    )
+    if (EXCLUDED_TAGS.has(element.tagName) || element.hasAttribute("contenteditable") )
       return true;
     // The extension's UI is marked by this attribute. Shadow-tree content is not walked by TreeWalker.
     if (element.hasAttribute("data-web-ink-ui")) return true;
@@ -590,11 +430,8 @@ function buildReading(root: Element): Reading {
       const offsets: number[] = [atoms.length];
       for (let index = 0; index < text.data.length; index += 1) {
         atoms.push({
-          char: text.data[index]!,
-          start: { node: text, offset: index },
-          end: { node: text, offset: index + 1 },
-          textNode: text,
-          textOffset: index,
+          char: text.data[index]!, start: { node: text, offset: index },
+          end: { node: text, offset: index + 1 }, textNode: text, textOffset: index,
         });
         offsets.push(atoms.length);
       }
@@ -642,37 +479,23 @@ function buildReading(root: Element): Reading {
     }
     if (!leading && !trailing) {
       chars.push({
-        char: " ",
-        start: atoms[raw]!.start,
-        end: atoms[end - 1]!.end,
+        char: " ", start: atoms[raw]!.start, end: atoms[end - 1]!.end,
       });
     }
     raw = end;
   }
   return {
-    text: chars.map((entry) => entry.char).join(""),
-    chars,
-    rawToNormal,
-    textOffsets,
-    atoms,
+    text: chars.map((entry) => entry.char).join(""), chars, rawToNormal, textOffsets, atoms,
   };
 }
 
-function normalOffset(
-  reading: Reading,
-  root: Element,
-  node: Node,
-  offset: number,
-): number | undefined {
+function normalOffset(reading: Reading, root: Element, node: Node, offset: number): number | undefined {
   if (node.nodeType === Node.TEXT_NODE) {
     const offsets = reading.textOffsets.get(node as Text);
     const raw = offsets?.[offset];
     return raw === undefined ? undefined : reading.rawToNormal[raw];
   }
-  if (
-    node.nodeType !== Node.ELEMENT_NODE &&
-    node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE
-  )
+  if (node.nodeType !== Node.ELEMENT_NODE && node.nodeType !== Node.DOCUMENT_FRAGMENT_NODE )
     return undefined;
   const parent = node as ParentNode;
   const children = Array.from(parent.childNodes);
@@ -682,11 +505,9 @@ function normalOffset(
   boundary.setStart(node, offset);
   boundary.collapse(true);
   const probe = root.ownerDocument.createRange();
-  let left = 0,
-    right = reading.atoms.length;
+  let left = 0, right = reading.atoms.length;
   while (left < right) {
-    const mid = Math.floor((left + right) / 2),
-      end = reading.atoms[mid]!.end;
+    const mid = Math.floor((left + right) / 2), end = reading.atoms[mid]!.end;
     probe.setStart(end.node, end.offset);
     probe.collapse(true);
     if (probe.compareBoundaryPoints(Range.START_TO_START, boundary) <= 0)
@@ -703,12 +524,7 @@ function immediateChild(parent: ParentNode, node: Node): ChildNode | undefined {
   return current?.parentNode === parent ? (current as ChildNode) : undefined;
 }
 
-function rangeForOffsets(
-  reading: Reading,
-  root: Element,
-  start: number,
-  end: number,
-): Range | undefined {
+function rangeForOffsets(reading: Reading, root: Element, start: number, end: number): Range | undefined {
   if (start < 0 || end > reading.chars.length || start >= end) return undefined;
   const first = reading.chars[start];
   const last = reading.chars[end - 1];
@@ -726,15 +542,12 @@ function rangeForOffsets(
 function contextMatches(text: string, target: TextTarget): number[] {
   if (!target.exact) return [];
   const matches: number[] = [];
-  for (
-    let index = text.indexOf(target.exact);
+  for (let index = text.indexOf(target.exact);
     index !== -1;
     index = text.indexOf(target.exact, index + 1)
   ) {
     const before = text.slice(Math.max(0, index - target.prefix.length), index);
-    const after = text.slice(
-      index + target.exact.length,
-      index + target.exact.length + target.suffix.length,
+    const after = text.slice(index + target.exact.length, index + target.exact.length + target.suffix.length,
     );
     if (before === target.prefix && after === target.suffix)
       matches.push(index);
@@ -750,23 +563,18 @@ function selectorForRoot(root: Element): string {
   }
   if (root.id) return `${root.tagName.toLowerCase()}#${escapeCss(root.id)}`;
   const parts: string[] = [];
-  for (
-    let current: Element | null = root;
+  for (let current: Element | null = root;
     current && current !== root.ownerDocument.body;
     current = current.parentElement
   ) {
     if (current.id) {
-      parts.unshift(
-        `${current.tagName.toLowerCase()}#${escapeCss(current.id)}`,
-      );
+      parts.unshift(`${current.tagName.toLowerCase()}#${escapeCss(current.id)}`);
       break;
     }
     const siblings = Array.from(current.parentElement?.children ?? []).filter(
       (el) => el.tagName === current!.tagName,
     );
-    parts.unshift(
-      `${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})`,
-    );
+    parts.unshift(`${current.tagName.toLowerCase()}:nth-of-type(${siblings.indexOf(current) + 1})`);
   }
   return parts.join(" > ");
 }

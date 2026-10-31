@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "../ui/management/helpers";
 import { PdfTextSearchIndex, type PdfSearchMatch, type PdfSearchProgress, type PdfSearchResult } from "./search";
 import type { Language } from "../core/model";
-import type { OpenDocument } from "./types";
+import type { OpenDocument } from "../core/pdf-types";
 
 export function PdfFind({ opened, language, blocked, onMatch, onNavigate }: {
   opened: OpenDocument;

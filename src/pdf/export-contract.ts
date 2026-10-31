@@ -1,6 +1,6 @@
-import type { PdfAnnotation } from "./types";
+import type { PdfAnnotation } from "../core/pdf-types";
 import { MAX_BACKUP_ANNOTATIONS, validateAnnotation } from "../core/validation";
-import { MAX_PDF_BYTES, verifyPdf } from "./source";
+import { MAX_PDF_BYTES, verifyPdf } from "../core/pdf-source";
 
 export type PdfExportResult = { bytes: Uint8Array; fileName: string; count: number };
 export type PdfExportErrorCode =
@@ -15,11 +15,7 @@ export class PdfExportError extends Error {
   }
 }
 
-export type PdfExportRequest = {
-  bytes: Uint8Array;
-  sourceHash: string;
-  records: readonly PdfAnnotation[];
-};
+export type PdfExportRequest = { bytes: Uint8Array; sourceHash: string; records: readonly PdfAnnotation[]; };
 export type PdfExportReply =
   | { ok: true; result: PdfExportResult }
   | { ok: false; code: PdfExportErrorCode; message: string };

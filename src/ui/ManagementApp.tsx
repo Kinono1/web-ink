@@ -1,7 +1,7 @@
 import { memo, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { createRoot } from "react-dom/client";
-import { formatIeeeDiagnostic } from "../pdf/ieee-status";
-import { installPageTheme } from "./page-theme";
+import { formatIeeeDiagnostic } from "../pdf/public";
+import { installPageTheme } from "../core/theme";
 import { useAnnotationSync } from "./hooks/useAnnotationSync";
 import { useManagementSettings } from "./hooks/useManagementSettings";
 import { usePdfActions, type PdfActions } from "./hooks/usePdfActions";

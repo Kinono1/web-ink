@@ -1,6 +1,6 @@
 import { RequestError, request } from "../core/client";
-import { pdfPreparationLabel, ieeeFailureMessage, formatIeeeDiagnostic } from '../pdf/ieee-status';
-import type { IeeePdfDiagnostic } from '../pdf/ieee-diagnostics';
+import { pdfPreparationLabel, ieeeFailureMessage, formatIeeeDiagnostic } from '../core/ieee-contract';
+import type { IeeePdfDiagnostic } from '../core/ieee-contract';
 import {
   DEFAULT_SETTINGS,
   type PageMode,
@@ -12,7 +12,7 @@ import {
 import { pageKey } from "../core/url";
 import { createPaletteToggle } from "./palette-toggle";
 import { createPaletteMenu, type PaletteAction, type PaletteMenuItem } from "./palette-menu";
-import { getPdfContext } from "../pdf/context";
+import { getPdfContext } from "../core/pdf-context";
 import { readPalettePosition } from "./palette-position";
 import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
@@ -80,11 +80,7 @@ export function disposeContentRuntime(): void {
 export function startBootstrap(health: RuntimeHealth): () => void {
   if (window.top !== window) return () => undefined;
   const previous = window.__webInkBootstrap;
-  if (
-    previous?.health?.generation === health.generation &&
-    previous.view.host.isConnected
-  )
-    return () => undefined;
+  if (previous?.health?.generation === health.generation && previous.view.host.isConnected) return () => undefined;
   disposeContentRuntime();
   const view = createView();
   view.host.dataset.webInkGeneration = health.generation;
@@ -134,14 +130,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     await raw<boolean>({ type: "engine.ensure", pageUrl: currentUrl });
     // executeScript completes before the background response; retain this guard for
     // an extension reload or a document navigation in the intervening microtask.
-    if (
-      disposed ||
-      closing ||
-      !enabled ||
-      blocked ||
-      pageKey(location.href) !== currentUrl
-    )
-      return false;
+    if (disposed || closing || !enabled || blocked || pageKey(location.href) !== currentUrl) return false;
     bridge = window.__webInkEngine;
     if (bridge?.generation !== health.generation) return false;
     bridge?.start(health.generation);
@@ -191,18 +180,8 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     }
   };
   const setEnabled = async (next: boolean, selectionTools = true): Promise<boolean> => {
-    if (
-      disposed ||
-      busy ||
-      closing ||
-      blocked ||
-      (!next && window.__webInkEngine && !window.__webInkEngine.canStop(health.generation))
-    )
-      return false;
-    const version = ++modeReadVersion;
-    busy = true;
-    closing = !next;
-    updateToggle();
+    if (disposed || busy || closing || blocked || (!next && window.__webInkEngine && !window.__webInkEngine.canStop(health.generation)))
+      return false; const version = ++modeReadVersion; busy = true; closing = !next; updateToggle();
     const url = pageKey(location.href);
     const epoch = permissionEpoch;
     let changed = false;
@@ -352,9 +331,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     } else if (menuContext?.candidates.length) {
       for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
         items.push({ action: "open-pdf", icon: "pdf", primary: true,
-          label: menuContext.candidates.length === 1
-            ? zh ? "标注当前 PDF" : "Annotate this PDF"
-            : `${zh ? "打开" : "Open"} ${sourceLabel}`,
+          label: menuContext.candidates.length === 1 ? zh ? "标注当前 PDF" : "Annotate this PDF" : `${zh ? "打开" : "Open"} ${sourceLabel}`,
           candidateUrl: candidate.url });
       }
     } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
@@ -403,9 +380,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     if (action === "retry") { void loadMenu(); return; }
     const url = location.href;
     const epoch = ++menuEpoch;
-    if (menuContext?.url && pageKey(menuContext.url) !== pageKey(url)) {
-      void loadMenu(); return;
-    }
+    if (menuContext?.url && pageKey(menuContext.url) !== pageKey(url)) { void loadMenu(); return; }
     opening = true;
     preparationPhase = 'identify'; preparationError = ''; preparationDiagnostic = undefined;
     // Ignore an outstanding context result so it cannot erase this action's error.
@@ -461,9 +436,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
       appearanceVersion++;
       toggle.setSize(normalizePaletteSize(changes[PALETTE_SIZE_KEY]?.newValue));
     }
-    if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) {
-      void refreshMode(false);
-    }
+    if (Object.hasOwn(changes, SELECTION_TOOLBAR_KEY)) { void refreshMode(false); }
   };
   try { chrome.storage?.onChanged?.addListener(onPreferences); } catch { /* Reload may invalidate storage before cleanup. */ }
   const onMessage = (

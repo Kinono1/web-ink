@@ -1,5 +1,6 @@
 import type { Language } from "../core/model";
 import { Icon } from "../ui/management/helpers";
+import { textFor } from "./components/labels";
 
 export function FocusControls({
   language,
@@ -20,8 +21,7 @@ export function FocusControls({
   onExit: () => void;
   sidebarHint?: boolean;
 }) {
-  const zh = language === "zh-CN";
-  const t = (cn: string, en: string) => zh ? cn : en;
+  const t = textFor(language);
   const previousDisabled = blocked || pageNumber <= 1;
   const nextDisabled = blocked || pageNumber >= totalPages;
 

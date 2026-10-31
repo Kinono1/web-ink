@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_PDF_BYTES, readRemotePdf } from "../src/pdf/source";
+import { MAX_PDF_BYTES, readRemotePdf } from "../src/core/pdf-source";
 
 afterEach(() => vi.unstubAllGlobals());
 

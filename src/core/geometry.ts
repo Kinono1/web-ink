@@ -7,14 +7,8 @@ export interface ImageGeometry {
   clipRect: { x: number; y: number; width: number; height: number };
 }
 
-export function getImageGeometry(
-  image: HTMLImageElement,
-): ImageGeometry | null {
-  if (
-    !image.naturalWidth ||
-    !image.naturalHeight ||
-    hasUnsupportedTransform(image)
-  )
+export function getImageGeometry(image: HTMLImageElement): ImageGeometry | null {
+  if ( !image.naturalWidth || !image.naturalHeight || hasUnsupportedTransform(image) )
     return null;
   const style = image.ownerDocument.defaultView?.getComputedStyle(image);
   if (!style) return null;
@@ -25,9 +19,7 @@ export function getImageGeometry(
   const top = px(style.borderTopWidth) + px(style.paddingTop);
   const bottom = px(style.borderBottomWidth) + px(style.paddingBottom);
   const content = {
-    x: borderBox.x + left,
-    y: borderBox.y + top,
-    width: borderBox.width - left - right,
+    x: borderBox.x + left, y: borderBox.y + top, width: borderBox.width - left - right,
     height: borderBox.height - top - bottom,
   };
   if (!(content.width > 0 && content.height > 0)) return null;
@@ -35,23 +27,15 @@ export function getImageGeometry(
   const natural = { width: image.naturalWidth, height: image.naturalHeight };
   let fit = style.objectFit || "fill";
   if (fit === "scale-down")
-    fit =
-      natural.width <= content.width && natural.height <= content.height
+    fit = natural.width <= content.width && natural.height <= content.height
         ? "none"
         : "contain";
   let width = content.width;
   let height = content.height;
   if (fit === "contain" || fit === "cover") {
-    const scale =
-      fit === "contain"
-        ? Math.min(
-            content.width / natural.width,
-            content.height / natural.height,
-          )
-        : Math.max(
-            content.width / natural.width,
-            content.height / natural.height,
-          );
+    const scale = fit === "contain"
+        ? Math.min(content.width / natural.width, content.height / natural.height)
+        : Math.max(content.width / natural.width, content.height / natural.height);
     width = natural.width * scale;
     height = natural.height * scale;
   } else if (fit === "none") {
@@ -60,26 +44,17 @@ export function getImageGeometry(
   } else if (fit !== "fill") {
     return null;
   }
-  const position = objectPosition(
-    style.objectPosition || "50% 50%",
-    content.width - width,
+  const position = objectPosition(style.objectPosition || "50% 50%", content.width - width,
     content.height - height,
   );
   const imageRect = {
-    x: content.x + position.x,
-    y: content.y + position.y,
-    width,
-    height,
+    x: content.x + position.x, y: content.y + position.y, width, height,
   };
   const clipRect = intersect(imageRect, content);
   return clipRect ? { imageRect, clipRect } : null;
 }
 
-export function clientToImage(
-  x: number,
-  y: number,
-  geometry: ImageGeometry,
-): Point | null {
+export function clientToImage(x: number, y: number, geometry: ImageGeometry): Point | null {
   if (!inside(x, y, geometry.clipRect) || !inside(x, y, geometry.imageRect))
     return null;
   const point = {
@@ -99,25 +74,16 @@ export function imageToClient(point: Point, geometry: ImageGeometry): Point {
   };
 }
 
-function objectPosition(
-  value: string,
-  dx: number,
-  dy: number,
-): { x: number; y: number } {
+function objectPosition(value: string, dx: number, dy: number): { x: number; y: number } {
   const tokens = value.trim().split(/\s+/u);
   let xToken = tokens[0] || "50%";
-  let yToken =
-    tokens[1] || (xToken === "top" || xToken === "bottom" ? xToken : "50%");
+  let yToken = tokens[1] || (xToken === "top" || xToken === "bottom" ? xToken : "50%");
   // CSS accepts both `left top` and `top left` for the common keyword form.
-  if (
-    (xToken === "top" || xToken === "bottom") &&
-    (yToken === "left" || yToken === "right")
-  ) {
+  if ((xToken === "top" || xToken === "bottom") && (yToken === "left" || yToken === "right") ) {
     [xToken, yToken] = [yToken, xToken];
   }
   return {
-    x: positionValue(xToken, dx, "x"),
-    y: positionValue(yToken, dy, "y"),
+    x: positionValue(xToken, dx, "x"), y: positionValue(yToken, dy, "y"),
   };
 }
 
@@ -134,32 +100,21 @@ function positionValue(token: string, delta: number, axis: "x" | "y"): number {
 function hasUnsupportedTransform(image: HTMLImageElement): boolean {
   const view = image.ownerDocument.defaultView;
   if (!view) return false;
-  for (
-    let current: Element | null = image;
+  for (let current: Element | null = image;
     current;
     current = current.parentElement
   ) {
     const computed = view.getComputedStyle(current);
     const transform = computed.transform;
-    if (
-      [computed.rotate, computed.scale, computed.translate].some(
-        (value) => value && value !== "none",
-      )
-    )
+    if ([computed.rotate, computed.scale, computed.translate].some((value) => value && value !== "none") )
       return true;
-    if (
-      transform &&
-      transform !== "none" &&
-      transform !== "matrix(1, 0, 0, 1, 0, 0)"
-    )
+    if (transform && transform !== "none" && transform !== "matrix(1, 0, 0, 1, 0, 0)" )
       return true;
   }
   return false;
 }
 
-function intersect(
-  a: ImageGeometry["imageRect"],
-  b: ImageGeometry["imageRect"],
+function intersect(a: ImageGeometry["imageRect"], b: ImageGeometry["imageRect"],
 ): ImageGeometry["clipRect"] | undefined {
   const x = Math.max(a.x, b.x);
   const y = Math.max(a.y, b.y);
@@ -169,17 +124,8 @@ function intersect(
     ? { x, y, width: right - x, height: bottom - y }
     : undefined;
 }
-function inside(
-  x: number,
-  y: number,
-  rect: ImageGeometry["imageRect"],
-): boolean {
-  return (
-    x >= rect.x &&
-    x <= rect.x + rect.width &&
-    y >= rect.y &&
-    y <= rect.y + rect.height
-  );
+function inside(x: number, y: number, rect: ImageGeometry["imageRect"]): boolean {
+  return (x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height);
 }
 function px(value: string): number {
   const number = Number.parseFloat(value);

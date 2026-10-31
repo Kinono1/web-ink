@@ -1,33 +1,23 @@
 import { validateAnnotation } from "../core/validation";
-import type { PdfNoteDraft } from "../pdf/PdfNote";
 import type {
-  PdfReaderRequest,
-  PdfSidebarCommand,
-  PdfSidebarCommandMessage,
-  PdfSidebarState,
-  PdfSidebarUpdate,
-} from "../pdf/sidebar-types";
-import type { NativePdfAnnotation, PdfAnnotation } from "../pdf/types";
+  PdfNoteDraft, PdfReaderRequest, PdfSidebarCommand, PdfSidebarCommandMessage, PdfSidebarState, PdfSidebarUpdate,
+} from "../core/sidebar";
+import type { NativePdfAnnotation, PdfAnnotation } from "../core/pdf-types";
+import { hasOnly } from "./data/validation";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 type Reader = { port: chrome.runtime.Port; state?: PdfSidebarState | null };
 type Sidebar = { port: chrome.runtime.Port; tabId?: number };
 
+const onlyKeys = (value: Record<string, unknown>, keys: string[]): boolean => hasOnly(value, [], keys);
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype;
 }
-function onlyKeys(value: Record<string, unknown>, keys: string[]): boolean {
-  return Object.keys(value).every((key) => keys.includes(key));
-}
-function text(value: unknown, max: number, empty = true): value is string {
-  return typeof value === "string" && value.length <= max && (empty || value.trim().length > 0);
-}
-function identifier(value: unknown): value is string {
-  return text(value, 128, false) && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
-}
-function tabId(value: unknown): value is number {
-  return Number.isSafeInteger(value) && (value as number) >= 0;
-}
+const text = (value: unknown, max: number, empty = true): value is string =>
+  typeof value === "string" && value.length <= max && (empty || value.trim().length > 0);
+const identifier = (value: unknown): value is string =>
+  text(value, 128, false) && /^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(value);
+const tabId = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 function ownPage(sender: chrome.runtime.MessageSender | undefined, path: string): boolean {
   if (sender?.id !== chrome.runtime.id || typeof sender.url !== "string") return false;
   try {
@@ -65,7 +55,8 @@ function originalNote(value: unknown, reply = false): value is Record<string, un
   return !reply || onlyKeys(value, ["id", "subtype", "contents", "author", "createdAt", "updatedAt", "inReplyTo", "replyType"]);
 }
 function originalRecord(value: unknown, hash: string): NativePdfAnnotation | undefined {
-  if (!originalNote(value) || !onlyKeys(value, ["key", "documentHash", "pageNumber", "id", "subtype", "contents", "author", "createdAt", "updatedAt", "rect", "color", "replies", "inReplyTo", "replyType"]) ||
+  if (!originalNote(value) || !onlyKeys(value, ["key", "documentHash", "pageNumber", "id", "subtype",
+    "contents", "author", "createdAt", "updatedAt", "rect", "color", "replies", "inReplyTo", "replyType"]) ||
     value.documentHash !== hash || !Number.isSafeInteger(value.pageNumber) || (value.pageNumber as number) < 1 ||
     value.key !== `${hash}:${value.pageNumber}:${value.id}`) return;
   if (value.rect !== undefined && (!Array.isArray(value.rect) || value.rect.length !== 4 || !value.rect.every((entry) => typeof entry === "number" && Number.isFinite(entry)))) return;
@@ -73,19 +64,19 @@ function originalRecord(value: unknown, hash: string): NativePdfAnnotation | und
   if (value.replies !== undefined && (!Array.isArray(value.replies) || value.replies.length > 500 || !value.replies.every((entry) => originalNote(entry, true)))) return;
   return value as NativePdfAnnotation;
 }
+const STATE_KEYS = [
+  "pageUrl", "sessionId", "fileName", "records", "totalCount", "drafts", "conflicts", "locked",
+  "noteSaving", "removing", "undoRecord", "error", "notice", "nativeFilter", "nativeRecords", "nativeLoading", "nativeProgress", "nativeError",
+  "nativeTotalCount", "nativeOffset", "nativeLimit", "nativePageEnd",
+];
 function sidebarState(value: unknown): PdfSidebarState | null | undefined {
   if (value === null) return null;
-  if (!object(value) || !onlyKeys(value, [
-    "pageUrl", "sessionId", "fileName", "records", "totalCount", "drafts", "conflicts", "locked",
-    "noteSaving", "removing", "undoRecord", "error", "notice", "nativeFilter", "nativeRecords", "nativeLoading", "nativeProgress", "nativeError",
-    "nativeTotalCount", "nativeOffset", "nativeLimit", "nativePageEnd",
-  ]) || typeof value.pageUrl !== "string" || !/^urn:web-ink:pdf:[0-9a-f]{64}$/.test(value.pageUrl) ||
+  if (!object(value) || !onlyKeys(value, STATE_KEYS) || typeof value.pageUrl !== "string" || !/^urn:web-ink:pdf:[0-9a-f]{64}$/.test(value.pageUrl) ||
     typeof value.sessionId !== "string" || !UUID.test(value.sessionId) || !text(value.fileName, 512, false) ||
     !Array.isArray(value.records) || !Number.isSafeInteger(value.totalCount) || (value.totalCount as number) < value.records.length ||
     !object(value.drafts) || !object(value.conflicts) || typeof value.locked !== "boolean" || typeof value.removing !== "boolean" ||
     (value.noteSaving !== undefined && !identifier(value.noteSaving)) ||
-    (value.error !== undefined && !text(value.error, 20_000)) ||
-    (value.notice !== undefined && !text(value.notice, 20_000)) ||
+    (value.error !== undefined && !text(value.error, 20_000)) || (value.notice !== undefined && !text(value.notice, 20_000)) ||
     (value.nativeError !== undefined && !text(value.nativeError, 20_000)) ||
     (value.nativeFilter !== undefined && !["all", "web-ink", "original"].includes(value.nativeFilter as string)) ||
     (value.nativeLoading !== undefined && typeof value.nativeLoading !== "boolean")) return;
@@ -126,9 +117,7 @@ function sidebarState(value: unknown): PdfSidebarState | null | undefined {
     if (!draft) return;
     drafts[id] = draft;
   }
-  for (const [id, conflict] of Object.entries(value.conflicts)) {
-    if (!identifier(id) || typeof conflict !== "boolean") return;
-  }
+  for (const [id, conflict] of Object.entries(value.conflicts)) if (!identifier(id) || typeof conflict !== "boolean") return;
   const undoRecord = value.undoRecord === undefined ? undefined : pdfRecord(value.undoRecord, value.pageUrl);
   if (value.undoRecord !== undefined && !undoRecord) return;
   return { ...value, records, drafts, conflicts: { ...value.conflicts },
@@ -136,30 +125,28 @@ function sidebarState(value: unknown): PdfSidebarState | null | undefined {
 }
 function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarCommand | undefined {
   if (!object(value)) return;
-  if (value.type === "more" && onlyKeys(value, ["type"])) return { type: "more" };
-  if (value.type === "undo" && onlyKeys(value, ["type"]) && state.undoRecord) return { type: "undo" };
-  if (value.type === "cancel-native" && onlyKeys(value, ["type"]) && state.nativeLoading) return { type: "cancel-native" };
-  if (value.type === "more-native" && onlyKeys(value, ["type"]) &&
+  const onlyType = onlyKeys(value, ["type"]);
+  if (value.type === "more" && onlyType) return { type: "more" };
+  if (value.type === "undo" && onlyType && state.undoRecord) return { type: "undo" };
+  if (value.type === "cancel-native" && onlyType && state.nativeLoading) return { type: "cancel-native" };
+  if (value.type === "more-native" && onlyType &&
     (state.nativePageEnd ?? state.nativeRecords?.length ?? 0) < (state.nativeTotalCount ?? state.nativeRecords?.length ?? 0)) return { type: "more-native" };
-  if (value.type === "previous-native" && onlyKeys(value, ["type"]) && (state.nativeOffset ?? 0) > 0) return { type: "previous-native" };
+  if (value.type === "previous-native" && onlyType && (state.nativeOffset ?? 0) > 0) return { type: "previous-native" };
   if (value.type === "filter" && onlyKeys(value, ["type", "filter"]) && ["all", "web-ink", "original"].includes(value.filter as string))
     return { type: "filter", filter: value.filter as "all" | "web-ink" | "original" };
-  if (value.type === "focus-native") {
-    if (onlyKeys(value, ["type", "key"]) && typeof value.key === "string" && state.nativeRecords?.some((record) => record.key === value.key))
-      return { type: "focus-native", key: value.key };
-    return;
-  }
+  if (value.type === "focus-native")
+    return onlyKeys(value, ["type", "key"]) && typeof value.key === "string" &&
+      state.nativeRecords?.some((record) => record.key === value.key) ? { type: "focus-native", key: value.key } : undefined;
   if (!identifier(value.id)) return;
   const record = state.records.find((item) => item.id === value.id);
-  if (value.type === "focus" || value.type === "save" || value.type === "remove") {
-    if (record && onlyKeys(value, ["type", "id"])) return { type: value.type, id: value.id };
-    return;
-  }
+  if (value.type === "focus" || value.type === "save" || value.type === "remove")
+    return record && onlyKeys(value, ["type", "id"]) ? { type: value.type, id: value.id } : undefined;
   if (value.type !== "draft" || !onlyKeys(value, ["type", "id", "draft", "resolveConflict"]) ||
     (value.resolveConflict !== undefined && typeof value.resolveConflict !== "boolean")) return;
   const cachedDraft = Object.hasOwn(state.drafts, value.id) ? state.drafts[value.id] : undefined;
   if (!record && !cachedDraft) return;
-  if (value.draft === undefined) return { type: "draft", id: value.id, ...(value.resolveConflict === undefined ? {} : { resolveConflict: value.resolveConflict }) };
+  const resolve = value.resolveConflict === undefined ? {} : { resolveConflict: value.resolveConflict };
+  if (value.draft === undefined) return { type: "draft", id: value.id, ...resolve };
   const draft = noteDraft(value.draft, state.pageUrl, value.id);
   if (!draft) return;
   // An existing stale draft keeps its original revision; resolving a conflict
@@ -168,9 +155,8 @@ function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarComma
   const recoveredBase = record && draft.base.revision < record.revision &&
     draft.base.kind === record.kind && draft.base.createdAt === record.createdAt &&
     JSON.stringify(draft.base.target) === JSON.stringify(record.target);
-  if (base !== JSON.stringify(record) &&
-    (value.resolveConflict || (base !== JSON.stringify(cachedDraft?.base) && !recoveredBase))) return;
-  return { type: "draft", id: value.id, draft, ...(value.resolveConflict === undefined ? {} : { resolveConflict: value.resolveConflict }) };
+  if (base !== JSON.stringify(record) && (value.resolveConflict || (base !== JSON.stringify(cachedDraft?.base) && !recoveredBase))) return;
+  return { type: "draft", id: value.id, draft, ...resolve };
 }
 function closePort(port: chrome.runtime.Port): void {
   try { port.disconnect(); } catch { /* The peer may already have disconnected. */ }
@@ -181,7 +167,6 @@ export function installPdfSidebarBroker(): void {
   const readers = new Map<number, Reader>();
   const sidebars = new Set<Sidebar>();
   const watchers = (id: number) => [...sidebars].filter((sidebar) => sidebar.tabId === id);
-
   function forgetReader(id: number, reader: Reader): void {
     if (readers.get(id) !== reader) return;
     readers.delete(id);
@@ -193,12 +178,10 @@ export function installPdfSidebarBroker(): void {
     if (reader) sendReader(sidebar.tabId, reader, { type: "attached", attached: false });
   }
   function sendSidebar(sidebar: Sidebar, message: PdfSidebarUpdate): void {
-    try { sidebar.port.postMessage(message); }
-    catch { forgetSidebar(sidebar); closePort(sidebar.port); }
+    try { sidebar.port.postMessage(message); } catch { forgetSidebar(sidebar); closePort(sidebar.port); }
   }
   function sendReader(id: number, reader: Reader, message: PdfReaderRequest): void {
-    try { reader.port.postMessage(message); }
-    catch { forgetReader(id, reader); closePort(reader.port); }
+    try { reader.port.postMessage(message); } catch { forgetReader(id, reader); closePort(reader.port); }
   }
   function snapshot(sidebar: Sidebar): void {
     const reader = sidebar.tabId === undefined ? undefined : readers.get(sidebar.tabId);

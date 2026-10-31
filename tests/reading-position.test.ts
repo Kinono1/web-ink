@@ -6,7 +6,7 @@ import {
   restorePdfReadingPosition,
   type PdfReadingPosition,
 } from "../src/pdf/reading-position";
-import { PageLayoutIndex } from "../src/pdf/layout";
+import { PageLayoutIndex } from "../src/pdf/reading-position";
 
 const HASH_A = "a".repeat(64);
 const HASH_B = "b".repeat(64);

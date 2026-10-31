@@ -1,6 +1,6 @@
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { PdfRect } from "../../core/model";
-import type { PdfAnnotation } from "../types";
+import type { PdfAnnotation } from "../../core/pdf-types";
 import { fromPdfRect, mergePdfTextRects } from "../geometry";
 
 type Props = {

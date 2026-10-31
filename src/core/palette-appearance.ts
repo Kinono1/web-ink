@@ -2,13 +2,8 @@ export const PALETTE_SIZE_KEY = "ui.paletteSize" as const;
 export const DEFAULT_PALETTE_SIZE = 40;
 
 export function isPaletteSize(value: unknown): value is number {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value >= 40 &&
-    value <= 64 &&
-    Number.isInteger(value) &&
-    (value - 40) % 4 === 0
+  return (typeof value === "number" && Number.isFinite(value) && value >= 40 && value <= 64 &&
+    Number.isInteger(value) && (value - 40) % 4 === 0
   );
 }
 

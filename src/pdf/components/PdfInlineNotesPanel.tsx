@@ -1,26 +1,13 @@
 import { useCallback, type ComponentProps } from "react";
-import { PdfNote, type PdfNoteDraft } from "../PdfNote";
+import { PdfNote } from "../PdfNote";
+import type { PdfNoteDraft } from "../../core/sidebar";
 import { NativePdfNote, PdfAnnotationFilters } from "../../ui/PdfSidebar";
-import { errorText } from "../types";
+import { errorText } from "../../core/pdf-types";
 import { Icon } from "../../ui/management/helpers";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
-type Props = {
-  state: Pick<ReaderSnapshot,
-    "deletedDrafts" | "guardSaving" | "inlineNotes" | "leaving" | "nativeComplete" |
-    "nativeFilter" | "nativeLoading" | "nativeOffset" | "nativeProgress" | "nativeRecords" |
-    "nativeWindow" | "noteConflicts" | "noteCount" | "noteDrafts" | "noteSaving" |
-    "notesLimit" | "notesRail" | "originalError" | "records" | "removing" | "savedIds" |
-    "setNativeError" | "setNotesLimit" | "setNotesOpen" | "sortedNotes" | "unsaved" |
-    "writeCount"
-  >;
-  actions: Pick<ReaderActions,
-    "cancelNativeScan" | "filterAnnotations" | "focusOriginalNote" | "jump" |
-    "nextOriginalPage" | "previousOriginalPage" | "remove" | "saveNote" | "scanOriginalNotes" |
-    "updateDraft"
-  >;
-};
+type Props = { state: ReaderSnapshot; actions: ReaderActions };
 
 // Bind row-specific arguments where React can preserve their identity. PdfNote
 // uses normal memo comparison, so a changed callback still reaches its editor.

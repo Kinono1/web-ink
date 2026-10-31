@@ -1,14 +1,13 @@
-import {
-  defaultAnnotationPresets, readAnnotationPresets, validateAnnotationPresets,
-  type AnnotationPreset,
-} from "../../core/annotation-presets";
-import { errorText } from "../types";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { defaultAnnotationPresets, readAnnotationPresets, validateAnnotationPresets, type AnnotationPreset, } from "../../core/annotation-presets";
+import { errorText } from "../../core/pdf-types";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { request, releaseChromeListener } from "../../core/client";
 import { COLORS, DEFAULT_SETTINGS, type Settings } from "../../core/model";
-import { THEME_TOKENS } from "../../ui/theme";
-import { dirtyDraft } from "./reader-utils";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { THEME_TOKENS } from "../../core/theme";
+import type { PdfAnnotation, NativePdfAnnotation } from "../../core/pdf-types";
+import { ieeePaperUrl } from "../../core/pdf-context";
+import { doiUrl } from "../paper-identity";
+import { dirtyDraft, type LeaveAction, safeSource, type ReaderState, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
 
 export function useReaderUIState() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -34,7 +33,6 @@ export function useReaderUIState() {
   const notesRail = useRef<HTMLElement>(null);
   const zh = settings.language === "zh-CN";
   const t = useCallback((cn: string, en: string) => (zh ? cn : en), [zh]);
-
   return {
     zh, t,
     settings, setSettings, settingsReady, setSettingsReady, showMarks, setShowMarks, area,
@@ -44,40 +42,24 @@ export function useReaderUIState() {
     presetReadGeneration, presetDraft, presetSaving, moreMenu, moreTrigger, notesRail,
   };
 }
-
 type Inputs = Pick<ReaderSnapshot,
-  "container" | "documentSession" | "documentSessionRef" | "deletedDrafts" | "dirtyNotes" | "draftsRef" | "focusAttempt" | "focusMode" |
-  "focusScroll" | "inlineNotes" | "locked" | "moreMenu" | "moreOpen" | "notesRail" |
-  "pendingLeave" | "presetReadGeneration" | "presetsOpen" | "readerTab" | "readerWindow" |
-  "selection" | "setColor" | "setError" | "setFallbackNotes" | "setFocusBusy" |
-  "setFocusHint" | "setFocusMode" | "setMoreOpen" | "setNotesOpen" | "setPresets" |
-  "setSettings" | "setSettingsReady" | "settings" | "settingsReady" | "sidebarAttachedRef" |
-  "sourceOpen" | "supportsSidebar" | "t"
->;
+  "container" | "documentSession" | "documentSessionRef" | "deletedDrafts" | "dirtyNotes" | "draftsRef" | "focusAttempt" | "focusMode" | "focusScroll" | "inlineNotes" | "locked" | "moreMenu" | "moreOpen" | "notesRail" | "pendingLeave" |
+  "presetReadGeneration" | "presetsOpen" | "readerTab" | "readerWindow" | "selection" | "setColor" | "setError" | "setFallbackNotes" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setMoreOpen" | "setNotesOpen" | "setPresets" | "setSettings" | "setSettingsReady" |
+  "settings" | "settingsReady" | "sidebarAttachedRef" | "sourceOpen" | "supportsSidebar" | "t">;
 
-export function useReaderUI(
-  state: Inputs,
-  actions: ReaderActionsRef<"mark">,
-) {
-  const {
-    container, documentSession, documentSessionRef, deletedDrafts, dirtyNotes, draftsRef, focusAttempt, focusMode, focusScroll,
-    inlineNotes, locked, moreMenu, moreOpen, notesRail, pendingLeave, presetReadGeneration,
-    presetsOpen, readerTab, readerWindow, selection, setColor, setError, setFallbackNotes,
-    setFocusBusy, setFocusHint, setFocusMode, setMoreOpen, setNotesOpen, setPresets,
-    setSettings, setSettingsReady, settings, settingsReady, sidebarAttachedRef, sourceOpen,
-    supportsSidebar, t,
-  } = state;
-
+export function useReaderUI(state: Inputs, actions: ReaderActionsRef<"mark">,) {
+  const { container, documentSession, documentSessionRef, deletedDrafts, dirtyNotes, draftsRef, focusAttempt, focusMode, focusScroll,
+    inlineNotes, locked, moreMenu, moreOpen, notesRail, pendingLeave, presetReadGeneration, presetsOpen, readerTab, readerWindow,
+    selection, setColor, setError, setFallbackNotes, setFocusBusy, setFocusHint, setFocusMode, setMoreOpen, setNotesOpen,
+      setPresets, setSettings, setSettingsReady, settings, settingsReady, sidebarAttachedRef, sourceOpen, supportsSidebar, t, } = state;
   useEffect(() => () => {
     focusAttempt.current++;
   }, []);
-
   const cancelFocusAttempt = useCallback(() => {
     focusAttempt.current++;
     setFocusBusy(false);
     setFocusMode(false);
   }, [focusAttempt, setFocusBusy, setFocusMode]);
-
   const openNotes = useCallback(() => {
     cancelFocusAttempt();
     if (!supportsSidebar) { setNotesOpen((open) => !open); return; }
@@ -92,12 +74,10 @@ export function useReaderUI(
       setError(t("侧栏暂时无法打开，请重试或点击工具栏 Web Ink。", "The sidebar could not open. Retry or click Web Ink in the toolbar."));
     });
   }, [cancelFocusAttempt, supportsSidebar, setNotesOpen, readerTab, setError, t, setFallbackNotes, sidebarAttachedRef]);
-
   useLayoutEffect(() => {
     if (inlineNotes && deletedDrafts.length && !pendingLeave && !sourceOpen)
       notesRail.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
   }, [inlineNotes, deletedDrafts.length, pendingLeave, sourceOpen]);
-
   useEffect(() => {
     if (!moreOpen) return;
     const outside = (event: PointerEvent) => {
@@ -106,7 +86,6 @@ export function useReaderUI(
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [moreOpen]);
-
   useEffect(() => {
     void request<Settings>({ type: "settings.get" }).then((next) => {
       setSettings(next);
@@ -119,11 +98,9 @@ export function useReaderUI(
     chrome.runtime.onMessage.addListener(listener);
     return () => releaseChromeListener(() => chrome.runtime.onMessage.removeListener(listener));
   }, []);
-
   useEffect(() => {
     setColor(settings.defaultColor);
   }, [settings.defaultColor]);
-
   useEffect(() => {
     if (!settingsReady) return;
     let active = true;
@@ -140,7 +117,6 @@ export function useReaderUI(
     });
     return () => { active = false; releaseChromeListener(() => chrome.storage.onChanged?.removeListener(changed)); };
   }, [settingsReady, settings.language]);
-
   useLayoutEffect(() => {
     if (focusScroll.current !== undefined && container.current) {
       container.current.scrollTop = focusScroll.current;
@@ -148,7 +124,6 @@ export function useReaderUI(
     }
     if (focusMode) container.current?.focus({ preventScroll: true });
   }, [focusMode]);
-
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
@@ -171,7 +146,6 @@ export function useReaderUI(
     media.addEventListener("change", apply);
     return () => media.removeEventListener("change", apply);
   }, [settings]);
-
   const enterFocus = useCallback(async () => {
     if (documentSession !== documentSessionRef.current || locked || dirtyNotes || presetsOpen) return;
     const attempt = ++focusAttempt.current;
@@ -192,18 +166,13 @@ export function useReaderUI(
     setMoreOpen(false);
     setFocusHint(hint);
     setFocusMode(true);
-  }, [
-    documentSession, documentSessionRef, locked, dirtyNotes, presetsOpen, focusAttempt,
-    setFocusBusy, supportsSidebar, readerWindow, draftsRef, focusScroll, container, setNotesOpen,
-    setMoreOpen, setFocusHint, setFocusMode,
-  ]);
-
+  }, [documentSession, documentSessionRef, locked, dirtyNotes, presetsOpen, focusAttempt, setFocusBusy, supportsSidebar,
+    readerWindow, draftsRef, focusScroll, container, setNotesOpen, setMoreOpen, setFocusHint, setFocusMode,]);
   const exitFocus = useCallback(() => {
     cancelFocusAttempt();
     focusScroll.current = container.current?.scrollTop;
     container.current?.focus({ preventScroll: true });
   }, [cancelFocusAttempt, focusScroll, container]);
-
   const choosePreset = useCallback((preset: AnnotationPreset) => {
     const current = getSelection();
     if (documentSession !== documentSessionRef.current || !selection || locked || presetsOpen || !current?.rangeCount || current.isCollapsed) return false;
@@ -218,7 +187,6 @@ export function useReaderUI(
     actions.current.mark(selection.target, "pdf-text", preset.color, false, [preset.label]);
     return true;
   }, [documentSession, documentSessionRef, selection, locked, presetsOpen, container, setColor, actions]);
-
   const dialogKeys = useCallback((event: React.KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Tab") return;
     const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), [tabindex="0"]')];
@@ -227,4 +195,55 @@ export function useReaderUI(
     if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
   }, []);
   return { cancelFocusAttempt, openNotes, enterFocus, exitFocus, choosePreset, dialogKeys };
+}
+// Transient reader notices share the UI feedback state and timer.
+export function useNotificationsState() {
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  return { error, setError, notice, setNotice, noticeTimer };
+}
+type NotificationInputs = Pick<ReaderSnapshot, "noticeTimer" | "setNotice">;
+
+export function useNotifications(state: NotificationInputs) {
+  const { noticeTimer, setNotice, } = state;
+  useEffect(() => () => {
+    clearTimeout(noticeTimer.current);
+  }, []);
+  const tell = useCallback((message: string) => {
+    setNotice(message);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(""), 1800);
+  }, []);
+  return { tell };
+}
+type DerivedInputs = Pick<ReaderState,
+  "nativeWindow" | "t" | "busy" | "documentSession" | "exportStage" | "fallbackNotes" | "focusBusy" | "guardSaving" | "handoff" | "leaving" | "nativeError" | "nativeFilter" | "nativeProgress" | "nativeRecords" | "noteDrafts" | "notesOpen" |
+  "opened" | "paperDoi" | "records" | "removing" | "saving" | "sidebarAttached" | "supportsSidebar" | "unsaved" | "writeCount">;
+
+export function useReaderDerived(state: DerivedInputs) {
+  const { nativeWindow, t, busy, documentSession, exportStage, fallbackNotes, focusBusy, guardSaving, handoff, leaving, nativeError,
+    nativeFilter, nativeProgress, nativeRecords, noteDrafts, notesOpen, opened, paperDoi, records, removing, saving, sidebarAttached,
+    supportsSidebar, unsaved, writeCount, } = state;
+  const sidebarSession = useMemo(() => crypto.randomUUID(), [documentSession]);
+  const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
+  const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
+  const originalError = nativeWindow.oversized
+    ? t("这条原文件笔记超过侧栏显示上限；完整内容仍保留在当前文档，可导出给 AI。", "This original note exceeds the sidebar display limit. Its full contents remain in this document and can be exported for AI.")
+    : nativeError;
+  const nativeComplete = nativeProgress?.completed === opened?.document.numPages;
+  const noteCount = nativeFilter === "web-ink" ? records.length : nativeFilter === "original" ? nativeRecords.length : records.length + nativeRecords.length;
+  const currentParams = new URLSearchParams(location.search);
+  const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
+  const paperUrl = doiUrl(paperDoi) || ieeePaperUrl(handoff?.returnUrl || publicUrl);
+  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0 || !!exportStage || focusBusy;
+  const dirtyNotes = Object.values(noteDrafts).some(dirtyDraft);
+  const backLabel = handoff ? t("返回原阅读器", "Return to original reader") : publicUrl
+    ? t("打开 PDF 来源", "Open PDF source") : t("重新选择 PDF", "Choose PDF again");
+  const backAction: LeaveAction = { kind: handoff ? "return" : publicUrl ? "source" : "choose" };
+  return {
+    sidebarSession, key, inlineNotes, originalError, nativeComplete,
+    noteCount, currentParams, publicUrl,
+    paperUrl, locked, dirtyNotes, backLabel, backAction,
+  };
 }

@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { MAX_PDF_BYTES, readResponseBytes } from "../src/pdf/source";
+import { MAX_PDF_BYTES, readResponseBytes } from "../src/core/pdf-source";
 import { readIeeePdf } from "../src/pdf/ieee";
 
 const pageUrl = "https://ieeexplore.ieee.org/stamp/stamp.jsp?arnumber=123";

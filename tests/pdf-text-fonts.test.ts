@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { PDFPageProxy, TextItem } from "pdfjs-dist/types/src/display/api";
-import { alignPdfTextFonts } from "../src/pdf/text-fonts";
+import { alignPdfTextFonts } from "../src/pdf/geometry";
 
 let context: CanvasRenderingContext2D;
 let measuredWidth: number;

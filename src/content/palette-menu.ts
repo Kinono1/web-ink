@@ -1,4 +1,5 @@
-import { ICON_PATHS, type IconName } from '../ui/icons';
+import { ICON_PATHS, type IconName } from '../core/icons';
+import { svgElement } from './view-lite';
 
 export type PaletteAction = 'toggle' | 'selection-tools' | 'open-pdf' | 'open-ieee' | 'local-pdf' | 'sidebar' | 'library' | 'retry' | 'cancel';
 export interface PaletteMenuItem {
@@ -31,7 +32,8 @@ export function createPaletteMenu(
   style.textContent = `
     .web-ink-palette-menu[hidden] { display:none!important; }
     .web-ink-palette-menu { position:fixed; box-sizing:border-box; width:240px; padding:6px; border-radius:12px; background:var(--ink-surface-solid); color:var(--ink-text); font:400 var(--ink-size-body)/20px var(--ink-font); box-shadow:0 0 0 1px var(--ink-separator),0 4px 16px color-mix(in srgb,var(--ink-text) 10%,transparent); pointer-events:auto; overflow:auto; }
-    .web-ink-palette-menu button { display:flex; align-items:center; justify-content:flex-start; gap:8px; width:100%; min-height:38px; padding:9px 10px; border:0; border-radius:8px; text-align:left; background:transparent; color:var(--ink-text); font:inherit; overflow-wrap:anywhere; }
+    .web-ink-palette-menu button { display:flex; align-items:center; justify-content:flex-start; gap:8px; width:100%; min-height:38px; padding:
+      9px 10px; border:0; border-radius:8px; text-align:left; background:transparent; color:var(--ink-text); font:inherit; overflow-wrap:anywhere; }
     .web-ink-palette-menu button span { min-width:0; }
     .web-ink-palette-menu button:hover { background:var(--ink-fill); }
     .web-ink-palette-menu button[data-primary=true] { font-weight:600; }
@@ -92,9 +94,7 @@ export function createPaletteMenu(
     const path = event.composedPath();
     const atAnchor = path.includes(anchor);
     if (disposed || (panel.hidden && !atAnchor)) return;
-    if (event.key === 'Escape' && !panel.hidden) {
-      event.preventDefault(); event.stopPropagation(); close(true); return;
-    }
+    if (event.key === 'Escape' && !panel.hidden) { event.preventDefault(); event.stopPropagation(); close(true); return; }
     if (!atAnchor && !path.includes(panel)) return;
     if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault(); event.stopPropagation();
@@ -151,9 +151,8 @@ export function createPaletteMenu(
       button.setAttribute('role', 'menuitem'); button.dataset.action = item.action;
       button.dataset.primary = String(Boolean(item.primary));
       button.disabled = Boolean(item.disabled || (state.pending && item.action !== 'cancel'));
-      const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('aria-hidden', 'true');
-      const path = document.createElementNS(icon.namespaceURI, 'path'); path.setAttribute('d', ICON_PATHS[item.icon]); icon.append(path);
+      const icon = svgElement('svg', { viewBox: '0 0 24 24', 'aria-hidden': 'true' });
+      icon.append(svgElement('path', { d: ICON_PATHS[item.icon] }));
       const text = document.createElement('span'); text.textContent = item.label; button.append(icon, text);
       // Keep an embedded reader from stealing focus and closing the menu before click.
       button.addEventListener('pointerdown', event => {

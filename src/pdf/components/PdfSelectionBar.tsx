@@ -4,15 +4,7 @@ import { Icon } from "../../ui/management/helpers";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
-type Props = {
-  state: Pick<ReaderSnapshot,
-    "color" | "locked" | "presets" | "saving" | "selection" | "selectionBar" |
-    "selectionStyle" | "setSelection"
-  >;
-  actions: Pick<ReaderActions,
-    "choosePreset" | "mark" | "openNotes"
-  >;
-};
+type Props = { state: ReaderSnapshot; actions: ReaderActions };
 
 export function PdfSelectionBar({ state, actions }: Props) {
   const {

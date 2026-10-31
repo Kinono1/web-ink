@@ -221,5 +221,6 @@ export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice
       selectedId, setSelectedId, editing, setEditing, drafts, conflicts,
       startEdit, updateDraft, saveRecord, loadLatest, removeRecord, selectionSaved,
     };
-  }, [records, nextCursor, loading, loadRecords, query, kind, color, tag, filterOpen, libraryDocument, selectedId, editing, drafts, conflicts, mode, pageUrl, language, setError, setNotice, setRecords]);
+  }, [records, nextCursor, loading, loadRecords, query, kind, color, tag, filterOpen, libraryDocument,
+    selectedId, editing, drafts, conflicts, mode, pageUrl, language, setError, setNotice, setRecords]);
 }

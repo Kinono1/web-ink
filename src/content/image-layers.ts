@@ -1,6 +1,10 @@
-import type { ImageAnnotation } from "../core/model";
-import { getImageGeometry, type ImageGeometry } from "../core/geometry";
-import { renderShape } from "./render-shape";
+import { getStroke } from "perfect-freehand";
+import type { ImageAnnotation, ImageShape } from "../core/model";
+import {
+  getImageGeometry,
+  imageToClient,
+  type ImageGeometry,
+} from "../core/geometry";
 import { svgElement } from "./view-lite";
 
 export type ImageLayer = {
@@ -13,8 +17,7 @@ export type ImageLayer = {
 /** Owns the live SVG nodes for persisted image annotations in one engine run. */
 export class ImageLayerManager {
   private readonly layers = new Map<string, ImageLayer>();
-  // Geometry is valid only for one rAF paint: scroll, resize, and layout changes
-  // schedule a new paint and must recompute it.
+  // Geometry is valid only for one rAF paint: scroll, resize, and layout changes schedule a new paint and must recompute it.
   private readonly paintGeometry = new Map<
     HTMLImageElement,
     ImageGeometry | null
@@ -23,9 +26,7 @@ export class ImageLayerManager {
   constructor(private readonly svg: SVGSVGElement) {}
 
   /** Matches the drawing-mode admission rule before any viewport clipping. */
-  supports(image: HTMLImageElement): boolean {
-    return getImageGeometry(image) !== null;
-  }
+  supports(image: HTMLImageElement): boolean { return getImageGeometry(image) !== null; }
 
   /** Apply viewport and ancestor overflow clipping to an image's content box. */
   clippedGeometry(image: HTMLImageElement): ImageGeometry | null {
@@ -41,11 +42,7 @@ export class ImageLayerManager {
       innerHeight,
       geometry.clipRect.y + geometry.clipRect.height,
     );
-    for (
-      let parent = image.parentElement;
-      parent;
-      parent = parent.parentElement
-    ) {
+    for (let parent = image.parentElement; parent; parent = parent.parentElement) {
       const style = getComputedStyle(parent);
       const rect = parent.getBoundingClientRect();
       if (/(hidden|clip|auto|scroll)/.test(style.overflowX)) {
@@ -64,20 +61,11 @@ export class ImageLayerManager {
     };
   }
 
-  shapeFor(id: string): SVGElement | undefined {
-    return this.layers.get(id)?.shape;
-  }
+  shapeFor(id: string): SVGElement | undefined { return this.layers.get(id)?.shape; }
 
-  beginPaint(): void {
-    this.paintGeometry.clear();
-  }
+  beginPaint(): void { this.paintGeometry.clear(); }
 
-  draw(
-    record: ImageAnnotation,
-    image: HTMLImageElement,
-    focusId?: string,
-    suffix = "",
-  ): void {
+  draw(record: ImageAnnotation, image: HTMLImageElement, focusId?: string, suffix = ""): void {
     const key = `${record.id}${suffix}`;
     let layer = this.layers.get(key);
     const geometry = this.geometryForPaint(image);
@@ -174,4 +162,69 @@ export class ImageLayerManager {
     this.paintGeometry.set(image, geometry);
     return geometry;
   }
+}
+
+/** Draws one persisted image shape into page-client coordinates. */
+export function renderShape(shape: ImageShape, geometry: ImageGeometry, color: string): SVGElement {
+  const points = shape.points.map((point) => imageToClient(point, geometry));
+  const first = points[0] ?? { x: 0, y: 0 };
+  const last = points.at(-1) ?? first;
+  const width = Math.max(1, shape.width * geometry.imageRect.width);
+  const attrs = {
+    fill: "none",
+    stroke: color,
+    "stroke-width": width,
+    "stroke-linecap": "round",
+    "stroke-linejoin": "round",
+  };
+  if (shape.kind === "rectangle") return svgElement("rect", {
+      ...attrs,
+      x: Math.min(first.x, last.x),
+      y: Math.min(first.y, last.y),
+      width: Math.abs(last.x - first.x),
+      height: Math.abs(last.y - first.y),
+      rx: 2,
+    });
+  if (shape.kind === "ellipse") return svgElement("ellipse", {
+      ...attrs,
+      cx: (first.x + last.x) / 2,
+      cy: (first.y + last.y) / 2,
+      rx: Math.abs(last.x - first.x) / 2,
+      ry: Math.abs(last.y - first.y) / 2,
+    });
+  if (shape.kind === "arrow") {
+    const angle = Math.atan2(last.y - first.y, last.x - first.x),
+      size = Math.max(9, width * 4),
+      left = {
+        x: last.x - size * Math.cos(angle - Math.PI / 6),
+        y: last.y - size * Math.sin(angle - Math.PI / 6),
+      },
+      right = {
+        x: last.x - size * Math.cos(angle + Math.PI / 6),
+        y: last.y - size * Math.sin(angle + Math.PI / 6),
+      };
+    return svgElement("path", {
+      ...attrs,
+      d: `M ${first.x} ${first.y} L ${last.x} ${last.y} M ${left.x} ${left.y} L ${last.x} ${last.y} L ${right.x} ${right.y}`,
+    });
+  }
+  const outline = getStroke(
+    points.map((point, index) => [
+      point.x,
+      point.y,
+      shape.points[index]?.pressure ?? 0.5,
+    ]),
+    {
+      size: width,
+      thinning: 0.2,
+      smoothing: 0.55,
+      streamline: 0.45,
+      simulatePressure: true,
+    },
+  );
+  return svgElement("path", {
+    fill: color,
+    stroke: "none",
+    d: outline.length ? `${outline.map((point, index) => `${index ? "L" : "M"} ${point[0]} ${point[1]}`).join(" ")} Z` : "",
+  });
 }

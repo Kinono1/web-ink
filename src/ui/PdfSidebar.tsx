@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import type { Language } from "../core/model";
-import { PdfNote, type PdfNoteDraft } from "../pdf/PdfNote";
-import { connectPdfSidebar } from "../pdf/sidebar-connection";
-import type { PdfAnnotationFilter, PdfSidebarCommand, PdfSidebarState } from "../pdf/sidebar-types";
-import type { NativePdfAnnotation } from "../pdf/types";
+import { PdfNote } from "../pdf/PdfNote";
+import type { PdfNoteDraft } from "../core/sidebar";
+import { connectPdfSidebar } from "../pdf/public";
+import type { PdfAnnotationFilter, PdfSidebarCommand, PdfSidebarState } from "../core/sidebar";
+import type { NativePdfAnnotation } from "../core/pdf-types";
+import { textFor } from "../pdf/components/labels";
 
 const nativeLabels = new Map<string, [string, string]>([
   ["Highlight", ["高亮", "Highlight"]],
@@ -56,7 +58,7 @@ export function PdfSidebar({ tabId, language }: { tabId?: number; language: Lang
   const connection = useRef<ReturnType<typeof connectPdfSidebar> | undefined>(undefined);
   const scope = useRef<string | undefined>(undefined);
   const zh = language === "zh-CN";
-  const t = (cn: string, en: string) => zh ? cn : en;
+  const t = textFor(language);
   useEffect(() => {
     setView(null);
     setPending({});
