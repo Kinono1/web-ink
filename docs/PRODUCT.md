@@ -46,7 +46,7 @@ The product must make three boundaries legible:
 
 ## Prototype data notice
 
-`docs/design/v032-prototype.html` is a static clickable prototype. Its reading
-records, counts, filename, source URL, storage number, and errors are
-**synthetic illustrative data**, not a user profile, browser state, or
-production screen capture.
+[docs/design/v032-prototype.html](design/v032-prototype.html) is a static
+clickable prototype. Its reading records, counts, filename, source URL, storage
+number, and errors are **synthetic illustrative data**, not a user profile,
+browser state, or production screen capture.

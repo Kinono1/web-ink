@@ -8,7 +8,7 @@ This document is a release checklist. It does not assert that any unreleased fea
 | --- | --- |
 | Git source tree | Source, entrypoints, reviewed docs, artificial fixtures, tests, lockfile, scripts, public icons, generated license manifests, and resource license files required by the package |
 | GitHub Release assets | `web-ink-<version>-chrome.zip` and matching `.zip.sha256` |
-| Local only | `node_modules/`, `.wxt/`, `.build-output/`, `.output/`, `.local-install/`, unpacked install folders, browser profiles, test traces/reports, exported annotations, IndexedDB databases, environment files, PDF files, and private keys |
+| Local only | `node_modules/`, `.wxt/`, `.build-output/`, `releases/`, `.output/`, `.local-install/`, unpacked install folders, browser profiles, test traces/reports, exported annotations, IndexedDB databases, environment files, PDF files, and private keys |
 
 The manifest `key` is a public extension-identity key used for stable unpacked updates. It is intentionally tracked and is not a signing private key.
 
@@ -45,7 +45,7 @@ Tag the exact verified commit, create the release/prerelease deliberately, uploa
 
 ## Runtime integrity before packaging or local installation
 
-WXT writes only `.build-output/`. Packaging writes `.build-output/releases/`. Building and artifact cleanup never replace the loaded `.output/chrome-mv3` directory or clear `.local-install/`. Installation synchronization and actual Chrome activation are separate checks: click extension Reload and verify `runtime.health` against the accepted build. The v0.3.2 work does not itself authorize a public Release or tag.
+WXT writes only `.build-output/`. Packaging writes `releases/`. Building and artifact cleanup never replace the loaded `.output/chrome-mv3` directory or clear `.local-install/`. Installation synchronization and actual Chrome activation are separate checks: click extension Reload and verify `runtime.health` against the accepted build. The v0.3.2 work does not itself authorize a public Release or tag.
 
 `npm run build` runs a post-build check: required entry points, manifest/HTML references, literal generated module imports/preload references, and every prepared public asset must exist. It then creates `runtime-integrity.json` with SHA-256 hashes of all runtime files except itself. PDF workers, CMaps, fonts, decoders and licenses are included in that inventory, even when their names are computed at runtime.
 

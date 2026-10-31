@@ -263,3 +263,8 @@ The package is [MIT licensed](https://github.com/Hopding/pdf-lib/blob/v1.17.1/LI
 locked runtime dependencies: `@pdf-lib/standard-fonts` 1.0.0 (MIT),
 `@pdf-lib/upng` 1.0.1 (MIT), `pako` 1.0.11 (MIT AND Zlib), and `tslib` 1.14.1
 (0BSD). Verify those notices in the actual release artifact after bundling.
+
+## Annotation follow-up, 2026-10-31
+
+- [Hypothesis HTML anchoring](https://github.com/hypothesis/client/blob/b4d085a2f893aa6de3b61d8b8bc3ae4d0f24fc1a/src/annotator/anchoring/html.ts#L61-L95) verifies a resolved range against its saved quote. Web Ink keeps its stricter exact-quote, context and scope checks; once two valid candidates exist, it stops because the location is ambiguous. No fuzzy fallback or upstream code was added.
+- [react-pdf-highlighter coordinates](https://github.com/agentcooper/react-pdf-highlighter/blob/ae0968f22f8aedcf9eb62207bee31bd71bf095f6/src/lib/coordinates.ts#L30-L75) maps stored page coordinates to the current viewport. Web Ink retains its own coordinate conversion and shares the converted rectangles between drawing and hit testing. No upstream code was copied.

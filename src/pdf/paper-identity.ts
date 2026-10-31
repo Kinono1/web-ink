@@ -1,6 +1,15 @@
+import { request } from "../core/client";
+import type { AnnotationCursor, AnnotationPage, PdfTarget } from "../core/model";
+import { ieeePaperUrl } from "../core/pdf-context";
+import { ieeeSourceUrl } from "./ieee";
+
 const MAX_INPUT_LENGTH = 4096;
 const MAX_DOI_LENGTH = 200;
 const MAX_DISPLAY_LENGTH = 500;
+const MAX_PAGES_PER_SOURCE = 20;
+const MAX_SOURCE_URL_LENGTH = 8192;
+const IDENTITY_PREFIX = "ui.pdfPaperIdentity.";
+const HASH_PATTERN = /^[0-9a-f]{64}$/i;
 const DOI_PATTERN = /^10\.\d{4,9}\/[A-Z0-9._;()/:+-]+$/i;
 const INVALID_TEXT_PATTERN =
   /[\p{Surrogate}\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/u;
@@ -8,10 +17,8 @@ type PdfMetadata = { get(name: string): unknown };
 export type PdfMetadataInput = { info?: object; metadata?: PdfMetadata | null; };
 
 export function pdfDoi(input: PdfMetadataInput): string | undefined {
-  return (
-    parseDoi(readMetadata(input, "prism:doi")) ??
-    parseDoi(readMetadata(input, "dc:identifier"))
-  );
+  return parseDoi(readMetadata(input, "prism:doi")) ??
+    parseDoi(readMetadata(input, "dc:identifier"));
 }
 
 export function pdfDisplayName(input: PdfMetadataInput, fallback: string): string {
@@ -74,9 +81,6 @@ function truncateUtf16(value: string, maxLength: number): string {
   if (lastIncluded >= 0xd800 && lastIncluded <= 0xdbff) end -= 1;
   return value.slice(0, end).trimEnd();
 }
-// Detection only: source identity never authorizes applying another hash's marks.
-const MAX_PAGES_PER_SOURCE = 20;
-
 /** Detection only: source identity never authorizes applying another hash's marks. */
 export async function findPreviousPdfVersion(
   documentHash: string,
@@ -132,14 +136,6 @@ export async function findPreviousPdfVersion(
   }
   return { incomplete };
 }
-import { request } from "../core/client";
-import type { AnnotationCursor, AnnotationPage, PdfTarget } from "../core/model";
-import { ieeePaperUrl } from "../core/pdf-context";
-import { ieeeSourceUrl } from "./ieee";
-const IDENTITY_PREFIX = "ui.pdfPaperIdentity.";
-const HASH_PATTERN = /^[0-9a-f]{64}$/i;
-const MAX_SOURCE_URL_LENGTH = 8192;
-
 export type PdfPaperIdentity = { doi: string; paperUrl?: string };
 
 export function doiUrl(value: unknown): string | undefined {
@@ -238,8 +234,6 @@ function storedIdentity(value: unknown): PdfPaperIdentity | undefined {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
-// One reopen intent per destination tab carries a library choice through
-// sign-in. It never treats a DOI as proof of identical bytes.
 export type PdfPaperReopen = { documentHash: string; pageNumber: number };
 type ReopenIntent = PdfPaperReopen & { paperUrl?: string; doi?: string; expiresAt: number };
 function reopenStorageKey(tabId?: number): string | undefined {

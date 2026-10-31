@@ -8,7 +8,7 @@
 
 **Tech stack:** Existing React, CSS, Chrome APIs, PDF.js, Vitest and Playwright. No new dependencies.
 
-**Spec:** User-supplied refinement proposal, PRODUCT.md and DESIGN.md; the user explicitly requests overnight completion without Computer Use.
+**Spec:** User-supplied refinement proposal, [PRODUCT.md](../../PRODUCT.md) and [DESIGN.md](../../DESIGN.md); the user explicitly requests overnight completion without Computer Use.
 
 ## Global constraints
 

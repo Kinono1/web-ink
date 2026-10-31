@@ -1,16 +1,16 @@
 import type { PageViewport } from "pdfjs-dist/types/src/display/page_viewport";
 import type { PdfRect } from "../../core/model";
 import type { PdfAnnotation } from "../../core/pdf-types";
-import { fromPdfRect, mergePdfTextRects } from "../geometry";
+import { fromPdfRect } from "../geometry";
 
 type Props = {
-  geometry: { viewport: PageViewport; box: number[]; intrinsicRotation: number };
-  records: PdfAnnotation[];
+  geometry: { viewport: PageViewport; box: number[] };
+  marks: { record: PdfAnnotation; rects: ReturnType<typeof fromPdfRect>[] }[];
   preview?: PdfRect;
   color: string;
 };
 
-export function PdfMarks({ geometry, records, preview, color }: Props) {
+export function PdfMarks({ geometry, marks, preview, color }: Props) {
   return <>{(["pdf-text", "pdf-area"] as const).map((kind) => (
         <svg
           key={kind}
@@ -22,13 +22,13 @@ export function PdfMarks({ geometry, records, preview, color }: Props) {
           height={geometry.viewport.height}
           aria-hidden="true"
         >
-          {records.filter((r) => r.kind === kind).map((r) => (
+          {marks.filter(({ record }) => record.kind === kind).map(({ record: r, rects }) => (
             <g key={r.id} style={r.kind === "pdf-text" ? { mixBlendMode: "multiply" } : undefined}>
-              {(r.kind === "pdf-text" ? mergePdfTextRects(r.target.rects, geometry.box, geometry.intrinsicRotation) : r.target.rects).map((rect, i) => (
+              {rects.map((rect, i) => (
                 <rect
                   key={`${r.id}-${i}`}
                   data-pdf-annotation={r.id}
-                  {...fromPdfRect(rect, geometry.viewport, geometry.box)}
+                  {...rect}
                   fill={r.kind === "pdf-text" ? r.color : "none"}
                   stroke={r.kind === "pdf-area" ? r.color : "none"}
                   strokeWidth="2"

@@ -16,7 +16,6 @@ type SourceBytes = { api: PdfApiModule; bytes: Uint8Array; hash: string;
   positionRead: Promise<PdfReadingPosition | undefined> };
 type OpenedDocument = SourceBytes & { doc: PDFDocumentProxy; all: Annotation[]; metadata: PdfMetadataInput };
 type PreparedSource = { remote?: string; ieeeGrant?: PdfHandoff };
-// Owns the one live PDF.js loading task and its source-read AbortController.
 /** Owns the one live PDF.js loading task and its source-read AbortController. */
 export class PdfSession {
   #generation = 0;
@@ -87,14 +86,14 @@ export function useDocumentSessionState() {
 }
 type Inputs = Pick<ReaderSnapshot,
   "autoOpenAttempted" | "dimensions" | "documentSessionRef" | "draftsRef" | "exportController" | "focusAttempt" | "handoff" | "handoffReady" | "handoffToken" | "initialParams" | "intentEpoch" | "intrinsicDimensions" | "nativeFocus" |
-  "nativeHistory" | "nativeScan" | "originalNotes" | "pendingSearchPosition" | "positionSession" | "session" | "setArea" | "setBusy" | "setDocumentSession" | "setError" | "setExportStage" | "setFitWidth" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setHandoff" |
+  "nativeHistory" | "nativeScan" | "originalNotes" | "pendingSearchPosition" | "positionSession" | "recordsRef" | "session" | "setArea" | "setBusy" | "setDocumentSession" | "setError" | "setExportStage" | "setFitWidth" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setHandoff" |
   "setHandoffReady" | "setIeeeRecovery" | "setNativeError" | "setNativeFilter" | "setNativeLoading" | "setNativeOffset" | "setNativeProgress" | "setNativeRecords" | "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" | "setNotice" | "setOpened" | "setPageNumber" |
   "setPageWindow" | "setPaperDoi" | "setPicked" | "setPositionEpoch" | "setPositionError" | "setPreviousHash" | "setRotation" | "setSearchMatch" | "setSelection" | "setShowMarks" | "setSource" | "setSourceOpen" | "setUndoRecord" | "setZoom" | "settingsReady" | "source" | "t">;
 
 export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"updateRecords">,) {
   const { autoOpenAttempted, dimensions, documentSessionRef, draftsRef, exportController, focusAttempt, handoff, handoffReady, handoffToken,
     initialParams, intentEpoch, intrinsicDimensions, nativeFocus, nativeHistory, nativeScan, originalNotes, pendingSearchPosition,
-    positionSession, session, setArea, setBusy, setDocumentSession, setError, setExportStage, setFitWidth, setFocusBusy, setFocusHint,
+    positionSession, recordsRef, session, setArea, setBusy, setDocumentSession, setError, setExportStage, setFitWidth, setFocusBusy, setFocusHint,
       setFocusMode, setHandoff, setHandoffReady, setIeeeRecovery, setNativeError, setNativeFilter, setNativeLoading, setNativeOffset,
     setNativeProgress, setNativeRecords, setNoteConflicts, setNoteDrafts, setNotesOpen, setNotice, setOpened, setPageNumber,
       setPageWindow, setPaperDoi, setPicked, setPositionEpoch, setPositionError, setPreviousHash, setRotation, setSearchMatch, setSelection,
@@ -297,7 +296,8 @@ export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"upd
   }
   async function publishDocument(
     openedDocument: OpenedDocument, prepared: PreparedSource, file: File | undefined,
-    token: number, signal: AbortSignal, openingParams: URLSearchParams, openingIntent: number) : Promise<void> {
+    token: number, signal: AbortSignal, openingParams: URLSearchParams, openingIntent: number,
+    previousMarkedHash?: string) : Promise<void> {
     const { api, doc, all, hash, metadata, positionRead } = openedDocument;
     const remote = prepared.remote;
     const sourcePage = remote ? new URL(remote) : undefined;
@@ -369,12 +369,12 @@ export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"upd
       const previous = await findPreviousPdfVersion(
         hash, citation ? [citation, remote] : [remote], signal,
       );
-      if (!session.current.isCurrent(token)) return;
       earlierHash = previous.hash;
       changed = !!earlierHash;
       versionCheckIncomplete = previous.incomplete;
     }
-    if (session.current.isCurrent(token) && changed) {
+    if (!session.current.isCurrent(token)) return;
+    if (changed) {
       const oldHash = earlierHash || expected;
       if (oldHash && /^[a-f0-9]{64}$/.test(oldHash)) setPreviousHash(oldHash);
       setNotice(
@@ -383,15 +383,31 @@ export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"upd
           "Document changed: previous annotations are preserved and were not applied to this file.",
         ),
       );
-    } else if (session.current.isCurrent(token) && versionCheckIncomplete) {
+    } else if (versionCheckIncomplete) {
       setNotice((notice) => notice || t(
         "旧版本检查未完成，请到资料库查看之前的标注。旧标注仍按文档隔离保存。",
         "The previous-version check is incomplete. Check the library for earlier annotations; they remain isolated by document.",
+      ));
+    } else if (previousMarkedHash && previousMarkedHash !== hash) {
+      setPreviousHash(previousMarkedHash);
+      setNotice(t(
+        "已打开另一份 PDF，之前文件的标注仍保存在资料库。",
+        "Another PDF is open. Annotations from the previous file remain in your library.",
       ));
     }
   }
   async function loadPdf(file?: File, automatic = false, chosenSource = source, siteSession = false) {
     const openingParams = new URLSearchParams(location.search);
+    const previousHash = positionSession.current?.hash;
+    const previousMarkedHash = previousHash && recordsRef.current.some(
+      record => record.target.documentHash === previousHash,
+    ) ? previousHash : undefined;
+    // A reader URL names the open document; choosing another file is not a
+    // request to apply that document's page or assume the files are related.
+    if (previousHash) {
+      openingParams.delete("document");
+      openingParams.delete("page");
+    }
     const openingIntent = intentEpoch.current;
     const chromeVersion = Number(
       navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/)?.[1] || 0,
@@ -419,7 +435,7 @@ export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"upd
       const openedDocument = await openDocument(sourceBytes, token);
       if (!openedDocument) return;
       await publishDocument(
-        openedDocument, prepared, file, token, active.signal, openingParams, openingIntent,
+        openedDocument, prepared, file, token, active.signal, openingParams, openingIntent, previousMarkedHash,
       );
     } catch (cause) {
       if (token && session.current.isCurrent(token) && !signal?.aborted) {

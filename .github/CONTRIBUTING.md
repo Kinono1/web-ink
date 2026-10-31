@@ -1,6 +1,6 @@
 # Contributing
 
-Use Node.js 24.15.0 and the committed npm lockfile. See the README for install, check, test and build commands.
+Use Node.js 24.15.0 and the committed npm lockfile. See the [README](../README.md) for install, check, test and build commands.
 
 For a bug report, include the extension/Chrome versions, reproduction steps, expected behavior and a minimal artificial example where possible. Do not attach personal annotation exports, authenticated-page content, credentials, private documents or a browser profile.
 

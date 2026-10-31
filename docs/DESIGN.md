@@ -88,9 +88,10 @@ the list/detail split into list-or-detail and Back restores list position.
 
 The integrated PDF contract is one 52px reader
 row, a 320px notes rail at 900px and wider that overlays below it, and essential
-Back/page/Notes/More controls below 600px. Source definitions and actual
-local synthetic browser geometry are recorded in `docs/VALIDATION-v0.3.2.md`;
-native-surface acceptance remains a separate gate.
+Back/page/Notes/More controls below 600px. Source definitions and actual local
+synthetic browser geometry are recorded in
+[docs/VALIDATION-v0.3.2.md](VALIDATION-v0.3.2.md); native-surface acceptance
+remains a separate gate.
 
 ## Elevation & Depth
 
@@ -200,10 +201,11 @@ default explicitly in Settings; no color migration or new preference is added.
 Changing the default in Settings updates the next PDF annotation as well.
 
 
-`docs/design/v032-prototype.html` is static synthetic prototype material. This
-document is grounded in `src/ui/theme.ts`, `src/ui/page-theme.ts`, management and
-side-panel CSS, and `src/pdf/pdf.css`. Candidate synthetic-browser and package
-evidence is recorded in `docs/VALIDATION-v0.3.2.md`; native activation and final
+[docs/design/v032-prototype.html](design/v032-prototype.html) is static synthetic
+prototype material. This document is grounded in [src/core/theme.ts](../src/core/theme.ts),
+management and side-panel CSS, and [src/pdf/pdf.css](../src/pdf/pdf.css).
+Candidate synthetic-browser and package evidence is recorded in
+[docs/VALIDATION-v0.3.2.md](VALIDATION-v0.3.2.md); native activation and final
 PR/main/installation acceptance remain pending.
 
 ### Floating launcher

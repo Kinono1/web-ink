@@ -1,5 +1,5 @@
 import { PdfMarks, PdfSearchMarks } from "./components/PdfMarks";
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type {
   PDFPageProxy,
   RenderTask,
@@ -76,6 +76,16 @@ export const PdfPage = memo(function PdfPage({
       number: number;
     }>(),
     [preview, setPreview] = useState<PdfRect>();
+  const marks = useMemo(() => {
+    if (!geometry || geometry.opened !== opened || geometry.number !== number) return [];
+    return records.map((record) => ({
+      record,
+      rects: (record.kind === "pdf-text"
+        ? mergePdfTextRects(record.target.rects, geometry.box, geometry.intrinsicRotation)
+        : record.target.rects
+      ).map((rect) => fromPdfRect(rect, geometry.viewport, geometry.box)),
+    }));
+  }, [geometry, number, opened, records]);
   const committedLayer = useRef<InstanceType<PdfApi["TextLayer"]> | undefined>(undefined);
   const [searchRects, setSearchRects] = useState<PdfRect[]>([]);
   const pending = useRef(Promise.resolve());
@@ -310,20 +320,13 @@ export const PdfPage = memo(function PdfPage({
         y = event.clientY - page.top;
       // Area outlines paint above the text SVG, regardless of record age.
       const picked = [
-        ...records.filter((record) => record.kind === "pdf-area").reverse(),
-        ...records.filter((record) => record.kind === "pdf-text").reverse(),
-      ].find((record) =>
-        (record.kind === "pdf-text" ? mergePdfTextRects(record.target.rects, geometry.box, geometry.intrinsicRotation) : record.target.rects).some((rect) => {
-          const bounds = fromPdfRect(rect, geometry.viewport, geometry.box);
-          return (
-            x >= bounds.x &&
-            x <= bounds.x + bounds.width &&
-            y >= bounds.y &&
-            y <= bounds.y + bounds.height
-          );
-        }),
+        ...marks.filter(({ record }) => record.kind === "pdf-area").reverse(),
+        ...marks.filter(({ record }) => record.kind === "pdf-text").reverse(),
+      ].find(({ rects }) =>
+        rects.some((bounds) => x >= bounds.x && x <= bounds.x + bounds.width &&
+          y >= bounds.y && y <= bounds.y + bounds.height),
       );
-      if (picked) onPick(picked);
+      if (picked) onPick(picked.record);
       else onSelection(undefined);
       return;
     }
@@ -432,7 +435,7 @@ export const PdfPage = memo(function PdfPage({
         <p>{t("标注仍保存在本机。请用原阅读器或其他 PDF 工具查看这一页。", "Your annotations remain saved locally. View this page in the original reader or another PDF tool.")}</p>
       </div>}
       {geometry && !failure && geometry.opened === opened && geometry.number === number &&
-        <PdfMarks geometry={geometry} records={records} preview={preview} color={color} />}
+        <PdfMarks geometry={geometry} marks={marks} preview={preview} color={color} />}
       {ready && geometry && searchRects.length > 0 &&
         <PdfSearchMarks geometry={geometry} rects={searchRects} />}
       {area && ready && geometry && (

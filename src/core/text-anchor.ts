@@ -238,7 +238,7 @@ export class TextAnchorSession {
       }
     }
     const reading = this.readingFor(root);
-    const matches = contextMatches(reading.text, target).filter((start) => {
+    const matches = contextMatches(reading.text, target, (start) => {
       if (!container) return true;
       const range = rangeForOffsets(reading, root, start, start + target.exact.length);
       return Boolean(range && container.contains(range.startContainer) &&
@@ -539,7 +539,7 @@ function rangeForOffsets(reading: Reading, root: Element, start: number, end: nu
   }
 }
 
-function contextMatches(text: string, target: TextTarget): number[] {
+function contextMatches(text: string, target: TextTarget, withinScope: (start: number) => boolean): number[] {
   if (!target.exact) return [];
   const matches: number[] = [];
   for (let index = text.indexOf(target.exact);
@@ -549,8 +549,11 @@ function contextMatches(text: string, target: TextTarget): number[] {
     const before = text.slice(Math.max(0, index - target.prefix.length), index);
     const after = text.slice(index + target.exact.length, index + target.exact.length + target.suffix.length,
     );
-    if (before === target.prefix && after === target.suffix)
+    if (before === target.prefix && after === target.suffix && withinScope(index)) {
       matches.push(index);
+      // Two valid candidates are enough to reject an ambiguous anchor.
+      if (matches.length === 2) break;
+    }
   }
   return matches;
 }
