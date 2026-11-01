@@ -69,6 +69,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.pdf-toolbar .pdf-name { padding-inline: 4px; }
 .pdf-page-field {
   display: inline-flex;
   flex-shrink: 0;
@@ -80,6 +81,14 @@
 }
 .pdf-page-field input[type="number"] { width: 52px; padding: 4px; text-align: right; }
 .pdf-zoom-controls, .pdf-more-zoom { display: flex; align-items: center; gap: 4px; }
+.pdf-zoom-controls { padding-left: 8px; border-left: 1px solid var(--ink-separator); }
+.pdf-app .pdf-toolbar :is(input.pdf-zoom, .pdf-page-field input[type="number"]) {
+  background: transparent;
+}
+.pdf-app .pdf-toolbar :is(input.pdf-zoom, .pdf-page-field input[type="number"]):hover,
+.pdf-app .pdf-toolbar :is(input.pdf-zoom, .pdf-page-field input[type="number"]):focus-visible {
+  background: var(--ink-fill);
+}
 .pdf-zoom {
   min-width: 44px;
   color: var(--ink-secondary);
@@ -101,7 +110,7 @@
   overflow-y: auto;
   border-radius: var(--ink-radius);
   background: var(--ink-panel);
-  box-shadow: var(--ink-elevation-float);
+  box-shadow: 0 0 0 1px var(--ink-separator), var(--ink-elevation-float);
 }
 .pdf-more-group {
   display: grid;
@@ -207,7 +216,7 @@
   transform: translateX(-50%);
   border-radius: var(--ink-radius);
   background: var(--ink-panel);
-  box-shadow: var(--ink-elevation-float);
+  box-shadow: 0 0 0 1px var(--ink-separator), var(--ink-elevation-float);
 }
 .pdf-undo { bottom: 68px; }
 .pdf-selection button, .pdf-mark-menu button, .pdf-undo button { background: transparent; }
@@ -472,7 +481,7 @@
   padding: 12px;
   border-radius: var(--ink-radius);
   background: var(--ink-panel);
-  box-shadow: var(--ink-shadow);
+  box-shadow: 0 0 0 1px var(--ink-separator), var(--ink-elevation-float);
 }
 .pdf-find > input { width: 100%; }
 .pdf-find-actions { display: flex; align-items: center; gap: 4px; margin-top: 8px; }

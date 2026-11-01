@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { Annotation, AnchorState, Language } from "../../../core/model";
-import { excerptText, sourceName } from "../helpers";
+import { excerptText, Icon, sourceName } from "../helpers";
 import { AnnotationDetail, DetailActions, Editor } from "./detail";
 import { RecordFacts, problemOf } from "./meta";
 import type { AnnotationBrowserState, Copy, DetailProps } from "./types";
@@ -58,7 +58,12 @@ export function AnnotationBrowser({ compact = false, detailOpen = false, onBack,
       {selected ? (
         <AnnotationDetail {...detailProps(selected)} back={onBack} onSelect={select}
           siblings={records.filter((record) => record.pageUrl === selected.pageUrl && record.id !== selected.id)} />
-      ) : null}
+      ) : (
+        <div className="library-detail-placeholder">
+          <Icon name="note" />
+          <p>{t.selectAnnotation}</p>
+        </div>
+      )}
     </section>
   );
 }

@@ -40,14 +40,14 @@ typography:
   body: { fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif', fontSize: "14px" }
   title: { fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif', fontSize: "16px" }
   display: { fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif', fontSize: "22px" }
-  excerpt: { fontFamily: '"New York", "Iowan Old Style", Charter, Georgia, "Songti SC", "Source Han Serif SC", "Noto Serif CJK SC", "Microsoft YaHei", serif' }
+  excerpt: { fontFamily: '-apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif' }
 rounded: { control: "8px", surface: "12px", pill: "999px" }
 spacing: { 4: "4px", 8: "8px", 12: "12px", 16: "16px", 24: "24px", 32: "32px" }
 components:
   primary-action: { backgroundColor: "{colors.light-primary}", textColor: "{colors.light-primary-text}", rounded: "{rounded.control}", padding: "4px 10px", height: "36px" }
   quiet-action: { backgroundColor: "transparent", textColor: "{colors.light-secondary}", rounded: "{rounded.control}", padding: "4px 10px", height: "36px" }
   search-field: { backgroundColor: "{colors.light-fill}", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "0 10px 0 32px", height: "36px" }
-  record-row: { backgroundColor: "transparent", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "8px 12px 8px 22px" }
+  record-row: { backgroundColor: "transparent", textColor: "{colors.light-text}", rounded: "{rounded.control}", padding: "10px 12px 10px 22px" }
   floating-surface: { backgroundColor: "{colors.light-panel}", textColor: "{colors.light-text}", rounded: "{rounded.surface}", padding: "8px" }
 ---
 
@@ -55,8 +55,10 @@ components:
 
 Web Ink is an **Operate** interface for local web and PDF annotation: calm,
 document-first, and clear about the active document, current state, and local
-data boundary. Shared theme and component CSS are the production visual source;
-the Stage A direction supplies the intended reader layout.
+data boundary. Its compact workbench takes cues from Linear's clear hierarchy
+and restrained surfaces while keeping the document central. Shared theme and
+component CSS are the production visual source; the Stage A direction supplies
+the intended reader layout.
 
 Light and dark roles reverse deliberately. Accent indicates focus, selection,
 or explicit active state. Primary action uses stone roles. Stored annotation
@@ -76,10 +78,10 @@ and explicit active state; ordinary committed actions use the primary pair.
 
 ## Typography
 
-System sans serves UI, fields, metadata, and notes. The excerpt face is only
-for captured reading material. Meta supports dates and tags; body supports
-controls and notes; title supports compact headings; display supports empty and
-detail hierarchy. Use source-applied 400/500/600 weights; do not load web fonts.
+System sans serves UI, fields, metadata, notes, and captured excerpts. Meta
+supports dates and tags; body supports controls and notes; title supports compact
+headings; display supports empty and detail hierarchy. Use source-applied
+400/500/600 weights; do not load web fonts.
 
 ## Layout
 
@@ -102,12 +104,11 @@ separator ring; page paper has its thin document edge.
 **The Quiet-Surface Rule.** Keep page chrome and rows flat at rest; lift only
 transient or selected surfaces.
 
-The 0.3.6 refinement adds paired `--ink-elevation-float` and
-`--ink-elevation-dialog` roles. Small focus controls may use
-`--ink-floating-surface` with 12px backdrop blur; ordinary chrome, record rows
-and the PDF paper stay opaque. Unsupported blur, system reduced transparency
-or the product preference select a solid surface. One 200ms capsule reveal
-communicates entering focus; system and product reduced motion remove it.
+Floating controls use `--ink-elevation-float` or `--ink-elevation-dialog`.
+Ordinary chrome, record rows, and PDF paper stay opaque. The PDF focus controls
+may use a translucent surface with blur; system or product reduced transparency
+selects a solid surface. One 200ms capsule reveal communicates entering focus;
+system and product reduced motion remove it.
 
 ## Shapes
 
@@ -134,7 +135,7 @@ depend on the focus accent. The tag filter uses the same 36px/8px field rules.
 
 ### Navigation
 
-Segmented controls use a filled pill with a raised selected segment. The PDF
+Segmented controls use a compact filled track with a raised selected segment. The PDF
 header is one compact row for document identity and essential actions.
 
 ### Cards / Containers
