@@ -1,6 +1,6 @@
 import type { Settings } from "../core/model";
 import { CONTENT_THEME_CSS } from "../core/theme";
-const TOAST_CSS = `.toast{ display:none; position:fixed; bottom:28px; left:50%; transform:translateX(-50%); width:max-content; max-width:min(560px,calc(100vw - 24px)); padding:8px 10px; border:1px solid var(--ink-separator); border-radius:var(--ink-radius); background:var(--ink-surface); color:var(--ink-text); box-shadow:var(--ink-shadow); backdrop-filter:blur(18px); pointer-events:auto; animation:toast-enter var(--ink-motion-fast) ease-out; }
+const TOAST_CSS = `.toast{ display:none; position:fixed; bottom:28px; left:50%; transform:translateX(-50%); width:max-content; max-width:min(560px,calc(100vw - 24px)); padding:8px 10px; border:1px solid var(--ink-separator); border-radius:var(--ink-radius); background:var(--ink-surface-solid); color:var(--ink-text); box-shadow:var(--ink-elevation-float); pointer-events:auto; animation:toast-enter var(--ink-motion-fast) ease-out; }
 .toast-content{ display:grid; grid-template-columns:18px minmax(0,1fr) 36px; align-items:center; column-gap:9px; row-gap:7px; min-height:36px; }
 .toast-content:has(.toast-actions){ grid-template-columns:18px minmax(0,1fr) auto 36px; }
 .toast-icon{ grid-column:1; grid-row:1; width:18px; height:18px; align-self:start; margin-top:3px; color:var(--ink-secondary); }
@@ -35,7 +35,7 @@ button, input{ font:inherit; }
 button{ cursor:pointer; }
 button:focus-visible, input:focus-visible{ outline:2px solid var(--ink-accent); outline-offset:2px; }
 .bar{ position:fixed; display:flex; align-items:center; gap:4px; padding:6px; border-radius:var(--ink-radius); background:
-  var(--ink-surface); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-shadow); backdrop-filter:blur(18px) saturate(1.6); pointer-events:auto; }
+  var(--ink-surface-solid); box-shadow:0 0 0 1px var(--ink-separator), var(--ink-elevation-float); pointer-events:auto; }
 .selection{ display:none; }
 .drawing{ top:14px; left:50%; transform:translateX(-50%); display:none; flex-wrap:wrap; max-width:calc(100vw - 24px); }
 button{ display:inline-flex; align-items:center; justify-content:center; gap:6px; min-height:var(--ink-control-min-height); padding:4px 8px; border:0; border-radius:var(--ink-radius-control); color:
@@ -80,7 +80,7 @@ export function createView() {
   });
   const root = host.attachShadow({ mode: "open" });
   const style = document.createElement("style");
-  style.textContent = `${CONTENT_THEME_CSS}${BAR_CSS}${TOAST_CSS}svg.layer{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none}:host([data-web-ink-reduce-transparency=true]) .bar,:host([data-web-ink-reduce-transparency=true]) .toast{background:var(--ink-surface-solid);backdrop-filter:none}@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}:host([data-web-ink-reduce-motion=true]) *{transition:none!important;animation:none!important}`;
+  style.textContent = `${CONTENT_THEME_CSS}${BAR_CSS}${TOAST_CSS}svg.layer{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none}@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}:host([data-web-ink-reduce-motion=true]) *{transition:none!important;animation:none!important}`;
   const svg = svgElement("svg", { class: "layer", "aria-hidden": "true" });
   const selection = document.createElement("div");
   selection.className = "bar selection";

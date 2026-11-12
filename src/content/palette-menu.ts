@@ -31,12 +31,13 @@ export function createPaletteMenu(
   const style = document.createElement('style');
   style.textContent = `
     .web-ink-palette-menu[hidden] { display:none!important; }
-    .web-ink-palette-menu { position:fixed; box-sizing:border-box; width:240px; padding:6px; border-radius:12px; background:var(--ink-surface-solid); color:var(--ink-text); font:400 var(--ink-size-body)/20px var(--ink-font); box-shadow:0 0 0 1px var(--ink-separator),0 4px 16px color-mix(in srgb,var(--ink-text) 10%,transparent); pointer-events:auto; overflow:auto; }
+    .web-ink-palette-menu { position:fixed; box-sizing:border-box; width:240px; padding:6px; border-radius:var(--ink-radius); background:var(--ink-surface-solid); color:var(--ink-text); font:400 var(--ink-size-body)/20px var(--ink-font); box-shadow:0 0 0 1px var(--ink-separator),var(--ink-elevation-float); pointer-events:auto; overflow:auto; }
     .web-ink-palette-menu button { display:flex; align-items:center; justify-content:flex-start; gap:8px; width:100%; min-height:38px; padding:
       9px 10px; border:0; border-radius:8px; text-align:left; background:transparent; color:var(--ink-text); font:inherit; overflow-wrap:anywhere; }
     .web-ink-palette-menu button span { min-width:0; }
     .web-ink-palette-menu button:hover { background:var(--ink-fill); }
-    .web-ink-palette-menu button[data-primary=true] { font-weight:600; }
+    .web-ink-palette-menu button[data-primary=true] { background:var(--ink-fill); font-weight:600; }
+    .web-ink-palette-menu button[data-primary=true]:hover { background:var(--ink-fill-hover); }
     .web-ink-palette-menu button:disabled { opacity:.5; cursor:default; }
     .web-ink-palette-menu button:focus-visible { outline:2px solid var(--ink-accent); outline-offset:-2px; }
     .web-ink-palette-menu svg { width:16px; height:16px; flex:none; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }

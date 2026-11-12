@@ -126,18 +126,18 @@ button:disabled {
   color: var(--ink-text);
   background: var(--ink-accent-fill);
 }
-/* Two views of one page share a pill; the current one is raised, not coloured. */
+/* Two views share a compact control; the current one is raised, not coloured. */
 .segmented-control {
   display: inline-flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: var(--ink-radius-control);
   background: var(--ink-fill);
 }
 .segmented {
   min-height: var(--ink-control-min-height);
   padding: 2px 12px;
-  border-radius: 999px;
+  border-radius: 6px;
   color: var(--ink-secondary);
   background: transparent;
 }
@@ -324,10 +324,10 @@ button:disabled {
 }
 .load-more { justify-self: center; }
 
-/* Annotation content: quotes in the serif, notes and tags beneath. */
+/* Annotation content: excerpts lead, with notes and source details beneath. */
 .detail-excerpt,
 .row-quote {
-  font-family: var(--ink-font-serif);
+  font-family: var(--ink-font);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -501,10 +501,14 @@ select {
   gap: 8px;
   min-width: 0;
 }
+.ink-app:not(.sidepanel) .app-title h1 {
+  font-size: var(--ink-size-display);
+  letter-spacing: -0.025em;
+}
 .app-title .count {
   color: var(--ink-tertiary);
-  font-size: var(--ink-size-display);
-  font-weight: 400;
+  font-size: var(--ink-size-body);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
 }
 .header-actions {
@@ -545,6 +549,8 @@ select {
   border-radius: var(--ink-radius-control);
   background: var(--ink-fill);
 }
+.search input:hover { background: var(--ink-fill-hover); }
+.search input:focus-visible { background: var(--ink-surface-solid); }
 .search input::placeholder { color: var(--ink-secondary); }
 .filter-count {
   display: grid;
@@ -595,6 +601,7 @@ select {
   grid-template-columns: minmax(280px, 0.8fr) minmax(360px, 1.2fr);
   align-items: stretch;
   min-width: 0;
+  min-height: min(440px, max(240px, calc(100vh - 170px)));
   border: 1px solid var(--ink-separator);
   border-radius: var(--ink-radius);
   overflow: hidden;
@@ -603,10 +610,10 @@ select {
 .library-shell .annotation-list {
   display: grid;
   align-content: start;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   max-height: calc(100vh - 170px);
-  padding: 6px;
+  padding: 8px;
   overflow: auto;
   border-right: 1px solid var(--ink-separator);
 }
@@ -619,7 +626,7 @@ select {
   gap: 2px;
   width: 100%;
   min-width: 0;
-  padding: 8px 12px 8px 22px;
+  padding: 10px 12px 10px 22px;
   border-radius: var(--ink-radius-control);
   color: var(--ink-text);
   background: transparent;
@@ -642,8 +649,8 @@ select {
 .detail-excerpt::before {
   content: "";
   position: absolute;
-  top: 11px;
-  bottom: 11px;
+  top: 12px;
+  bottom: 12px;
   left: 10px;
   width: 3px;
   border-radius: 999px;
@@ -660,8 +667,9 @@ select {
   -webkit-line-clamp: 2;
 }
 .library-shell .annotation-row .row-quote {
-  font-size: var(--ink-size-title);
-  line-height: 1.4;
+  font-size: var(--ink-size-body);
+  font-weight: 500;
+  line-height: 1.5;
 }
 .library-shell .row-note,
 .sibling .row-note {
@@ -688,6 +696,21 @@ select {
   max-height: calc(100vh - 170px);
   padding: 24px 28px 28px;
   overflow: auto;
+}
+.library-detail-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--ink-secondary);
+  text-align: center;
+}
+.library-detail-placeholder .icon {
+  width: 24px;
+  height: 24px;
+  color: var(--ink-tertiary);
 }
 .detail-heading {
   display: grid;
@@ -908,7 +931,8 @@ select {
   .topbar { align-items: flex-start; }
   .header-actions { gap: 4px; }
   .header-actions > button:not(.icon-button) { padding: 4px 8px; }
-  .library-shell .annotation-browser { grid-template-columns: 1fr; }
+  .library-shell .annotation-browser { grid-template-columns: 1fr; min-height: 0; }
+  .library-detail-placeholder { display: none; }
   .library-shell .annotation-list {
     border-right: 0;
     max-height: none;

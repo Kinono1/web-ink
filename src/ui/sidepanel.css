@@ -32,9 +32,9 @@
   gap: 6px;
 }
 .sidepanel .topbar h1 {
-  color: var(--ink-secondary);
+  color: var(--ink-text);
   font-size: var(--ink-size-body);
-  font-weight: 500;
+  font-weight: 600;
   letter-spacing: 0;
   line-height: 28px;
 }
@@ -48,8 +48,8 @@
 /* Page context */
 .sidepanel .page-header {
   display: grid;
-  gap: 2px;
-  padding: 2px 16px 10px;
+  gap: 4px;
+  padding: 4px 16px 12px;
   border-bottom: 1px solid var(--ink-separator);
 }
 .sidepanel .page-header strong {
@@ -87,8 +87,8 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 8px 8px 16px;
+  gap: 12px;
+  padding: 12px 8px 16px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -108,8 +108,9 @@
   display: grid;
   gap: 8px;
   padding: 10px 12px;
+  border: 1px solid var(--ink-separator);
   border-radius: var(--ink-radius);
-  background: var(--item-fill);
+  background: var(--ink-panel);
 }
 .sidepanel .web-selection-copy { min-width: 0; }
 .sidepanel .web-selection-copy strong {
@@ -186,7 +187,7 @@
 /* Annotations: a colour rule, the quote, the note, one quiet line of facts. */
 .sidepanel .annotation-list {
   display: grid;
-  gap: 2px;
+  gap: 4px;
 }
 .sidepanel .annotation-item { border-radius: var(--ink-radius); }
 .sidepanel .annotation-item.open { background: var(--item-fill); }
@@ -223,8 +224,9 @@
   overflow: hidden;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
-  font-size: var(--ink-size-title);
-  line-height: 1.45;
+  font-size: var(--ink-size-body);
+  font-weight: 500;
+  line-height: 1.5;
 }
 .sidepanel .annotation-row .note {
   display: -webkit-box;
