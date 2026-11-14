@@ -2,7 +2,7 @@ import type { PdfSearchMatch } from "../search";
 import {
   errorText, type PdfAnnotation, type SelectionPreview, type SelectionTarget,
 } from "../../core/pdf-types";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { PageLayoutIndex } from "../reading-position";
 import {
   PDF_MIN_ZOOM, PDF_MAX_ZOOM, capturePdfReadingPosition, restorePdfReadingPosition,
@@ -11,6 +11,8 @@ import {
 import {
   type PositionSession, type ReaderSnapshot, type ReaderActions, type ReaderActionsRef,
 } from "./contracts";
+
+const FALLBACK_SELECTION_STYLE: React.CSSProperties = {};
 
 export function useViewportState() {
   const nativeFocus = useRef<{ session: number; pageNumber: number; top: number; intent: number } | undefined>(undefined);
@@ -25,7 +27,7 @@ export function useViewportState() {
   const currentView = useRef({ zoom, rotation });
   const [selection, setSelection] = useState<SelectionPreview>();
   const selectionBar = useRef<HTMLDivElement>(null);
-  const [selectionStyle, setSelectionStyle] = useState<React.CSSProperties>({});
+  const [selectionStyle, setSelectionStyle] = useState(FALLBACK_SELECTION_STYLE);
   const [positionError, setPositionError] = useState("");
   const [positionEpoch, setPositionEpoch] = useState(0);
   const positionSession = useRef<PositionSession | undefined>(undefined);
@@ -57,7 +59,7 @@ type Inputs = Pick<ReaderSnapshot,
   "container" | "currentView" | "dimensions" | "documentSession" | "documentSessionRef" |
   "fitWidth" | "focusMode" | "intentEpoch" | "intrinsicDimensions" | "layoutEpoch" |
   "layoutGeneration" | "layoutIndex" | "measureFrame" | "nativeFocus" | "opened" |
-  "pageNumber" | "pendingMeasures" | "pendingScrollAdjustment" | "positionEpoch" |
+  "pageNumber" | "pageWindow" | "pendingMeasures" | "pendingScrollAdjustment" | "positionEpoch" |
   "positionSession" | "rotation" | "selection" | "selectionBar" | "setError" | "setFitWidth" |
   "setLayoutEpoch" | "setMeasurementGeneration" | "setPageNumber" | "setPageWindow" |
   "setPicked" | "setPositionEpoch" | "setPositionError" | "setRotation" | "setSelection" |
@@ -68,7 +70,7 @@ export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const {
     container, currentView, dimensions, documentSession, documentSessionRef, fitWidth,
     focusMode, intentEpoch, intrinsicDimensions, layoutEpoch, layoutGeneration, layoutIndex,
-    measureFrame, nativeFocus, opened, pageNumber, pendingMeasures, pendingScrollAdjustment,
+    measureFrame, nativeFocus, opened, pageNumber, pageWindow, pendingMeasures, pendingScrollAdjustment,
     positionEpoch, positionSession, rotation, selection, selectionBar, setError, setFitWidth,
     setLayoutEpoch, setMeasurementGeneration, setPageNumber, setPageWindow, setPicked,
     setPositionEpoch, setPositionError, setRotation, setSelection, setSelectionStyle, setZoom,
@@ -84,22 +86,25 @@ export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const userIntent = useCallback(() => {
     intentEpoch.current++;
     nativeFocus.current = undefined;
-    if (positionSession.current) positionSession.current.pending = undefined;
-    setPositionEpoch((epoch) => epoch + 1);
+    const position = positionSession.current;
+    if (position?.pending) {
+      position.pending = undefined;
+      setPositionEpoch((epoch) => epoch + 1);
+    }
   }, [intentEpoch, nativeFocus, positionSession, setPositionEpoch]);
   const pagesPadding = useCallback(() => {
     return container.current ? parseFloat(getComputedStyle(container.current).paddingTop) || 0 : 0;
   }, [container]);
-  function currentPosition() {
+  function currentPosition(top?: number) {
     const active = positionSession.current;
     const scroller = container.current;
     if (!active || !scroller || active.session !== documentSessionRef.current || !active.readReady || active.pending) return;
-    const top = Math.max(0, scroller.scrollTop - pagesPadding());
-    if (!dimensions.current.has(layoutIndex.current.pageAt(top))) return;
-    return capturePdfReadingPosition(layoutIndex.current, top, zoom, rotation);
+    const offset = top ?? Math.max(0, scroller.scrollTop - pagesPadding());
+    if (!dimensions.current.has(layoutIndex.current.pageAt(offset))) return;
+    return capturePdfReadingPosition(layoutIndex.current, offset, zoom, rotation);
   }
-  function savePosition() {
-    const snapshot = currentPosition();
+  function savePosition(top?: number) {
+    const snapshot = currentPosition(top);
     if (snapshot) positionSession.current?.writer.save(snapshot);
   }
   async function flushPosition() {
@@ -223,63 +228,62 @@ export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
     const above = anchor.top - bounds.height - 8;
     const below = anchor.bottom + 8;
     if (bounds.width > right - left || anchor.bottom < top || anchor.top > bottom || (above < top && below + bounds.height > bottom)) {
-      setSelectionStyle({});
+      setSelectionStyle(FALLBACK_SELECTION_STYLE);
       return;
     }
     setSelectionStyle({ left: Math.max(left, Math.min(right - bounds.width, (anchor.left + anchor.right - bounds.width) / 2)),
       top: above >= top ? above : below, bottom: "auto", transform: "none" });
   }, [selection, layoutEpoch, focusMode]);
-  useEffect(() => { savePosition(); }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
+  const updateVisiblePages = useEffectEvent((scroller: HTMLDivElement) => {
+    if (!opened || positionSession.current?.pending) return;
+    const layout = layoutIndex.current;
+    const top = Math.max(0, scroller.scrollTop - pagesPadding());
+    const bottom = top + scroller.clientHeight;
+    const first = layout.pageAt(top);
+    const last = layout.pageAt(bottom);
+    const start = Math.max(0, first - 2);
+    const end = Math.min(opened.document.numPages, last + 1);
+    if (pageWindow.start !== start || pageWindow.end !== end) setPageWindow({ start, end });
+
+    let chosen = first, largest = -1;
+    for (let page = first; page <= last; page++) {
+      const start = layout.offsetBefore(page);
+      const height = layout.pageHeight(page) ?? 0;
+      const visible = Math.max(0, Math.min(bottom, start + height) - Math.max(top, start));
+      const fraction = height > 0 ? visible / height : 0;
+      // Scroll clamping near the end can leave two pages equally visible.
+      if (fraction > largest + 0.0001 || (Math.abs(fraction - largest) < 0.0001 && page === pageNumber)) {
+        chosen = page;
+        largest = fraction;
+      }
+    }
+    if (chosen !== pageNumber) setPageNumber(chosen);
+    savePosition(top);
+  });
   useEffect(() => {
     const scroller = container.current;
     if (!opened || !scroller) return;
     let frame = 0;
-    const findPage = (position: number) => {
-      return layoutIndex.current.pageAt(position) - 1;
-    };
-    const update = () => {
-      frame = 0;
-      if (positionSession.current?.pending) return;
-      const position = Math.max(0, scroller.scrollTop - pagesPadding());
-      const first = findPage(position);
-      const last = findPage(position + scroller.clientHeight);
-      const start = Math.max(0, first - 1),
-        end = Math.min(opened.document.numPages, last + 2);
-      setPageWindow((old) =>
-        old.start === start && old.end === end ? old : { start, end },
-      );
-      setPageNumber((current) => {
-        let chosen = first + 1, largest = -1;
-        for (let page = first + 1; page <= Math.min(opened.document.numPages, last + 1); page++) {
-          const start = layoutIndex.current.offsetBefore(page);
-          const height = layoutIndex.current.pageHeight(page) ?? 0;
-          const visible = Math.max(0, Math.min(position + scroller.clientHeight, start + height) - Math.max(position, start));
-          const fraction = height > 0 ? visible / height : 0;
-          // A short final page cannot always align to the viewport top. Keep
-          // an equally visible requested page rather than selecting its gap.
-          if (fraction > largest + 0.0001 || (Math.abs(fraction - largest) < 0.0001 && page === current)) {
-            chosen = page;
-            largest = fraction;
-          }
-        }
-        return chosen;
+    const scheduleUpdate = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        if (selectionBar.current) setSelectionStyle(FALLBACK_SELECTION_STYLE);
+        updateVisiblePages(scroller);
       });
-      savePosition();
     };
-    const scroll = () => {
-      setSelectionStyle({});
-      if (!frame) frame = requestAnimationFrame(update);
-    };
-    const resize = new ResizeObserver(scroll);
-    scroller.addEventListener("scroll", scroll, { passive: true });
+    const resize = new ResizeObserver(scheduleUpdate);
+    scroller.addEventListener("scroll", scheduleUpdate, { passive: true });
     resize.observe(scroller);
-    update();
     return () => {
-      scroller.removeEventListener("scroll", scroll);
+      scroller.removeEventListener("scroll", scheduleUpdate);
       resize.disconnect();
       cancelAnimationFrame(frame);
     };
-  }, [opened?.hash, layoutEpoch, positionEpoch, zoom, rotation]);
+  }, [opened, container, selectionBar, setSelectionStyle]);
+  useEffect(() => {
+    if (container.current) updateVisiblePages(container.current);
+  }, [layoutEpoch, positionEpoch, documentSession, zoom, rotation]);
   const jump = useCallback((n: number) => {
     if (!opened || documentSession !== documentSessionRef.current) return;
     userIntent();
