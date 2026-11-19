@@ -83,6 +83,12 @@ describe('local storage usage reporting', () => {
     const existing = await db.annotations.get('compare-one');
     if (!existing) throw new Error('missing fixture');
     await handleDataRequest({ type: 'annotations.put', annotation: { ...existing, note: 'updated note', updatedAt: '2026-09-18T00:01:00.000Z' }, expectedRevision: existing.revision }, { trusted: true });
+    const backup = {
+      format: 'web-ink', schemaVersion: 2, exportedAt: '2026-09-18T00:02:00.000Z',
+      annotations: [{ ...existing, note: 'imported update' }, row('compare-two'), row('compare-three')],
+    };
+    expect(await handleDataRequest({ type: 'backup.import', backup, overwrite: true }, { trusted: true }))
+      .toMatchObject({ ok: true, data: { added: 2, conflicts: 1, total: 3 } });
     const incremental = await stats();
     const recalculated = await handleDataRequest({ type: 'storage.stats', recalculate: true }, { trusted: true });
     if (!recalculated.ok) throw new Error(recalculated.error);

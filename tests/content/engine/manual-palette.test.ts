@@ -133,14 +133,14 @@ it("blocks closing during a save and retains a failed draft for retry", async ()
   saveHandler = () => new Promise(resolve => { finish = resolve; });
   selectText();
   view.selection.querySelector<HTMLButtonElement>(".swatch")!.click();
-  expect(controller.save.pendingSave).toBe(true);
+  expect(controller.data.pendingSave).toBe(true);
   expect(controller.canStop()).toBe(false);
   finish({ ok: false, error: "write failed", code: "FAILED" });
-  await vi.waitFor(() => expect(controller.save.pendingSave).toBe(false));
-  const draft = controller.save.unsaved;
+  await vi.waitFor(() => expect(controller.data.pendingSave).toBe(false));
+  const draft = controller.data.unsaved;
   expect(draft?.kind).toBe("text");
   expect(controller.canStop()).toBe(false);
-  expect(controller.save.unsaved).toEqual(draft);
+  expect(controller.data.unsaved).toEqual(draft);
   saveHandler = async record => {
     saved.push(record);
     return { ok: true, data: { ...record, revision: 1 } };
@@ -148,7 +148,7 @@ it("blocks closing during a save and retains a failed draft for retry", async ()
   const retry = [...view.toast.querySelectorAll("button")].find(button => button.textContent === "重试保存");
   expect(retry).toBeDefined();
   retry!.click();
-  await vi.waitFor(() => expect(controller.save.unsaved).toBeUndefined());
+  await vi.waitFor(() => expect(controller.data.unsaved).toBeUndefined());
   expect(saved).toHaveLength(1);
   expect(saved[0]).toEqual(draft);
 });

@@ -1,9 +1,9 @@
 import { useCallback, type ComponentProps } from "react";
 import { PdfNote } from "../PdfNote";
 import type { PdfNoteDraft } from "../../core/sidebar";
-import { NativePdfNote, PdfAnnotationFilters } from "../../ui/PdfSidebar";
+import { NativePdfNote, PdfAnnotationFilters } from "./PdfAnnotationParts";
 import { errorText } from "../../core/pdf-types";
-import { Icon } from "../../ui/management/helpers";
+import { Icon } from "../../ui/shared/Icon";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
 import { usePdfUI } from "../contexts/PdfUIContext";
 

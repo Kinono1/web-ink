@@ -43,7 +43,6 @@ button{ display:inline-flex; align-items:center; justify-content:center; gap:6px
 button:hover{ background:var(--ink-fill); }
 .bar button svg{ display:block; width:18px; height:18px; }
 button.icon{ width:var(--ink-control-min-height); height:var(--ink-control-min-height); padding:0; }
-.drawing button[aria-pressed=true]{ color:var(--ink-accent); background:var(--ink-accent-fill); }
 button.danger{ color:var(--ink-danger); }
 button.danger:hover{ background:color-mix(in srgb, var(--ink-danger) 12%, transparent); }
 .swatch, .more{ width:var(--ink-control-min-height); height:var(--ink-control-min-height); min-height:var(--ink-control-min-height); padding:0; border-radius:50%; }
@@ -82,6 +81,7 @@ export function createView() {
   const style = document.createElement("style");
   style.textContent = `${CONTENT_THEME_CSS}${BAR_CSS}${TOAST_CSS}svg.layer{position:fixed;inset:0;width:100vw;height:100vh;overflow:hidden;pointer-events:none}@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}:host([data-web-ink-reduce-motion=true]) *{transition:none!important;animation:none!important}`;
   const svg = svgElement("svg", { class: "layer", "aria-hidden": "true" });
+  svg.style.pointerEvents = "none";
   const selection = document.createElement("div");
   selection.className = "bar selection";
   const drawing = document.createElement("div");

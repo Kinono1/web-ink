@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PdfAnnotation } from "../../core/pdf-types";
-import { useAnnotationQuery } from "../../ui/management/useAnnotationQuery";
+import { useAnnotationQuery } from "../../ui/shared/useAnnotationQuery";
 import { isPdf, type ReaderActions } from "../hooks/contracts";
 import { usePdfUI } from "../contexts/PdfUIContext";
 

@@ -4,7 +4,7 @@ import type { Annotation, Language } from "../../core/model";
 import { COPY } from "../management/copy";
 import { tagText, parseTags, matchesQuery } from "../management/helpers";
 import type { Draft, FilterKind, Mode, NoticeMessage } from "../management/types";
-import { useAnnotationQuery } from "../management/useAnnotationQuery";
+import { useAnnotationQuery } from "../shared/useAnnotationQuery";
 
 export function useAnnotationSync({ mode, pageUrl, language, setError, setNotice }: {
   mode: Mode;

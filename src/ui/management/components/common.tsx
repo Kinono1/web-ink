@@ -1,6 +1,6 @@
 import { useId, type ReactNode } from "react";
 import type { Language } from "../../../core/model";
-import { Icon } from "../helpers";
+import { Icon } from "../../shared/Icon";
 import { COPY } from "../copy";
 import type { IconName } from "../../../core/icons";
 

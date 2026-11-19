@@ -50,6 +50,18 @@ function installStorage(
   });
 }
 
+function holdTwoWrites() {
+  vi.useFakeTimers();
+  const first = deferred<void>();
+  const second = deferred<void>();
+  const writes: Record<string, unknown>[] = [];
+  installStorage({}, entries => {
+    writes.push(entries);
+    return [first, second][writes.length - 1]!.promise;
+  });
+  return { first, second, writes, writer: createPdfReadingPositionWriter(HASH_A) };
+}
+
 afterEach(() => {
   vi.useRealTimers();
   Reflect.deleteProperty(globalThis, "chrome");
@@ -198,15 +210,7 @@ describe("PDF reading positions", () => {
   });
 
   it("waits 500ms after a newer save when the in-flight write fails", async () => {
-    vi.useFakeTimers();
-    const first = deferred<void>();
-    const second = deferred<void>();
-    const writes: Record<string, unknown>[] = [];
-    installStorage({}, (entries) => {
-      writes.push(entries);
-      return [first, second][writes.length - 1]!.promise;
-    });
-    const writer = createPdfReadingPositionWriter(HASH_A);
+    const { first, second, writes, writer } = holdTwoWrites();
 
     writer.save(position(1));
     await vi.advanceTimersByTimeAsync(500);
@@ -232,15 +236,7 @@ describe("PDF reading positions", () => {
   });
 
   it("flushes the current pending record immediately after an in-flight write", async () => {
-    vi.useFakeTimers();
-    const first = deferred<void>();
-    const second = deferred<void>();
-    const writes: Record<string, unknown>[] = [];
-    installStorage({}, (entries) => {
-      writes.push(entries);
-      return [first, second][writes.length - 1]!.promise;
-    });
-    const writer = createPdfReadingPositionWriter(HASH_A);
+    const { first, second, writes, writer } = holdTwoWrites();
 
     writer.save(position(1));
     await vi.advanceTimersByTimeAsync(500);
@@ -258,15 +254,7 @@ describe("PDF reading positions", () => {
   });
 
   it("applies normal idle time to a save that arrives after flush", async () => {
-    vi.useFakeTimers();
-    const first = deferred<void>();
-    const second = deferred<void>();
-    const writes: Record<string, unknown>[] = [];
-    installStorage({}, (entries) => {
-      writes.push(entries);
-      return [first, second][writes.length - 1]!.promise;
-    });
-    const writer = createPdfReadingPositionWriter(HASH_A);
+    const { first, second, writes, writer } = holdTwoWrites();
 
     writer.save(position(1));
     await vi.advanceTimersByTimeAsync(500);

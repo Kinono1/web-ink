@@ -1,4 +1,4 @@
-import { Icon } from "../../ui/management/helpers";
+import { Icon } from "../../ui/shared/Icon";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
 import { usePdfDocument } from "../contexts/PdfDocumentContext";
 import { usePdfUI } from "../contexts/PdfUIContext";

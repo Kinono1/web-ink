@@ -44,6 +44,10 @@ The repository includes the source for an optional read-only annotation skill. W
 
 Webpage annotations do not cover iframes, page-owned Shadow DOM, canvas, or browser-internal pages. PDFs are limited to 50 MiB; there is no OCR or PDF write-back. Ordinary online PDFs require an authorized direct public HTTPS URL. IEEE has a separate, explicit same-origin sign-in flow; other authenticated sites, cross-origin redirects, and password-encrypted PDFs are unsupported. See [detailed usage](docs/USAGE.en.md).
 
+From the repository root, use Node.js 24.15.0 or a compatible version listed in `package.json`. Run `npm ci`, then use `npm run dev` to start WXT development mode. For a manual check, run `npm run build` and load `.build-output/chrome-mv3` in a test Chrome profile.
+
+See the [module boundaries and internal API](docs/ARCHITECTURE.md) and the [code audit](docs/CODE-AUDIT.md).
+
 ```sh
 npm ci
 npm run check

@@ -19,10 +19,10 @@ export function startEngine(view: ReturnType<typeof createView>): ContentEngine 
     dispatch: engine.dispatch,
     snapshot: () => ({
       pageUrl: engine.currentUrl,
-      states: engine.store.states,
+      states: engine.data.states,
       enabled: engine.enabled(),
     }),
     canStop: engine.canStop,
-    annotateSelection: engine.save.annotateSelection,
+    annotateSelection: engine.data.annotateSelection,
   };
 }

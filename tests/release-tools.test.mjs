@@ -216,6 +216,15 @@ test('ZIP verifier checks complete filenames, contents, and corrupted payloads',
   assert.throws(() => verifyArchive(damaged, files));
 });
 
+test('ZIP verifier keeps every distinct name and rejects nonportable paths', async () => {
+  const files = { ['__proto__']: Buffer.from('ordinary file contents') };
+  const unpacked = unpackFiles(await packFiles(files));
+  assert.deepEqual(Object.keys(unpacked), ['__proto__']);
+  assert.deepEqual(unpacked['__proto__'], files['__proto__']);
+  const nonportable = await packFiles({ 'chunks/runtime.js:stream': Buffer.from('fixture') });
+  assert.throws(() => unpackFiles(nonportable), /Unsafe ZIP path/);
+});
+
 test('sharing ZIP extracts into a stable web-ink folder with the complete tested runtime', async t => {
   const repo = await fixture(t);
   await writeFile(path.join(repo, 'package.json'), JSON.stringify({ version: '0.3.1' }));

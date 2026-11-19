@@ -1,5 +1,5 @@
 import type { Language } from "../core/model";
-import { Icon } from "../ui/management/helpers";
+import { Icon } from "../ui/shared/Icon";
 import { textFor } from "./components/labels";
 
 export function FocusControls({

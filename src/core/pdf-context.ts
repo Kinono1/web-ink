@@ -217,46 +217,17 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
   const ieeeDocument = ieeePage && isIeeeDocumentPath(page.pathname);
   if (ieeePage && !ieeeDocument) base.publisher = "ieee";
   const direct = getPdfContext(raw);
-  const wrapper = isKnownPdfViewer(raw) || isIeeePdfWrapper(raw);
+  const knownViewer = isKnownPdfViewer(raw);
+  const ieeeWrapper = isIeeePdfWrapper(raw);
+  const wrapper = knownViewer || ieeeWrapper;
   if (direct?.kind === "remote") return {
     ...base, kind: wrapper ? "wrapper" : "direct",
     candidates: [{ url: direct.sourceUrl, via: wrapper ? "viewer" : "url" }],
   };
   if (direct?.kind === "local") return { ...base, kind: "local", reason: "local-source" };
-  if (isKnownPdfViewer(raw)) {
-    const source = viewerSourceParameter(page)?.source;
-    let reason: PdfContextReason = source ? "unsafe-source" : "protected-viewer";
-    if (source) {
-      try {
-        const url = new URL(source);
-        if (["http:", "file:"].includes(url.protocol) && !url.username && !url.password) reason = "local-source";
-      } catch { /* A malformed nested source remains an unsafe manual fallback. */ }
-    }
-    return { ...base, kind: "wrapper", reason };
-  }
-  const candidates = new Map<string, PdfSourceCandidate>();
-  let local = false;
-  let unsafe = false;
-  let embedded = false;
-  for (const item of observed) {
-    if (!item || typeof item.url !== "string" || !["iframe", "embed", "object"].includes(item.via)) continue;
-    const mime = typeof item.mimeType === "string" ? item.mimeType.split(";")[0]!.trim().toLowerCase() : "";
-    if (mime && mime !== "application/pdf") continue;
-    let url: URL;
-    try { url = new URL(item.url, raw); } catch { continue; }
-    const known = getPdfContext(url.href);
-    // IEEE's recognized stamp wrapper can expose a same-origin download in a
-    // visible iframe without a PDF path or MIME hint. Its bytes are verified
-    // later; arbitrary HTML pages and other embedded element types stay out.
-    const ieeeIframeEndpoint = isIeeePdfWrapper(raw) && item.via === "iframe" && url.origin === page.origin;
-    if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf" && !ieeeIframeEndpoint) continue;
-    embedded = true;
-    const source = known?.kind === "remote" ? known.sourceUrl : publicPdfSource(url.href);
-    if (source) {
-      if (!candidates.has(source)) candidates.set(source, { url: source, via: item.via });
-    } else if ((url.protocol === "http:" || url.protocol === "file:") && !url.username && !url.password) local = true;
-    else unsafe = true;
-  }
+  if (knownViewer) return { ...base, kind: "wrapper", reason: protectedViewerReason(page) };
+
+  const { candidates, local, unsafe, embedded } = collectObservedSources(raw, observed, ieeeWrapper ? page.origin : undefined);
   if (candidates.size) {
     // Article routes become PDF contexts only from observed usable sources.
     if (ieeeDocument && [...candidates.keys()].some((source) => new URL(source).origin === page.origin))
@@ -271,4 +242,48 @@ export function classifyPdfTab(tabId: number, raw?: string, observed: ObservedPd
   else if (local) kind = "local";
   else if (embedded) kind = "embedded";
   return { ...base, kind, reason };
+}
+
+function protectedViewerReason(page: URL): PdfContextReason {
+  const source = viewerSourceParameter(page)?.source;
+  if (!source) return "protected-viewer";
+  try {
+    const url = new URL(source);
+    if (["http:", "file:"].includes(url.protocol) && !url.username && !url.password) return "local-source";
+  } catch { /* Malformed nested URLs fall back to manual opening. */ }
+  return "unsafe-source";
+}
+
+function collectObservedSources(raw: string, observed: ObservedPdfCandidate[], ieeeOrigin?: string) {
+  const candidates = new Map<string, PdfSourceCandidate>();
+  let local = false;
+  let unsafe = false;
+  let embedded = false;
+  for (const item of observed) {
+    const candidate = observedSource(item, raw, ieeeOrigin);
+    if (!candidate) continue;
+    const { url, source } = candidate;
+    embedded = true;
+    if (source) {
+      if (!candidates.has(source)) candidates.set(source, { url: source, via: item.via });
+    } else if ((url.protocol === "http:" || url.protocol === "file:") && !url.username && !url.password) {
+      local = true;
+    } else {
+      unsafe = true;
+    }
+  }
+  return { candidates, local, unsafe, embedded };
+}
+
+function observedSource(item: ObservedPdfCandidate, raw: string, ieeeOrigin?: string) {
+  if (!item || typeof item.url !== "string" || !["iframe", "embed", "object"].includes(item.via)) return;
+  const mime = typeof item.mimeType === "string" ? item.mimeType.split(";")[0]!.trim().toLowerCase() : "";
+  if (mime && mime !== "application/pdf") return;
+  let url: URL;
+  try { url = new URL(item.url, raw); } catch { return; }
+  const known = getPdfContext(url.href);
+  // The recognized IEEE stamp route can embed a same-origin endpoint without a PDF path or MIME hint.
+  const ieeeIframeEndpoint = item.via === "iframe" && url.origin === ieeeOrigin;
+  if (!known && !isPdfPath(url) && !isArxivPdfPath(url) && mime !== "application/pdf" && !ieeeIframeEndpoint) return;
+  return { url, source: known?.kind === "remote" ? known.sourceUrl : publicPdfSource(url.href) };
 }

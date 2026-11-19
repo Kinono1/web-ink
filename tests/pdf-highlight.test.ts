@@ -1,29 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { fromPdfRect, mergePdfTextRects, toPdfRect, type PdfViewport } from "../src/pdf/geometry";
 import type { PdfRect } from "../src/core/model";
+import { pdfViewport } from "./helpers/pdf-viewport";
 
 const box = [0, 0, 600, 800];
 const rect = (x: number, y: number, width: number, height = 12): PdfRect =>
   ({ x: x / 600, y: y / 800, width: width / 600, height: height / 800 });
-
-function viewport(rotation: number, scale = 1): PdfViewport {
-  const transform = (x: number, y: number) =>
-    rotation === 0 ? [x * scale, (800 - y) * scale]
-      : rotation === 90 ? [y * scale, x * scale]
-        : rotation === 180 ? [(600 - x) * scale, y * scale]
-          : [(800 - y) * scale, (600 - x) * scale];
-  const inverse = (x: number, y: number) =>
-    rotation === 0 ? [x / scale, 800 - y / scale]
-      : rotation === 90 ? [y / scale, x / scale]
-        : rotation === 180 ? [600 - x / scale, y / scale]
-          : [600 - y / scale, 800 - x / scale];
-  return {
-    width: (rotation % 180 ? 800 : 600) * scale,
-    height: (rotation % 180 ? 600 : 800) * scale,
-    convertToViewportPoint: transform,
-    convertToPdfPoint: inverse,
-  };
-}
 
 function capturedRect(x: number, y: number, width: number, height: number, view: PdfViewport): PdfRect {
   return toPdfRect({ left: x, top: y, right: x + width, bottom: y + height }, view, box)!;
@@ -88,14 +70,14 @@ describe("PDF text highlight geometry", () => {
       const fragments = [rect(20, 100, 20), rect(41, 100, 20), rect(200, 100, 20)];
       const merged = mergePdfTextRects(fragments, box, rotation);
       expect(merged).toHaveLength(2);
-      expectBounds(merged[0]!, viewport(0), [20, 688, 41, 12]);
-      expectBounds(merged[1]!, viewport(0), [200, 688, 20, 12]);
+      expectBounds(merged[0]!, pdfViewport(0), [20, 688, 41, 12]);
+      expectBounds(merged[1]!, pdfViewport(0), [200, 688, 20, 12]);
     });
   }
 
   for (const intrinsicRotation of [90, 270]) {
     describe(`native ${intrinsicRotation}-degree upright text`, () => {
-      const view = viewport(intrinsicRotation);
+      const view = pdfViewport(intrinsicRotation);
       const capture = (x: number, y: number, width: number, height = 12) => capturedRect(x, y, width, height, view);
 
       it("merges duplicates, overlaps and adjacency in stored PDF coordinates without mutating inputs", () => {
@@ -146,7 +128,7 @@ describe("PDF text highlight geometry", () => {
   for (const rotation of [0, 90, 180, 270]) {
     for (const scale of [0.5, 1, 2.5]) {
       it(`keeps normal stored-horizontal text merged after UI ${rotation} degrees at ${scale} zoom`, () => {
-        const view = viewport(rotation, scale);
+        const view = pdfViewport(rotation, scale);
         const fragments = [rect(20, 100, 30), rect(48, 100.5, 25), rect(74, 100, 20)].map(r => {
           const b = fromPdfRect(r, view, box);
           return capturedRect(b.x, b.y, b.width, b.height, view);
@@ -154,7 +136,7 @@ describe("PDF text highlight geometry", () => {
         // Only native page rotation belongs in this argument, even after UI rotation.
         const merged = mergePdfTextRects(fragments, box, 0);
         expect(merged).toHaveLength(1);
-        expectBounds(merged[0]!, viewport(0), [20, 687.5, 74, 12.5]);
+        expectBounds(merged[0]!, pdfViewport(0), [20, 687.5, 74, 12.5]);
       });
     }
   }

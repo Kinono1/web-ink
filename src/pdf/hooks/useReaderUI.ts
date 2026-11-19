@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { request, releaseChromeListener } from "../../core/client";
 import { COLORS, DEFAULT_SETTINGS, type Settings } from "../../core/model";
 import { THEME_TOKENS } from "../../core/theme";
-import type { PdfAnnotation, NativePdfAnnotation } from "../../core/pdf-types";
+import type { PdfAnnotation } from "../../core/pdf-types";
 import { ieeePaperUrl } from "../../core/pdf-context";
 import { doiUrl } from "../paper-identity";
 import { dirtyDraft, type LeaveAction, safeSource, type ReaderState, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";

@@ -1,18 +1,25 @@
 import type { Result } from "../../core/model";
 import { parseBackup } from "../../core/backup";
-import { validateAnnotation, validateSettings, ValidationError } from "../../core/validation";
-import { executeAnnotationQuery, QueryTaskRegistry, validateAnnotationQuery, validQueryId } from "../query";
+import { validateSettings } from "../../core/validation";
 import { getStorageStats } from "../storage-stats";
-import { deleteAnnotation, getAnnotation, listAnnotations, putAnnotation, restoreAnnotation } from "./annotations";
+import { fail, invalid, ok, requestFailure } from "../request-result";
+import { handleAnnotationRequest, isAnnotationRequest } from "./annotation-requests";
 import { exportBackup, importBackup, previewBackup } from "./backup";
 import { getPageMode, putPageMode } from "./pages";
 import { readSettings, writeSettings } from "./settings";
 import {
-  canonicalContextPage, fail, invalid, isPdfAnnotation, ok, pageKeyForMode, parseMessage,
-  queryOwner, requireTrusted, validExpectedRevision, validId, type DataRequestContext,
+  canonicalContextPage, pageKeyForMode, parseMessage, requireTrusted,
+  type DataRequestContext, type KnownMessage,
 } from "./validation";
 
-const queryTasks = new QueryTaskRegistry();
+type PageModeRequest = Extract<KnownMessage, { type: "page.mode.get" | "page.mode.put" }>;
+type BackupRequest = Extract<KnownMessage, { type: `backup.${string}` }>;
+
+const backupActions = {
+  "backup.export": "export backups",
+  "backup.preview": "preview backups",
+  "backup.import": "import backups",
+} satisfies Record<BackupRequest["type"], string>;
 
 /**
  * Single storage authority for the extension service worker. `trusted` identifies the
@@ -23,63 +30,11 @@ export async function handleDataRequest(message: unknown, context: DataRequestCo
     const request = parseMessage(message);
     if (!request) return invalid("Unsupported or malformed data request.");
     const ownPage = canonicalContextPage(context);
+    if (isAnnotationRequest(request)) return await handleAnnotationRequest(request, context, ownPage);
     switch (request.type) {
-      case "annotations.get": {
-        const forbidden = requireTrusted(context, "read annotations by ID");
-        if (forbidden) return forbidden;
-        return ok(await getAnnotation(validId(request.id)));
-      }
-      case "annotations.list": {
-        const requested = request.pageUrl === undefined ? ownPage : pageKeyForMode(request.pageUrl, "pageUrl", context.trusted);
-        if (!context.trusted && requested !== ownPage)
-          return fail("Content scripts may only list their own page.", "FORBIDDEN");
-        return ok(await listAnnotations(requested));
-      }
-      case "annotations.put": {
-        const annotation = validateAnnotation(request.annotation);
-        if (isPdfAnnotation(annotation) && !context.trusted)
-          return fail("Content scripts cannot write PDF annotations.", "FORBIDDEN");
-        if (!context.trusted && annotation.pageUrl !== ownPage)
-          return fail("Content scripts may only write their own page.", "FORBIDDEN");
-        return putAnnotation(annotation, validExpectedRevision(request.expectedRevision), ownPage);
-      }
-      case "annotations.restore": {
-        const annotation = validateAnnotation(request.annotation);
-        if (isPdfAnnotation(annotation) && !context.trusted)
-          return fail("Content scripts cannot restore PDF annotations.", "FORBIDDEN");
-        if (!context.trusted && annotation.pageUrl !== ownPage)
-          return fail("Content scripts may only restore their own page.", "FORBIDDEN");
-        return restoreAnnotation(annotation, ownPage);
-      }
-      case "annotations.delete":
-        return deleteAnnotation(validId(request.id), validExpectedRevision(request.expectedRevision), ownPage);
-      case "annotations.query": {
-        const query = validateAnnotationQuery(request.query, context.trusted, pageKeyForMode);
-        if (!context.trusted && (!query.pageUrl || query.pageUrl !== ownPage ||
-          query.kind === "pdf-text" || query.kind === "pdf-area"))
-          return fail("Content scripts may only query their own web page.", "FORBIDDEN");
-        return ok(await executeAnnotationQuery(query, queryOwner(context), queryTasks));
-      }
-      case "annotations.query.cancel": {
-        const requestId = validQueryId(request.requestId, "requestId");
-        queryTasks.cancel(queryOwner(context), requestId);
-        return ok(true);
-      }
-      case "page.mode.get": {
-        const requested = pageKeyForMode(request.pageUrl, "pageUrl", context.trusted);
-        if (!context.trusted && requested !== ownPage)
-          return fail("Content scripts may only read their own page mode.", "FORBIDDEN");
-        return ok(await getPageMode(requested));
-      }
-      case "page.mode.put": {
-        const requested = pageKeyForMode(request.pageUrl, "pageUrl", context.trusted);
-        if (typeof request.enabled !== "boolean") return invalid("enabled must be a boolean");
-        if (request.selectionTools !== undefined && typeof request.selectionTools !== "boolean")
-          return invalid("selectionTools must be a boolean");
-        if (!context.trusted && requested !== ownPage)
-          return fail("Content scripts may only change their own page mode.", "FORBIDDEN");
-        return putPageMode(requested, request.enabled, request.selectionTools ?? true);
-      }
+      case "page.mode.get":
+      case "page.mode.put":
+        return await handlePageModeRequest(request, context, ownPage);
       case "settings.get":
         return ok(await readSettings());
       case "storage.stats": {
@@ -96,28 +51,38 @@ export async function handleDataRequest(message: unknown, context: DataRequestCo
         await writeSettings(settings);
         return ok(settings);
       }
-      case "backup.export": {
-        const forbidden = requireTrusted(context, "export backups");
-        if (forbidden) return forbidden;
-        return ok(await exportBackup());
-      }
-      case "backup.preview": {
-        const forbidden = requireTrusted(context, "preview backups");
-        if (forbidden) return forbidden;
-        return ok(await previewBackup(parseBackup(request.backup).annotations));
-      }
-      case "backup.import": {
-        const forbidden = requireTrusted(context, "import backups");
-        if (forbidden) return forbidden;
-        if (typeof request.overwrite !== "boolean") return invalid("overwrite must be a boolean");
-        // parseBackup validates the entire input before any write; imported settings
-        // are intentionally ignored so the local disabled-origin policy stays local.
-        const backup = parseBackup(request.backup);
-        return ok(await importBackup(backup.annotations, request.overwrite));
-      }
+      case "backup.export":
+      case "backup.preview":
+      case "backup.import":
+        return await handleBackupRequest(request, context);
     }
   } catch (error) {
-    if (error instanceof ValidationError) return invalid(error.message);
-    return fail(error instanceof Error ? error.message : "Storage request failed.", "INTERNAL");
+    return requestFailure(error, "storage request", "Storage request failed.");
   }
+}
+
+async function handlePageModeRequest(request: PageModeRequest, context: DataRequestContext, ownPage: string | undefined) {
+  const requested = pageKeyForMode(request.pageUrl, "pageUrl", context.trusted);
+  if (request.type === "page.mode.get") {
+    if (!context.trusted && requested !== ownPage)
+      return fail("Content scripts may only read their own page mode.", "FORBIDDEN");
+    return ok(await getPageMode(requested));
+  }
+  if (typeof request.enabled !== "boolean") return invalid("enabled must be a boolean");
+  if (request.selectionTools !== undefined && typeof request.selectionTools !== "boolean")
+    return invalid("selectionTools must be a boolean");
+  if (!context.trusted && requested !== ownPage)
+    return fail("Content scripts may only change their own page mode.", "FORBIDDEN");
+  return putPageMode(requested, request.enabled, request.selectionTools ?? true);
+}
+
+async function handleBackupRequest(request: BackupRequest, context: DataRequestContext) {
+  const forbidden = requireTrusted(context, backupActions[request.type]);
+  if (forbidden) return forbidden;
+  if (request.type === "backup.export") return ok(await exportBackup());
+  if (request.type === "backup.preview") return ok(await previewBackup(parseBackup(request.backup).annotations));
+  if (typeof request.overwrite !== "boolean") return invalid("overwrite must be a boolean");
+  // Validate the whole backup first. Local settings remain the source of disabled-origin policy.
+  const backup = parseBackup(request.backup);
+  return ok(await importBackup(backup.annotations, request.overwrite));
 }

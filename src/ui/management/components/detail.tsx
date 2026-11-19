@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { COLORS, type Annotation } from "../../../core/model";
 import { textLinkUrl } from "../../../core/text-link";
-import { isPdf, kindFamily, localDate, excerptText, sourceName, Icon } from "../helpers";
+import { isPdf, kindFamily, localDate, excerptText, sourceName } from "../helpers";
+import { Icon } from "../../shared/Icon";
 import type { Draft } from "../types";
 import { StatusLabel, problemOf } from "./meta";
 import type { DetailProps } from "./types";

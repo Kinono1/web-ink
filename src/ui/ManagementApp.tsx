@@ -12,7 +12,7 @@ import { LibraryScreen } from "./screens/LibraryScreen";
 import { PageScreen } from "./screens/PageScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { Alert, Empty } from "./management/components";
-import { Icon } from "./management/helpers";
+import { Icon } from "./shared/Icon";
 import type { Mode, Screen } from "./management/types";
 import "./management.css";
 import "./sidepanel.css";

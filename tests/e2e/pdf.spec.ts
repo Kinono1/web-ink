@@ -92,6 +92,17 @@ async function open(buffer = fixturePdf(), name = "reading.pdf") {
   // tab active so ManagementApp observes the correct PDF context.
   await activeTab(page);
 }
+async function selectFirstPdfText() {
+  await page.locator(".textLayer span").first().evaluate(element => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+  });
+}
+
 async function openPdfSidebar(reader = page) {
   await activeTab(reader);
   await expect(reader.locator(".pdf-toolbar").getByRole("button", { name: "笔记", exact: true })).toHaveCount(0);
@@ -285,14 +296,7 @@ test("original PDF notes stay read-only and new notes travel in one exported PDF
   await expect(nativeCards.getByRole("button", { name: /^(编辑|取消标注)$/ })).toHaveCount(0);
   expect(await rpc({ type: "annotations.list" })).toEqual([]);
   await control.getByRole("button", { name: "Web Ink", exact: true }).click();
-  await page.locator(".textLayer span").first().evaluate((element) => {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const selection = getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect.poll(async () => (await rpc({ type: "annotations.list" })).length).toBe(1);
   await control.locator(".pdf-note").getByRole("button", { name: "编辑", exact: true }).click();
@@ -494,32 +498,12 @@ test("PDF text and area annotations survive reselect, zoom and rotation without 
 });
 test("PDF mark removal is explicit and does not return after reselecting the same file", async () => {
   await open();
-  await page
-    .locator(".textLayer span")
-    .first()
-    .evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const selection = getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(async () => (await rpc({ type: "annotations.list" })).length)
     .toBe(1);
-  await page
-    .locator(".textLayer span")
-    .first()
-    .evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const selection = getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+  await selectFirstPdfText();
   await expect(page.locator(".pdf-selection")).toBeVisible();
   await page
     .locator(".pdf-selection")
@@ -547,17 +531,7 @@ test("PDF mark removal is explicit and does not return after reselecting the sam
 
 test("PDF undo restore keeps the deleted annotation fields and revision-safe identity", async () => {
   await open();
-  await page
-    .locator(".textLayer span")
-    .first()
-    .evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const selection = getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   await expect
     .poll(
@@ -678,17 +652,7 @@ test("500 and 1000 page mixed-size PDFs jump, zoom, and rotate within the virtua
 });
 test("PDF notes load beyond 50 and keep an edited draft when the list reorders", async () => {
   await open();
-  await page
-    .locator(".textLayer span")
-    .first()
-    .evaluate((element) => {
-      const range = document.createRange();
-      range.selectNodeContents(element);
-      const selection = getSelection()!;
-      selection.removeAllRanges();
-      selection.addRange(range);
-      element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const [base] = (await rpc({ type: "annotations.list" })) as any[];
   const annotations = Array.from({ length: 55 }, (_, index) => ({
@@ -992,14 +956,7 @@ test("fit width uses the PDF viewport and rotating preserves annotation coordina
     return Math.abs(canvas.getBoundingClientRect().width - scroller.clientWidth + parseFloat(style.paddingLeft) + parseFloat(style.paddingRight));
   })).toBeLessThanOrEqual(2);
 
-  await page.locator(".textLayer span").first().evaluate((element) => {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const selection = getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const [annotation] = (await rpc({ type: "annotations.list" })) as any[];
   const targetBefore = annotation.target.rects;
@@ -1016,14 +973,7 @@ test("fit width uses the PDF viewport and rotating preserves annotation coordina
 
 test("Ctrl or Cmd F searches text without changing saved annotations or rendering every page", async () => {
   await open(fixturePdf(30, "Search target appears once per page"), "search.pdf");
-  await page.locator(".textLayer span").first().evaluate((element) => {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    const selection = getSelection()!;
-    selection.removeAllRanges();
-    selection.addRange(range);
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-  });
+  await selectFirstPdfText();
   await page.getByRole("button", { name: "高亮 #facd5a", exact: true }).click();
   const ids = ((await rpc({ type: "annotations.list" })) as any[]).map((annotation) => annotation.id);
   await page.keyboard.press("Control+f");

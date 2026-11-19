@@ -1,3 +1,4 @@
+import { matchesAnnotation } from "../core/annotation-query";
 import type {
   Annotation,
   AnnotationCursor,
@@ -155,25 +156,6 @@ export function validateAnnotationQuery(
   };
 }
 
-function annotationMatches(
-  annotation: Annotation,
-  query: AnnotationQuery,
-): boolean {
-  if (query.kind && annotation.kind !== query.kind) return false;
-  if (query.color && annotation.color !== query.color) return false;
-  if (query.tag && !annotation.tags.includes(query.tag)) return false;
-  if (!query.text) return true;
-  const target =
-    annotation.kind === "text"
-      ? annotation.target.exact
-      : annotation.kind === "image"
-        ? `${annotation.target.alt} ${annotation.target.context} ${annotation.target.src}`
-        : `${annotation.target.fileName} ${annotation.target.sourceUrl ?? ""} ${annotation.target.exact}`;
-  return `${annotation.pageTitle} ${annotation.pageUrl} ${annotation.note} ${annotation.tags.join(" ")} ${target}`
-    .toLocaleLowerCase()
-    .includes(query.text);
-}
-
 /** Keyset window on one compound index; the cursor row itself is excluded on continuation. */
 function indexedSource(
   index: "[pageUrl+updatedAt+id]" | "[kind+updatedAt+id]" | "[color+updatedAt+id]",
@@ -254,7 +236,7 @@ export async function executeAnnotationQuery(
       if (!rows.length) break;
       for (const annotation of rows) {
         cursor = { updatedAt: annotation.updatedAt, id: annotation.id };
-        if (annotationMatches(annotation, query)) items.push(annotation);
+        if (matchesAnnotation(annotation, query)) items.push(annotation);
         if (items.length > limit) {
           hasNext = true;
           break;
