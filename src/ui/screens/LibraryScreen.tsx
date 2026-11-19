@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { useLibraryContext } from "../contexts/ManagementContext";
 import { AnnotationBrowser, Empty, FilterPopover } from "../management/components";
-import { Icon } from "../management/helpers";
+import { Icon } from "../shared/Icon";
 import type { PdfActions } from "../hooks/usePdfActions";
 
 export function LibraryScreen({ visible, openPdf }: {

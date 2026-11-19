@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { Annotation, AnchorState, Language } from "../../../core/model";
-import { excerptText, Icon, sourceName } from "../helpers";
+import { excerptText, sourceName } from "../helpers";
+import { Icon } from "../../shared/Icon";
 import { AnnotationDetail, DetailActions, Editor } from "./detail";
 import { RecordFacts, problemOf } from "./meta";
 import type { AnnotationBrowserState, Copy, DetailProps } from "./types";

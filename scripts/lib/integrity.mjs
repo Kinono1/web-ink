@@ -1,15 +1,19 @@
 import { createHash } from 'node:crypto';
-import path from 'node:path';
 
 export const INTEGRITY_FILE = 'runtime-integrity.json';
 const required = ['manifest.json', 'background.js', 'engine.js', 'content-scripts/content.js', 'library.html', 'sidepanel.html', 'pdf.html', 'pdfjs/pdf.worker.min.mjs'];
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const own = (files, name) => Object.hasOwn(files, name);
-const safePath = name => typeof name === 'string' && name.length > 0 && !name.startsWith('/') && !name.includes('\\') && !name.split('/').some(part => !part || part === '.' || part === '..');
+/** Runtime inventories and ZIP entries use the same portable relative paths. */
+export function isRuntimePath(name) {
+  return typeof name === 'string' && name.length > 0 && !name.startsWith('/') &&
+    !/[:\\\x00-\x1f]/.test(name) &&
+    !name.split('/').some(part => !part || part === '.' || part === '..');
+}
 const payload = files => Object.fromEntries(Object.entries(files).filter(([name]) => name !== INTEGRITY_FILE));
 
 function requireFile(files, name) {
-  if (!safePath(name) || !own(files, name) || !files[name]?.length) throw Error(`Incomplete runtime: missing or empty ${name}`);
+  if (!isRuntimePath(name) || !own(files, name) || !files[name]?.length) throw Error(`Incomplete runtime: missing or empty ${name}`);
 }
 function resource(files, reference, from = 'manifest.json', allowDirectory = false) {
   if (typeof reference !== 'string' || !reference || /^[a-z][a-z\d+.-]*:|^\/\//i.test(reference)) throw Error(`Invalid runtime resource in ${from}: ${reference}`);
@@ -27,7 +31,7 @@ function resource(files, reference, from = 'manifest.json', allowDirectory = fal
 function validateStructure(files, { legacy = false } = {}) {
   for (const name of required) requireFile(files, name);
   if (!legacy) requireFile(files, 'build-info.json');
-  for (const name of Object.keys(files)) if (!safePath(name)) throw Error(`Invalid runtime filename: ${name}`);
+  for (const name of Object.keys(files)) if (!isRuntimePath(name)) throw Error(`Invalid runtime filename: ${name}`);
   const manifest = JSON.parse(files['manifest.json'].toString());
   if (manifest.manifest_version !== 3 || typeof manifest.version !== 'string') throw Error('Invalid runtime manifest');
   if (files['build-info.json']) {
@@ -105,7 +109,7 @@ export function validateRuntimeIntegrity(files, { requireIntegrity = true } = {}
   if (seal?.schemaVersion !== 1 || !seal.files || typeof seal.files !== 'object' || Array.isArray(seal.files)) throw Error('Invalid runtime integrity manifest schema');
   const contents = payload(files);
   for (const [name, expected] of Object.entries(seal.files)) {
-    if (!safePath(name) || name === INTEGRITY_FILE || typeof expected !== 'string' || !/^[a-f\d]{64}$/.test(expected)) throw Error(`Invalid runtime integrity entry: ${name}`);
+    if (!isRuntimePath(name) || name === INTEGRITY_FILE || typeof expected !== 'string' || !/^[a-f\d]{64}$/.test(expected)) throw Error(`Invalid runtime integrity entry: ${name}`);
     if (!own(contents, name)) throw Error(`Runtime integrity mismatch: missing ${name}`);
     if (hash(contents[name]) !== expected) throw Error(`Runtime integrity mismatch: modified ${name}`);
   }

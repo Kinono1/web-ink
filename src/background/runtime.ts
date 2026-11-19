@@ -1,4 +1,5 @@
 import type { RuntimeHealth } from "../core/model";
+import { observeBackgroundTask } from "./request-result";
 
 const GENERATION_KEY = "ui.runtimeGeneration";
 export const RUNTIME_REGISTRATION_KEY = "ui.runtimeRegisteredGeneration";
@@ -14,7 +15,7 @@ export async function initializeRuntime(register: (generation: string) => Promis
   // A persisted generation does not prove that the previous registration finished.
   // Keep health independent: reinjected content asks for it before bootstrapping.
   if (session[RUNTIME_REGISTRATION_KEY] !== generation)
-    void Promise.resolve().then(() => register(generation)).catch(() => undefined);
+    observeBackgroundTask(Promise.resolve().then(() => register(generation)), "content registration");
   const version = chrome.runtime.getManifest().version;
   try {
     const response = await fetch(chrome.runtime.getURL("build-info.json"));

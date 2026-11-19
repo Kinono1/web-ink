@@ -69,6 +69,38 @@ const STATE_KEYS = [
   "noteSaving", "removing", "undoRecord", "error", "notice", "nativeFilter", "nativeRecords", "nativeLoading", "nativeProgress", "nativeError",
   "nativeTotalCount", "nativeOffset", "nativeLimit", "nativePageEnd",
 ];
+function boundedInteger(value: unknown, min: number, max: number): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+}
+
+function validNativeProgress(value: unknown): boolean {
+  return value === undefined || (object(value) && onlyKeys(value, ["completed", "total"]) &&
+    boundedInteger(value.total, 1, Number.MAX_SAFE_INTEGER) && boundedInteger(value.completed, 0, value.total));
+}
+
+function readNativeRecords(value: unknown, hash: string): NativePdfAnnotation[] | undefined {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 50) return;
+  const keys = new Set<string>();
+  const records: NativePdfAnnotation[] = [];
+  for (const input of value) {
+    const record = originalRecord(input, hash);
+    if (!record || keys.has(record.key)) return;
+    records.push(record);
+    keys.add(record.key);
+  }
+  return JSON.stringify(records).length <= 10 * 1024 * 1024 ? records : undefined;
+}
+
+function validNativeWindow(value: Record<string, unknown>, count: number): boolean {
+  const total = value.nativeTotalCount ?? count;
+  const offset = value.nativeOffset ?? 0;
+  const limit = value.nativeLimit ?? 50;
+  if (!boundedInteger(total, count, 50_000) || !boundedInteger(offset, 0, total - count) ||
+    !boundedInteger(limit, Math.max(1, count), 50)) return false;
+  return boundedInteger(value.nativePageEnd ?? offset + count, offset + count, Math.min(total, offset + limit));
+}
+
 function sidebarState(value: unknown): PdfSidebarState | null | undefined {
   if (value === null) return null;
   if (!object(value) || !onlyKeys(value, STATE_KEYS) || typeof value.pageUrl !== "string" || !/^urn:web-ink:pdf:[0-9a-f]{64}$/.test(value.pageUrl) ||
@@ -80,29 +112,9 @@ function sidebarState(value: unknown): PdfSidebarState | null | undefined {
     (value.nativeError !== undefined && !text(value.nativeError, 20_000)) ||
     (value.nativeFilter !== undefined && !["all", "web-ink", "original"].includes(value.nativeFilter as string)) ||
     (value.nativeLoading !== undefined && typeof value.nativeLoading !== "boolean")) return;
-  const progress = value.nativeProgress;
-  if (progress !== undefined && (!object(progress) || !onlyKeys(progress, ["completed", "total"]) ||
-    !Number.isSafeInteger(progress.completed) || !Number.isSafeInteger(progress.total) ||
-    (progress.completed as number) < 0 || (progress.total as number) < 1 || (progress.completed as number) > (progress.total as number))) return;
-  const nativeRecords: NativePdfAnnotation[] = [];
-  if (value.nativeRecords !== undefined) {
-    if (!Array.isArray(value.nativeRecords) || value.nativeRecords.length > 50) return;
-    const keys = new Set<string>();
-    for (const input of value.nativeRecords) {
-      const record = originalRecord(input, value.pageUrl.slice("urn:web-ink:pdf:".length));
-      if (!record || keys.has(record.key)) return;
-      nativeRecords.push(record);
-      keys.add(record.key);
-    }
-    if (JSON.stringify(nativeRecords).length > 10 * 1024 * 1024) return;
-  }
-  const total = value.nativeTotalCount ?? nativeRecords.length, offset = value.nativeOffset ?? 0;
-  const limit = value.nativeLimit ?? 50, end = value.nativePageEnd ?? (offset as number) + nativeRecords.length;
-  if (!Number.isSafeInteger(total) || (total as number) < nativeRecords.length || (total as number) > 50_000 ||
-    !Number.isSafeInteger(offset) || (offset as number) < 0 || (offset as number) + nativeRecords.length > (total as number) ||
-    !Number.isSafeInteger(limit) || (limit as number) < 1 || (limit as number) > 50 || nativeRecords.length > (limit as number) ||
-    !Number.isSafeInteger(end) || (end as number) < (offset as number) + nativeRecords.length ||
-    (end as number) > (total as number) || (end as number) - (offset as number) > (limit as number)) return;
+  if (!validNativeProgress(value.nativeProgress)) return;
+  const nativeRecords = readNativeRecords(value.nativeRecords, value.pageUrl.slice("urn:web-ink:pdf:".length));
+  if (!nativeRecords || !validNativeWindow(value, nativeRecords.length)) return;
   const records: PdfAnnotation[] = [];
   const ids = new Set<string>();
   for (const input of value.records) {
@@ -125,29 +137,49 @@ function sidebarState(value: unknown): PdfSidebarState | null | undefined {
 }
 function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarCommand | undefined {
   if (!object(value)) return;
-  const onlyType = onlyKeys(value, ["type"]);
-  if (value.type === "more" && onlyType) return { type: "more" };
-  if (value.type === "undo" && onlyType && state.undoRecord) return { type: "undo" };
-  if (value.type === "cancel-native" && onlyType && state.nativeLoading) return { type: "cancel-native" };
-  if (value.type === "more-native" && onlyType &&
-    (state.nativePageEnd ?? state.nativeRecords?.length ?? 0) < (state.nativeTotalCount ?? state.nativeRecords?.length ?? 0)) return { type: "more-native" };
-  if (value.type === "previous-native" && onlyType && (state.nativeOffset ?? 0) > 0) return { type: "previous-native" };
-  if (value.type === "filter" && onlyKeys(value, ["type", "filter"]) && ["all", "web-ink", "original"].includes(value.filter as string))
-    return { type: "filter", filter: value.filter as "all" | "web-ink" | "original" };
-  if (value.type === "focus-native")
-    return onlyKeys(value, ["type", "key"]) && typeof value.key === "string" &&
-      state.nativeRecords?.some((record) => record.key === value.key) ? { type: "focus-native", key: value.key } : undefined;
+  switch (value.type) {
+    case "more":
+      return onlyKeys(value, ["type"]) ? { type: "more" } : undefined;
+    case "undo":
+      return onlyKeys(value, ["type"]) && state.undoRecord ? { type: "undo" } : undefined;
+    case "cancel-native":
+      return onlyKeys(value, ["type"]) && state.nativeLoading ? { type: "cancel-native" } : undefined;
+    case "more-native": {
+      const end = state.nativePageEnd ?? state.nativeRecords?.length ?? 0;
+      const total = state.nativeTotalCount ?? state.nativeRecords?.length ?? 0;
+      return onlyKeys(value, ["type"]) && end < total ? { type: "more-native" } : undefined;
+    }
+    case "previous-native":
+      return onlyKeys(value, ["type"]) && (state.nativeOffset ?? 0) > 0 ? { type: "previous-native" } : undefined;
+    case "filter":
+      return onlyKeys(value, ["type", "filter"]) && ["all", "web-ink", "original"].includes(value.filter as string)
+        ? { type: "filter", filter: value.filter as "all" | "web-ink" | "original" } : undefined;
+    case "focus-native":
+      return onlyKeys(value, ["type", "key"]) && typeof value.key === "string" &&
+        state.nativeRecords?.some((record) => record.key === value.key) ? { type: "focus-native", key: value.key } : undefined;
+    default:
+      return annotationCommand(value, state);
+  }
+}
+
+function annotationCommand(value: Record<string, unknown>, state: PdfSidebarState): PdfSidebarCommand | undefined {
   if (!identifier(value.id)) return;
   const record = state.records.find((item) => item.id === value.id);
   if (value.type === "focus" || value.type === "save" || value.type === "remove")
     return record && onlyKeys(value, ["type", "id"]) ? { type: value.type, id: value.id } : undefined;
-  if (value.type !== "draft" || !onlyKeys(value, ["type", "id", "draft", "resolveConflict"]) ||
+  if (value.type === "draft") return draftCommand(value, state, value.id, record);
+}
+
+function draftCommand(
+  value: Record<string, unknown>, state: PdfSidebarState, id: string, record?: PdfAnnotation,
+): PdfSidebarCommand | undefined {
+  if (!onlyKeys(value, ["type", "id", "draft", "resolveConflict"]) ||
     (value.resolveConflict !== undefined && typeof value.resolveConflict !== "boolean")) return;
-  const cachedDraft = Object.hasOwn(state.drafts, value.id) ? state.drafts[value.id] : undefined;
+  const cachedDraft = Object.hasOwn(state.drafts, id) ? state.drafts[id] : undefined;
   if (!record && !cachedDraft) return;
   const resolve = value.resolveConflict === undefined ? {} : { resolveConflict: value.resolveConflict };
-  if (value.draft === undefined) return { type: "draft", id: value.id, ...resolve };
-  const draft = noteDraft(value.draft, state.pageUrl, value.id);
+  if (value.draft === undefined) return { type: "draft", id, ...resolve };
+  const draft = noteDraft(value.draft, state.pageUrl, id);
   if (!draft) return;
   // An existing stale draft keeps its original revision; resolving a conflict
   // must deliberately adopt the current reader-owned record instead.
@@ -156,7 +188,7 @@ function sidebarCommand(value: unknown, state: PdfSidebarState): PdfSidebarComma
     draft.base.kind === record.kind && draft.base.createdAt === record.createdAt &&
     JSON.stringify(draft.base.target) === JSON.stringify(record.target);
   if (base !== JSON.stringify(record) && (value.resolveConflict || (base !== JSON.stringify(cachedDraft?.base) && !recoveredBase))) return;
-  return { type: "draft", id: value.id, draft, ...resolve };
+  return { type: "draft", id, draft, ...resolve };
 }
 function closePort(port: chrome.runtime.Port): void {
   try { port.disconnect(); } catch { /* The peer may already have disconnected. */ }

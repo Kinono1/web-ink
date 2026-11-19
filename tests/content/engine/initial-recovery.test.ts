@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AnnotationController } from "../../../src/content/engine/AnnotationController";
-import { createView } from "../../../src/content/view-lite";
+import { createView, type ContentView } from "../../../src/content/view-lite";
 import { DEFAULT_SETTINGS } from "../../../src/core/model";
 
 let controller: AnnotationController;
@@ -41,10 +41,35 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-it.each(["settings.get", "page.mode.get"])("reports unknown state after %s fails and retries on user action", async failedRead => {
-  failure = failedRead;
+function startController(): ContentView {
   const view = createView();
   controller = new AnnotationController(view);
+  return view;
+}
+
+async function startWithFailedSettings(): Promise<ContentView> {
+  failure = "settings.get";
+  const view = startController();
+  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  return view;
+}
+
+function holdSettingsReads(limit = Infinity) {
+  const send = chrome.runtime.sendMessage;
+  const completions: Array<(reply: unknown) => void> = [];
+  chrome.runtime.sendMessage = ((message: { type: string }) => {
+    if (message.type === "settings.get" && completions.length < limit)
+      return new Promise<unknown>(resolve => { completions.push(resolve); });
+    return send(message);
+  }) as typeof chrome.runtime.sendMessage;
+  return completions;
+}
+
+const settingsReply = { ok: true, data: DEFAULT_SETTINGS };
+
+it.each(["settings.get", "page.mode.get"])("reports unknown state after %s fails and retries on user action", async failedRead => {
+  failure = failedRead;
+  const view = startController();
   await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
   expect(controller.modeReady).toBe(false);
   controller.dispatch("focus", "missing");
@@ -54,15 +79,14 @@ it.each(["settings.get", "page.mode.get"])("reports unknown state after %s fails
   failure = undefined;
   controller.dispatch("focus", "missing");
   await vi.waitFor(() => expect(controller.enabled()).toBe(true));
-  await vi.waitFor(() => expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]));
+  await vi.waitFor(() => expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]));
   expect(writes).not.toContain("page.mode.put");
 });
 
 it("keeps a confirmed disabled page quiet when settings fail", async () => {
   savedEnabled = false;
   failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
   expect(view.toast.textContent).toBe("");
   expect(controller.modeReady).toBe(false);
@@ -70,8 +94,7 @@ it("keeps a confirmed disabled page quiet when settings fail", async () => {
 
 it("reports an unknown new mode instead of trusting a previously disabled mode", async () => {
   savedEnabled = false;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(controller.modeReady).toBe(true));
   expect(controller.enabled()).toBe(false);
   savedEnabled = true;
@@ -91,7 +114,7 @@ it("reports an unknown new mode instead of trusting a previously disabled mode",
     await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
     failure = undefined;
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]));
+    await vi.waitFor(() => expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]));
     expect(controller.enabled()).toBe(true);
     expect(writes).not.toContain("page.mode.put");
     finishOldMode({ ok: true, data: { enabled: false } });
@@ -116,8 +139,7 @@ it.each([
       return new Promise<unknown>(resolve => { finishPending = resolve; });
     return send(message);
   }) as typeof chrome.runtime.sendMessage;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   try {
     await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
     expect(controller.sync.refreshDepth).toBe(0);
@@ -146,8 +168,7 @@ it("keeps the newer successful refresh when an older mode read resolves late", a
     }
     return send(message);
   }) as typeof chrome.runtime.sendMessage;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   try {
     await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
     await controller.sync.refresh();
@@ -156,7 +177,7 @@ it("keeps the newer successful refresh when an older mode read resolves late", a
     await Promise.resolve();
     await Promise.resolve();
     expect(controller.enabled()).toBe(true);
-    expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]);
+    expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]);
   } finally {
     controller.stop();
     finishOldMode({ ok: true, data: { enabled: false } });
@@ -164,10 +185,7 @@ it("keeps the newer successful refresh when an older mode read resolves late", a
 });
 
 it("does not redisplay a dismissed failure when the error changes", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
   chrome.runtime.sendMessage = (async () => ({ ok: false, error: "different failure", code: "OTHER" })) as typeof chrome.runtime.sendMessage;
   await controller.sync.refresh();
@@ -175,10 +193,7 @@ it("does not redisplay a dismissed failure when the error changes", async () => 
 });
 
 it.each(["focus", "refresh"] as const)("reports a repeated failure after an explicit %s", async action => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
   controller.dispatch(action, "missing");
   await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
@@ -186,8 +201,7 @@ it.each(["focus", "refresh"] as const)("reports a repeated failure after an expl
 
 it("retries a failed annotation read on focus even after mode is ready", async () => {
   failure = "annotations.list";
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
   expect(controller.modeReady).toBe(true);
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
@@ -195,25 +209,19 @@ it("retries a failed annotation read on focus even after mode is ready", async (
   await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
   failure = undefined;
   controller.dispatch("focus", "saved");
-  await vi.waitFor(() => expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]));
+  await vi.waitFor(() => expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]));
 });
 
 it("clears the recovery error after a successful restore", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   failure = undefined;
   await controller.sync.refresh();
-  expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]);
+  expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]);
   expect(view.toast.textContent).toBe("");
 });
 
 it("reports a new background failure after recovery succeeds", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
   failure = undefined;
   await controller.sync.refresh();
@@ -223,56 +231,35 @@ it("reports a new background failure after recovery succeeds", async () => {
 });
 
 it("reports an explicit retry superseded by a failing background refresh", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
-  const send = chrome.runtime.sendMessage;
-  let finishRetry!: (value: unknown) => void;
-  const focus = vi.spyOn(controller.render, "focusRecord");
-  let pending = true;
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && pending) {
-      pending = false;
-      return new Promise<unknown>(resolve => { finishRetry = resolve; });
-    }
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
+  const pendingReads = holdSettingsReads(1);
+  const focus = vi.spyOn(controller.data, "focusRecord");
   try {
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(pending).toBe(false));
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
     await controller.sync.refresh();
     expect(view.toast.textContent).toContain("暂时无法恢复此页标注");
-    finishRetry({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
     expect(focus).not.toHaveBeenCalled();
   } finally {
     controller.stop();
-    finishRetry({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await Promise.resolve();
   }
 });
 
 it.each(["navigation", "navigation-return", "revocation", "stop"] as const)("does not replay a superseded focus after %s", async transition => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   failure = undefined;
-  const send = chrome.runtime.sendMessage;
-  const completions: Array<(value: unknown) => void> = [];
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && completions.length < 2)
-      return new Promise<unknown>(resolve => { completions.push(resolve); });
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
-  const focus = vi.spyOn(controller.render, "focusRecord");
+  const completions = holdSettingsReads(2);
+  const focus = vi.spyOn(controller.data, "focusRecord");
   try {
     controller.dispatch("focus", "saved");
     await vi.waitFor(() => expect(completions).toHaveLength(1));
     const background = controller.sync.refresh();
-    completions[0]!({ ok: true, data: DEFAULT_SETTINGS });
+    completions[0]!(settingsReply);
     await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(1));
     if (transition === "navigation") window.history.pushState(null, "", "/next-route");
     if (transition === "navigation-return") {
@@ -286,123 +273,87 @@ it.each(["navigation", "navigation-return", "revocation", "stop"] as const)("doe
       onMessage({ type: "permissions.restored" }, {}, () => {});
     }
     if (transition === "stop") controller.stop();
-    completions[1]!({ ok: true, data: DEFAULT_SETTINGS });
+    completions[1]!(settingsReply);
     await background;
     await Promise.resolve();
     expect(focus).not.toHaveBeenCalled();
   } finally {
     controller.stop();
-    for (const finish of completions) finish({ ok: true, data: DEFAULT_SETTINGS });
+    for (const finish of completions) finish(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("waits for a successful background refresh before executing superseded focus", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   failure = undefined;
-  const send = chrome.runtime.sendMessage;
-  const completions: Array<(value: unknown) => void> = [];
-  chrome.runtime.sendMessage = ((message: { type: string }) => message.type === "settings.get"
-    ? new Promise<unknown>(resolve => { completions.push(resolve); })
-    : send(message)) as typeof chrome.runtime.sendMessage;
-  const focus = vi.spyOn(controller.render, "focusRecord");
+  const completions = holdSettingsReads();
+  const focus = vi.spyOn(controller.data, "focusRecord");
   try {
     controller.dispatch("focus", "saved");
     await vi.waitFor(() => expect(completions).toHaveLength(1));
     const background = controller.sync.refresh();
     await vi.waitFor(() => expect(completions).toHaveLength(2));
-    completions[0]!({ ok: true, data: DEFAULT_SETTINGS });
+    completions[0]!(settingsReply);
     await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(1));
     expect(focus).not.toHaveBeenCalled();
-    completions[1]!({ ok: true, data: DEFAULT_SETTINGS });
+    completions[1]!(settingsReply);
     await background;
     await vi.waitFor(() => expect(focus).toHaveBeenCalledWith("saved"));
   } finally {
     controller.stop();
-    for (const finish of completions) finish({ ok: true, data: DEFAULT_SETTINGS });
+    for (const finish of completions) finish(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("executes focus after a newer refresh succeeds while the old read is still pending", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   failure = undefined;
-  const send = chrome.runtime.sendMessage;
-  let finishOld!: (value: unknown) => void;
-  let first = true;
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && first) {
-      first = false;
-      return new Promise<unknown>(resolve => { finishOld = resolve; });
-    }
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
-  const focus = vi.spyOn(controller.render, "focusRecord");
+  const pendingReads = holdSettingsReads(1);
+  const focus = vi.spyOn(controller.data, "focusRecord");
   try {
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(first).toBe(false));
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
     await controller.sync.refresh();
     await vi.waitFor(() => expect(focus).toHaveBeenCalledWith("saved"));
-    finishOld({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
     expect(focus).toHaveBeenCalledOnce();
-    expect(controller.store.annotations.map(record => record.id)).toEqual(["saved"]);
+    expect(controller.data.annotations.map(record => record.id)).toEqual(["saved"]);
   } finally {
     controller.stop();
-    finishOld({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("does not replay focus when a new route supersedes a still-pending read", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   failure = undefined;
-  const send = chrome.runtime.sendMessage;
-  let finishOld!: (value: unknown) => void;
-  let first = true;
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && first) {
-      first = false;
-      return new Promise<unknown>(resolve => { finishOld = resolve; });
-    }
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
-  const focus = vi.spyOn(controller.render, "focusRecord");
+  const pendingReads = holdSettingsReads(1);
+  const focus = vi.spyOn(controller.data, "focusRecord");
   try {
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(first).toBe(false));
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
     window.history.pushState(null, "", "/next-route");
     await controller.sync.refresh();
     await Promise.resolve();
     expect(focus).not.toHaveBeenCalled();
-    finishOld({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
     expect(focus).not.toHaveBeenCalled();
   } finally {
     controller.stop();
-    finishOld({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await Promise.resolve();
   }
 });
 
 it.each(["revocation", "stop"] as const)("settles an interactive wait on %s while the read is pending", async transition => {
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(controller.modeReady).toBe(true));
-  const send = chrome.runtime.sendMessage;
-  const completions: Array<(value: unknown) => void> = [];
-  chrome.runtime.sendMessage = ((message: { type: string }) => message.type === "settings.get"
-    ? new Promise<unknown>(resolve => { completions.push(resolve); })
-    : send(message)) as typeof chrome.runtime.sendMessage;
+  const completions = holdSettingsReads();
   let settled = false;
   try {
     const wait = controller.sync.refresh(true).then(() => { settled = true; });
@@ -415,16 +366,15 @@ it.each(["revocation", "stop"] as const)("settles an interactive wait on %s whil
     await wait;
   } finally {
     controller.stop();
-    for (const finish of completions) finish({ ok: true, data: DEFAULT_SETTINGS });
+    for (const finish of completions) finish(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("refreshes the new route before executing a focus requested there", async () => {
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(controller.enabled()).toBe(true));
-  const focus = vi.spyOn(controller.render, "focusRecord");
+  const focus = vi.spyOn(controller.data, "focusRecord");
   window.history.pushState(null, "", "/next-route");
   controller.dispatch("focus", "saved");
   await vi.waitFor(() => expect(focus).toHaveBeenCalledWith("saved"));
@@ -432,23 +382,11 @@ it("refreshes the new route before executing a focus requested there", async () 
 });
 
 it("does not carry a pending explicit retry into the next route", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
-  const send = chrome.runtime.sendMessage;
-  let finishRetry!: (value: unknown) => void;
-  let pending = true;
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && pending) {
-      pending = false;
-      return new Promise<unknown>(resolve => { finishRetry = resolve; });
-    }
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
+  const view = await startWithFailedSettings();
+  const pendingReads = holdSettingsReads(1);
   try {
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(pending).toBe(false));
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
     window.history.pushState(null, "", "/next-route");
     await controller.sync.refresh();
     expect(view.toast.textContent).toContain("暂时无法恢复此页标注");
@@ -457,30 +395,18 @@ it("does not carry a pending explicit retry into the next route", async () => {
     expect(view.toast.textContent).toBe("");
   } finally {
     controller.stop();
-    finishRetry({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("does not carry a pending explicit retry through a stopped engine", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   view.toast.querySelector<HTMLButtonElement>(".toast-dismiss")!.click();
-  const send = chrome.runtime.sendMessage;
-  let finishRetry!: (value: unknown) => void;
-  let pending = true;
-  chrome.runtime.sendMessage = ((message: { type: string }) => {
-    if (message.type === "settings.get" && pending) {
-      pending = false;
-      return new Promise<unknown>(resolve => { finishRetry = resolve; });
-    }
-    return send(message);
-  }) as typeof chrome.runtime.sendMessage;
+  const pendingReads = holdSettingsReads(1);
   try {
     controller.dispatch("focus", "saved");
-    await vi.waitFor(() => expect(pending).toBe(false));
+    await vi.waitFor(() => expect(pendingReads).toHaveLength(1));
     onMessage({ type: "permissions.revoked" }, {}, () => {});
     await controller.sync.refresh();
     expect(view.toast.textContent).toBe("");
@@ -489,16 +415,13 @@ it("does not carry a pending explicit retry through a stopped engine", async () 
     expect(view.toast.textContent).toBe("");
   } finally {
     controller.stop();
-    finishRetry({ ok: true, data: DEFAULT_SETTINGS });
+    pendingReads[0]?.(settingsReply);
     await Promise.resolve();
   }
 });
 
 it("preserves a sticky save failure across explicit recovery failure and success", async () => {
-  failure = "settings.get";
-  const view = createView();
-  controller = new AnnotationController(view);
-  await vi.waitFor(() => expect(view.toast.textContent).toContain("暂时无法恢复此页标注"));
+  const view = await startWithFailedSettings();
   controller.toast("save failed", true, () => {});
   controller.dispatch("refresh");
   await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
@@ -511,8 +434,7 @@ it("preserves a sticky save failure across explicit recovery failure and success
 
 it("preserves a sticky save failure when refresh confirms the page is disabled", async () => {
   savedEnabled = false;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   await vi.waitFor(() => expect(controller.modeReady).toBe(true));
   controller.toast("save failed", true, () => {});
   await controller.sync.refresh();
@@ -526,8 +448,7 @@ it("ignores a failed read after disposal", async () => {
   chrome.runtime.sendMessage = ((message: { type: string }) => message.type === "settings.get"
     ? new Promise((_resolve, fail) => { reject = fail; })
     : send(message)) as typeof chrome.runtime.sendMessage;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   controller.stop();
   reject(Error("late failure"));
   await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));
@@ -540,8 +461,7 @@ it("does not report a failure for a route that has already changed", async () =>
   chrome.runtime.sendMessage = ((message: { type: string }) => message.type === "settings.get"
     ? new Promise((_resolve, fail) => { reject = fail; })
     : send(message)) as typeof chrome.runtime.sendMessage;
-  const view = createView();
-  controller = new AnnotationController(view);
+  const view = startController();
   window.history.pushState(null, "", "/next-route");
   reject(Error("stale route"));
   await vi.waitFor(() => expect(controller.sync.refreshDepth).toBe(0));

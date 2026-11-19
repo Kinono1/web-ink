@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { type Language } from "../core/model";
 import { PALETTE_SIZE_KEY, normalizePaletteSize, readPaletteSize, writePaletteSize } from "../core/palette-appearance";
 import { releaseChromeListener } from "../core/client";
-import { Icon } from "./management/helpers";
+import { Icon } from "./shared/Icon";
 
 export function PencilSettings({ language }: { language: Language }) {
   const [size, setSize] = useState(40);

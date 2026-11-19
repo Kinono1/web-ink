@@ -10,7 +10,8 @@ import { useTabContext } from "../contexts/TabContext";
 import { isPdfSurface } from "../hooks/useTabObserver";
 import type { PdfActions } from "../hooks/usePdfActions";
 import { AnnotationBrowser, Empty, PageHeader, SelectionToolbarSwitch } from "../management/components";
-import { download, Icon } from "../management/helpers";
+import { download } from "../management/helpers";
+import { Icon } from "../shared/Icon";
 
 export function PageScreen({ visible, pdf }: { visible: boolean; pdf: PdfActions }) {
   const { preferences, annotations, setError, setNotice } = useManagementContext();

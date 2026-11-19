@@ -2,7 +2,8 @@ import type { Annotation, Result } from "../../core/model";
 import { MAX_REVISION, ValidationError } from "../../core/validation";
 import { getDatabase } from "../database";
 import { applyIncrementalStats } from "../storage-stats";
-import { committedVersion, fail, ok, pageRecord, sameAnnotation } from "./validation";
+import { fail, ok } from "../request-result";
+import { committedVersion, pageRecord, sameAnnotation } from "./validation";
 
 export async function listAnnotations(pageUrl?: string): Promise<Annotation[]> {
   const db = getDatabase();
@@ -42,12 +43,12 @@ export async function putAnnotation(
     const storedPage = pageRecord(candidate, existingPage);
     await db.annotations.put(candidate);
     await db.pages.put(storedPage);
-    await applyIncrementalStats({
+    await applyIncrementalStats([{
       ...(existing ? { beforeAnnotation: existing } : {}),
       afterAnnotation: candidate,
       ...(existingPage ? { beforePage: existingPage } : {}),
       afterPage: storedPage,
-    });
+    }]);
     return ok(candidate);
   });
 }
@@ -73,11 +74,11 @@ export async function restoreAnnotation(annotation: Annotation, ownPage?: string
     const storedPage = pageRecord(restored, existingPage);
     await db.annotations.put(restored);
     await db.pages.put(storedPage);
-    await applyIncrementalStats({
+    await applyIncrementalStats([{
       afterAnnotation: restored,
       ...(existingPage ? { beforePage: existingPage } : {}),
       afterPage: storedPage,
-    });
+    }]);
     return ok(restored);
   });
 }
@@ -86,7 +87,7 @@ export async function deleteAnnotation(
   id: string,
   expectedRevision: number,
   ownPage?: string,
-): Promise<Result<{ id: string; deleted: true }>> {
+): Promise<Result<{ id: string; deleted: true; pageUrl: string }>> {
   const db = getDatabase();
   return db.transaction("rw", db.annotations, db.stats, db.tombstones, async () => {
     const existing = await db.annotations.get(id);
@@ -96,7 +97,7 @@ export async function deleteAnnotation(
     if (existing.revision !== expectedRevision) return fail("Annotation changed in another tab.", "CONFLICT");
     await db.annotations.delete(id);
     await db.tombstones.put({ id: existing.id, pageUrl: existing.pageUrl, revision: existing.revision });
-    await applyIncrementalStats({ beforeAnnotation: existing });
-    return ok({ id, deleted: true });
+    await applyIncrementalStats([{ beforeAnnotation: existing }]);
+    return ok({ id, deleted: true, pageUrl: existing.pageUrl });
   });
 }

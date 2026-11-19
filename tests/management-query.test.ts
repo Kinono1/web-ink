@@ -1,7 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { act, createElement, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useAnnotationQuery } from "../src/ui/management/useAnnotationQuery";
+import { useAnnotationQuery } from "../src/ui/shared/useAnnotationQuery";
 Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", {
   value: true,
   configurable: true,

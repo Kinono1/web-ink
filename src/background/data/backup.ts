@@ -2,55 +2,86 @@ import type { Annotation, BackupEnvelope, ImportPreview } from "../../core/model
 import { MAX_REVISION, ValidationError } from "../../core/validation";
 import { serializeBackup } from "../../core/backup";
 import { getDatabase } from "../database";
-import { applyIncrementalStats } from "../storage-stats";
+import { applyIncrementalStats, type StatsChange } from "../storage-stats";
 import { listAnnotations } from "./annotations";
 import { readSettings } from "./settings";
-import { classifyImport, pageRecord, sameAnnotation } from "./validation";
+import { committedVersion, pageRecord, sameAnnotation } from "./validation";
+
+type ImportChange = { incoming: Annotation; local?: Annotation };
 
 export async function exportBackup(): Promise<BackupEnvelope> {
   return serializeBackup(await listAnnotations(), await readSettings());
 }
 
 export async function previewBackup(annotations: Annotation[]): Promise<ImportPreview> {
-  const db = getDatabase();
-  return classifyImport(annotations, await db.annotations.bulkGet(annotations.map((a) => a.id)));
+  const existing = await getDatabase().annotations.bulkGet(annotations.map(annotation => annotation.id));
+  return classifyImport(annotations, existing);
 }
 
 export async function importBackup(annotations: Annotation[], overwrite: boolean): Promise<ImportPreview> {
   const db = getDatabase();
-  // `parseBackup` ran before this call. All mutations below are one Dexie transaction.
+  // The caller validates the envelope first. Reads, writes, and totals use one transaction.
   return db.transaction("rw", db.annotations, db.pages, db.stats, db.tombstones, async () => {
-    const existing = await db.annotations.bulkGet(annotations.map((a) => a.id));
-    const preview = classifyImport(annotations, existing);
-    for (let index = 0; index < annotations.length; index += 1) {
-      const incoming = annotations[index];
-      if (!incoming) continue;
-      const local = existing[index];
-      if (!local || (overwrite && !sameAnnotation(local, incoming))) {
-        // Imported revisions are foreign clocks. A local overwrite is a new local
-        // mutation, so it must advance the local clock and invalidate stale tabs.
-        if (local && local.revision >= MAX_REVISION)
-          throw new ValidationError("Annotation revision limit reached.");
-        const tombstone = !local ? await db.tombstones.get(incoming.id) : undefined;
-        if (tombstone && Math.max(incoming.revision, tombstone.revision) >= MAX_REVISION)
-          throw new ValidationError("Annotation revision limit reached.");
-        const stored = local
-          ? ({ ...incoming, revision: local.revision + 1 } as Annotation)
-          : tombstone
-            ? ({ ...incoming, revision: Math.max(incoming.revision, tombstone.revision) + 1 } as Annotation)
-            : incoming;
-        const existingPage = await db.pages.get(stored.pageUrl);
-        const storedPage = pageRecord(stored, existingPage);
-        await db.annotations.put(stored);
-        await db.pages.put(storedPage);
-        await applyIncrementalStats({
-          ...(local ? { beforeAnnotation: local } : {}),
-          afterAnnotation: stored,
-          ...(existingPage ? { beforePage: existingPage } : {}),
-          afterPage: storedPage,
-        });
-      }
-    }
+    const existing = await db.annotations.bulkGet(annotations.map(annotation => annotation.id));
+    const changes: ImportChange[] = [];
+    const preview = classifyImport(annotations, existing, (incoming, local) => {
+      if (!local || overwrite) changes.push({ incoming, local });
+    });
+    if (changes.length === 0) return preview;
+
+    const newIds = changes.filter(change => !change.local).map(change => change.incoming.id);
+    const tombstones = new Map<string, number>();
+    for (const tombstone of await db.tombstones.bulkGet(newIds))
+      if (tombstone) tombstones.set(tombstone.id, tombstone.revision);
+    const records = changes.map(change => importRecord(change, tombstones));
+
+    // The last imported record for a page determines its title and timestamp.
+    // Existing enablement and selection overrides are carried into that final row.
+    const lastByPage = new Map<string, Annotation>();
+    for (const record of records) lastByPage.set(record.pageUrl, record);
+    const previousPages = await db.pages.bulkGet([...lastByPage.keys()]);
+    const pages = Array.from(lastByPage.values(), (record, index) => pageRecord(record, previousPages[index]));
+
+    await db.annotations.bulkPut(records);
+    await db.pages.bulkPut(pages);
+    const stats: StatsChange[] = records.map((afterAnnotation, index) => ({
+      beforeAnnotation: changes[index]!.local, afterAnnotation,
+    }));
+    pages.forEach((afterPage, index) => stats.push({ beforePage: previousPages[index], afterPage }));
+    await applyIncrementalStats(stats);
     return preview;
   });
+}
+
+function importRecord({ incoming, local }: ImportChange, tombstones: ReadonlyMap<string, number>): Annotation {
+  // An overwrite advances the local clock. A deleted ID advances past both clocks.
+  if (local) return advanceRevision(incoming, local.revision);
+  const deletedRevision = tombstones.get(incoming.id);
+  return deletedRevision === undefined
+    ? incoming
+    : advanceRevision(incoming, Math.max(incoming.revision, deletedRevision));
+}
+
+function advanceRevision(incoming: Annotation, previous: number): Annotation {
+  if (previous >= MAX_REVISION) throw new ValidationError("Annotation revision limit reached.");
+  return committedVersion(incoming, previous);
+}
+
+function classifyImport(
+  incoming: Annotation[],
+  existing: Array<Annotation | undefined>,
+  changed?: (incoming: Annotation, local: Annotation | undefined) => void,
+): ImportPreview {
+  let added = 0, identical = 0, conflicts = 0;
+  for (const [index, annotation] of incoming.entries()) {
+    if (!annotation) continue;
+    const local = existing[index];
+    if (!local) added++;
+    else if (sameAnnotation(local, annotation)) {
+      identical++;
+      continue;
+    } else conflicts++;
+    changed?.(annotation, local);
+  }
+  return { added, identical, conflicts, total: incoming.length };
 }

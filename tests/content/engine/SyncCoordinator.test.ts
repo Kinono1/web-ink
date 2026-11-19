@@ -9,9 +9,9 @@ it("cancels a queued refresh before it can issue a browser request", async () =>
   vi.stubGlobal("chrome", { runtime: { sendMessage: async (message: unknown) => { messages.push(message); } } });
   const sync = new DataEngine({
     disposed: false, enabled: () => true, currentUrl: location.href, view: createView(),
-  } as unknown as DataEngineHost);
+  } as unknown as DataEngineHost).sync;
   sync.queueRefresh();
-  sync.disposeSync();
+  sync.dispose();
   await vi.runAllTimersAsync();
   expect(messages).toEqual([]);
   expect(sync.generation).toBe(1);

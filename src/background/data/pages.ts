@@ -3,7 +3,7 @@ import { readSelectionToolbarEnabled } from "../../core/selection-toolbar";
 import { getDatabase } from "../database";
 import { applyIncrementalStats } from "../storage-stats";
 import { readSettings } from "./settings";
-import { fail, ok } from "./validation";
+import { fail, ok } from "../request-result";
 
 function effectivePageMode(
   pageUrl: string,
@@ -62,10 +62,10 @@ export async function putPageMode(
       ...(pdf ? {} : { modeOverride: true, manualSelectionTools }),
     };
     await db.pages.put(stored);
-    await applyIncrementalStats({
+    await applyIncrementalStats([{
       ...(existing ? { beforePage: existing } : {}),
       afterPage: stored,
-    });
+    }]);
     return ok(effectivePageMode(pageUrl, stored, settings, automatic));
   });
 }

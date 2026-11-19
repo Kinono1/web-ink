@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { fromPdfRect, toPdfRect, type PdfViewport } from "../src/pdf/geometry";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { fromPdfRect, toPdfRect } from "../src/pdf/geometry";
 import {
   MAX_PDF_BYTES,
   pdfSourceUrl,
@@ -10,36 +10,14 @@ import {
 import { PageLayoutIndex } from "../src/pdf/reading-position";
 import { PdfSession } from "../src/pdf/hooks/useDocumentSession";
 import { fixturePdf } from "./pdf-fixture";
-function viewport(rotation: number, scale: number): PdfViewport {
-  const transform = (x: number, y: number): number[] =>
-    rotation === 0
-      ? [x * scale, (800 - y) * scale]
-      : rotation === 90
-        ? [y * scale, x * scale]
-        : rotation === 180
-          ? [(600 - x) * scale, y * scale]
-          : [(800 - y) * scale, (600 - x) * scale];
-  const inverse = (x: number, y: number): number[] =>
-    rotation === 0
-      ? [x / scale, 800 - y / scale]
-      : rotation === 90
-        ? [y / scale, x / scale]
-        : rotation === 180
-          ? [600 - x / scale, y / scale]
-          : [600 - y / scale, 800 - x / scale];
-  return {
-    width: (rotation % 180 ? 800 : 600) * scale,
-    height: (rotation % 180 ? 600 : 800) * scale,
-    convertToViewportPoint: transform,
-    convertToPdfPoint: inverse,
-  };
-}
+import { pdfViewport } from "./helpers/pdf-viewport";
+
 describe("PDF coordinate identity", () => {
   for (const rotation of [0, 90, 180, 270])
     for (const scale of [0.5, 1, 2.5])
       it(`restores original coordinates at ${rotation} degrees / ${scale} scale`, () => {
         const stored = { x: 0.17, y: 0.29, width: 0.34, height: 0.21 };
-        const v = viewport(rotation, scale),
+        const v = pdfViewport(rotation, scale),
           view = fromPdfRect(stored, v, [0, 0, 600, 800]);
         const back = toPdfRect(
           {
@@ -55,7 +33,7 @@ describe("PDF coordinate identity", () => {
           expect(back[k]).toBeCloseTo(stored[k], 8);
       });
   it("rejects empty rectangles and clamps selection outside the page", () => {
-    const v = viewport(0, 1);
+    const v = pdfViewport(0, 1);
     expect(
       toPdfRect({ left: 0, top: 0, right: 0, bottom: 0 }, v, [0, 0, 600, 800]),
     ).toBeUndefined();
@@ -68,7 +46,30 @@ describe("PDF coordinate identity", () => {
     ).toEqual({ x: 0, y: 0, width: 1, height: 1 });
   });
 });
+function pdfBody(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
+
+function mockRemotePdf(body: ReadableStream<Uint8Array>, headers: HeadersInit): void {
+  vi.stubGlobal("chrome", { permissions: { contains: async () => true } });
+  vi.stubGlobal("fetch", async () => new Response(body, { status: 200, headers }));
+}
+
+function sizedPdf(mib: number): Buffer {
+  const base = fixturePdf();
+  return fixturePdf(1, "Web Ink PDF highlights survive a return visit.", {
+    paddingBytes: mib * 1024 * 1024 - base.length,
+  });
+}
+
 describe("PDF source boundary", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("accepts public HTTPS and strips view fragments only", () => {
     expect(
       pdfSourceUrl("https://example.com/p.pdf?version=2#page=3").href,
@@ -95,118 +96,45 @@ describe("PDF source boundary", () => {
   });
   it("uses exact identity Content-Length storage and rejects truncated responses", async () => {
     const bytes = new TextEncoder().encode("%PDF-1.7\nidentity");
-    Object.defineProperty(globalThis, "chrome", {
-      configurable: true,
-      value: { permissions: { contains: async () => true } },
-    });
-    const original = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        }),
-        { status: 200, headers: { "content-length": String(bytes.length) } },
-      );
+    mockRemotePdf(pdfBody(bytes), { "content-length": String(bytes.length) });
     await expect(
       readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
     ).resolves.toSatisfy(
       (value) => Array.from(value).join(",") === Array.from(bytes).join(","),
     );
-    globalThis.fetch = async () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        }),
-        {
-          status: 200,
-          headers: { "content-length": String(bytes.length + 1) },
-        },
-      );
+    mockRemotePdf(pdfBody(bytes), { "content-length": String(bytes.length + 1) });
     await expect(
       readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
     ).rejects.toThrow("Content-Length");
-    globalThis.fetch = original;
   });
   it("does not trust compressed Content-Length as decoded allocation size", async () => {
     const bytes = new TextEncoder().encode("%PDF-1.7\ncompressed-output");
-    Object.defineProperty(globalThis, "chrome", {
-      configurable: true,
-      value: { permissions: { contains: async () => true } },
-    });
-    const original = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(
-        new ReadableStream({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        }),
-        {
-          status: 200,
-          headers: { "content-length": "1", "content-encoding": "gzip" },
-        },
-      );
+    mockRemotePdf(pdfBody(bytes), { "content-length": "1", "content-encoding": "gzip" });
     await expect(
       readRemotePdf("https://example.test/a.pdf", new AbortController().signal),
     ).resolves.toSatisfy(
       (value) => Array.from(value).join(",") === Array.from(bytes).join(","),
     );
-    globalThis.fetch = original;
   });
   it.each([20, 50])(
     "accepts a real %i MiB identity PDF without chunk accumulation",
     async (mib) => {
-      const base = fixturePdf();
-      const bytes = fixturePdf(
-        1,
-        "Web Ink PDF highlights survive a return visit.",
-        { paddingBytes: mib * 1024 * 1024 - base.length },
-      );
-      Object.defineProperty(globalThis, "chrome", {
-        configurable: true,
-        value: { permissions: { contains: async () => true } },
+      const bytes = sizedPdf(mib);
+      mockRemotePdf(pdfBody(bytes), {
+        "content-length": String(bytes.length),
+        "content-encoding": "identity",
       });
-      const original = globalThis.fetch;
-      globalThis.fetch = async () =>
-        new Response(
-          new ReadableStream({
-            start(controller) {
-              controller.enqueue(bytes);
-              controller.close();
-            },
-          }),
-          {
-            status: 200,
-            headers: {
-              "content-length": String(bytes.length),
-              "content-encoding": "identity",
-            },
-          },
-        );
       const result = await readRemotePdf(
         "https://example.test/large.pdf",
         new AbortController().signal,
       );
       expect(result.length).toBe(mib * 1024 * 1024);
-      globalThis.fetch = original;
     },
   );
   it.each([20, 50])(
     "accepts a real %i MiB local PDF as one ArrayBuffer view",
     async (mib) => {
-      const base = fixturePdf();
-      const bytes = fixturePdf(
-        1,
-        "Web Ink PDF highlights survive a return visit.",
-        { paddingBytes: mib * 1024 * 1024 - base.length },
-      );
+      const bytes = sizedPdf(mib);
       const content = new Uint8Array(bytes.length);
       content.set(bytes);
       const file = new File([content], "large.pdf", {
@@ -216,22 +144,13 @@ describe("PDF source boundary", () => {
     },
   );
   it("rejects 50 MiB plus one identity response before consuming its body", async () => {
-    Object.defineProperty(globalThis, "chrome", {
-      configurable: true,
-      value: { permissions: { contains: async () => true } },
-    });
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({
       cancel() {
         cancelled = true;
       },
     });
-    const original = globalThis.fetch;
-    globalThis.fetch = async () =>
-      new Response(body, {
-        status: 200,
-        headers: { "content-length": String(MAX_PDF_BYTES + 1) },
-      });
+    mockRemotePdf(body, { "content-length": String(MAX_PDF_BYTES + 1) });
     await expect(
       readRemotePdf(
         "https://example.test/large.pdf",
@@ -239,7 +158,6 @@ describe("PDF source boundary", () => {
       ),
     ).rejects.toThrow("50 MiB");
     expect(cancelled).toBe(true);
-    globalThis.fetch = original;
   });
 });
 

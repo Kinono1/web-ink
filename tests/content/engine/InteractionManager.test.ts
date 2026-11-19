@@ -42,3 +42,41 @@ it("accepts a live preset selection and leaves editable selections to the page",
   expect(saves).toHaveLength(1);
   session.dispose();
 });
+
+it("preserves expanded color controls when scrolling repositions a selected range", () => {
+  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  const paragraph = document.createElement("p");
+  paragraph.textContent = "Text with an open color palette";
+  document.body.append(paragraph);
+  const range = document.createRange();
+  range.selectNodeContents(paragraph);
+  const selection = range.cloneRange();
+  let bottom = 100;
+  const rect = () => new DOMRect(20, bottom - 18, 80, 18);
+  Object.defineProperties(range, {
+    cloneRange: { value: () => selection },
+    getBoundingClientRect: { value: rect },
+  });
+  Object.defineProperty(selection, "getBoundingClientRect", { value: rect });
+
+  const view = createView();
+  const saveSelection = vi.fn(async () => {});
+  const interactions = new UIController({
+    view, settings: DEFAULT_SETTINGS, disposed: false,
+    label: (_chinese: string, english: string) => english,
+    data: { annotations: [], textRanges: new Map(), recentColors: [], schedulePaint: vi.fn(), saveSelection },
+  } as unknown as UIControllerHost);
+  interactions.showPalette(range);
+  view.selection.querySelector<HTMLButtonElement>('button[aria-label="More colors"]')!.click();
+  const custom = view.selection.querySelector<HTMLInputElement>('input[type="color"]')!;
+  expect(custom).toBeTruthy();
+  expect(view.selection.style.top).toBe("108px");
+
+  bottom = 140;
+  interactions.onScroll();
+  expect(view.selection.style.top).toBe("148px");
+  expect(view.selection.querySelector('input[type="color"]')).toBe(custom);
+  custom.value = "#123456";
+  view.selection.querySelector<HTMLButtonElement>('button[aria-label="Apply"]')!.click();
+  expect(saveSelection).toHaveBeenCalledExactlyOnceWith("#123456");
+});

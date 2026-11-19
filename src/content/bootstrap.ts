@@ -11,8 +11,8 @@ import {
 } from "../core/model";
 import { pageKey } from "../core/url";
 import { createPaletteToggle } from "./palette-toggle";
-import { createPaletteMenu, type PaletteAction, type PaletteMenuItem } from "./palette-menu";
-import { getPdfContext } from "../core/pdf-context";
+import { createPaletteMenu, type PaletteAction } from "./palette-menu";
+import { paletteItems } from "./palette-items";
 import { readPalettePosition } from "./palette-position";
 import { createPalettePositionWriter, PALETTE_POSITION_KEY } from "./palette-position-storage";
 import { createView } from "./view-lite";
@@ -46,8 +46,6 @@ declare global {
     __webInkEngine?: EngineBridge;
   }
 }
-
-type RawResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
 /** Stop legacy closures before creating a new view; never reuse their bridges. */
 export function disposeContentRuntime(): void {
@@ -100,14 +98,6 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     toggle.update({ enabled, blocked, busy, language });
     menu.update({ language, items: menuItems() });
   };
-  const raw = async <T>(message: object): Promise<T> => {
-    const response = (await chrome.runtime.sendMessage(message)) as
-      | RawResult<T>
-      | undefined;
-    if (!response) throw new Error("Extension unavailable.");
-    if (!response.ok) throw new Error(response.error);
-    return response.data;
-  };
   const stopEngine = (force = false): boolean => {
     const bridge = window.__webInkEngine;
     if (!bridge || bridge.generation !== health.generation) return true;
@@ -127,7 +117,7 @@ export function startBootstrap(health: RuntimeHealth): () => void {
     if (bridge?.generation !== health.generation) bridge = undefined;
     bridge?.start(health.generation);
     if (bridge) return true;
-    await raw<boolean>({ type: "engine.ensure", pageUrl: currentUrl });
+    await request<boolean>({ type: "engine.ensure", pageUrl: currentUrl });
     // executeScript completes before the background response; retain this guard for
     // an extension reload or a document navigation in the intervening microtask.
     if (disposed || closing || !enabled || blocked || pageKey(location.href) !== currentUrl) return false;
@@ -181,7 +171,11 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   };
   const setEnabled = async (next: boolean, selectionTools = true): Promise<boolean> => {
     if (disposed || busy || closing || blocked || (!next && window.__webInkEngine && !window.__webInkEngine.canStop(health.generation)))
-      return false; const version = ++modeReadVersion; busy = true; closing = !next; updateToggle();
+      return false;
+    const version = ++modeReadVersion;
+    busy = true;
+    closing = !next;
+    updateToggle();
     const url = pageKey(location.href);
     const epoch = permissionEpoch;
     let changed = false;
@@ -278,81 +272,10 @@ export function startBootstrap(health: RuntimeHealth): () => void {
   let preparationPhase: string | undefined;
   let preparationError = '';
   let preparationDiagnostic: string | undefined;
-  const menuItems = (): PaletteMenuItem[] => {
-    const zh = language === "zh-CN";
-    const items: PaletteMenuItem[] = [];
-    const labeledCandidates = (candidates: PdfTabContext["candidates"]) => {
-      const named = candidates.map(candidate => {
-        const url = new URL(candidate.url);
-        return { candidate, filename: url.pathname.split("/").pop() || url.hostname };
-      });
-      const nameCounts = new Map<string, number>();
-      for (const { filename } of named) nameCounts.set(filename, (nameCounts.get(filename) || 0) + 1);
-      return named.map(({ candidate, filename }) => ({
-        candidate,
-        sourceLabel: nameCounts.get(filename)! > 1 ? `${filename} · ${candidate.url}` : filename,
-      }));
-    };
-    const isIeeeCandidate = (candidate: PdfTabContext["candidates"][number]) => {
-      const url = new URL(candidate.url);
-      return url.origin === "https://ieeexplore.ieee.org" && !url.username && !url.password;
-    };
-    if (menuContext?.publisher === "ieee") {
-      const label = zh ? "标注当前 PDF" : "Annotate this PDF";
-      const ieeeCandidates = menuContext.candidates.filter(isIeeeCandidate);
-      const publicCandidates = menuContext.candidates.filter(candidate => !isIeeeCandidate(candidate));
-      if (!ieeeCandidates.length) {
-        items.push({
-          action: "open-ieee",
-          icon: "pdf",
-          primary: true,
-          label,
-        });
-      } else {
-        for (const { candidate, sourceLabel } of labeledCandidates(ieeeCandidates)) {
-          items.push({
-            action: "open-ieee",
-            icon: "pdf",
-            primary: true,
-            label: ieeeCandidates.length === 1 ? label : `${label}: ${sourceLabel}`,
-            candidateUrl: candidate.url,
-          });
-        }
-      }
-      for (const { candidate, sourceLabel } of labeledCandidates(publicCandidates)) {
-        items.push({
-          action: "open-pdf",
-          icon: "pdf",
-          primary: true,
-          label: `${zh ? "打开" : "Open"} ${sourceLabel}`,
-          candidateUrl: candidate.url,
-        });
-      }
-    } else if (menuContext?.candidates.length) {
-      for (const { candidate, sourceLabel } of labeledCandidates(menuContext.candidates)) {
-        items.push({ action: "open-pdf", icon: "pdf", primary: true,
-          label: menuContext.candidates.length === 1 ? zh ? "标注当前 PDF" : "Annotate this PDF" : `${zh ? "打开" : "Open"} ${sourceLabel}`,
-          candidateUrl: candidate.url });
-      }
-    } else if (menuContext?.reason === "not-pdf" && !getPdfContext(location.href)) {
-      if (enabled && !selectionToolsEnabled)
-        items.push({ action: "selection-tools", icon: "highlight", primary: true, disabled: blocked,
-          label: zh ? "开启选字工具" : "Enable selection tools" });
-      items.push({ action: "toggle", icon: "highlight", primary: true, disabled: blocked,
-        label: zh ? enabled ? "关闭本页标注" : "开启本页标注"
-          : enabled ? "Disable page annotations" : "Enable page annotations" });
-    }
-    items.push(
-      { action: "sidebar", icon: "note", label: zh ? "本篇标注" : "Page annotations" },
-      { action: "library", icon: "library", label: zh ? "资料库" : "Library" },
-      { action: "local-pdf", icon: "pdf", label: zh ? "打开本地 PDF…" : "Open local PDF…" },
-    );
-    if (opening && menuContext?.publisher === 'ieee') {
-      if (items[0]) items[0].label = pdfPreparationLabel(preparationPhase, language);
-      items.push({ action: 'cancel', icon: 'close', label: zh ? '取消读取' : 'Cancel reading' });
-    }
-    return items;
-  };
+  const menuItems = () => paletteItems({
+    context: menuContext, pageUrl: location.href, language, enabled,
+    selectionToolsEnabled, blocked, opening, preparationPhase,
+  });
   const loadMenu = async () => {
     if (opening) { menu.update({ pending: true, items: menuItems(), status: pdfPreparationLabel(preparationPhase, language) }); return; }
     const epoch = ++menuEpoch;

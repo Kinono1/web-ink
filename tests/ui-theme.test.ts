@@ -85,7 +85,8 @@ describe('shared UI presentation contract', () => {
     expect(Object.values(ICON_PATHS).join('')).not.toContain('<svg');
   });
   it('keeps every page-switch transition within the shared 120ms motion cap', () => {
-    const css = readFileSync(resolve('src/ui/management.css'), 'utf8');
+    const css = ['management-common.css', 'management.css']
+      .map(file => readFileSync(resolve('src/ui', file), 'utf8')).join('\n');
     expect(css).toContain('transition: background-color var(--ink-motion-fast) ease;');
     expect(css).toContain('transition: transform var(--ink-motion-fast) ease;');
     expect(css).not.toContain('0.16s ease');

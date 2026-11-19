@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Icon } from "../ui/management/helpers";
+import { Icon } from "../ui/shared/Icon";
 import { PdfTextSearchIndex, type PdfSearchMatch, type PdfSearchProgress, type PdfSearchResult } from "./search";
 import type { Language } from "../core/model";
 import type { OpenDocument } from "../core/pdf-types";

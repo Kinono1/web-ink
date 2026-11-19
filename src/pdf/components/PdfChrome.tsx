@@ -1,5 +1,5 @@
 import { COLORS } from "../../core/model";
-import { Icon } from "../../ui/management/helpers";
+import { Icon } from "../../ui/shared/Icon";
 import { type PdfRotation, PDF_MIN_ZOOM, PDF_MAX_ZOOM } from "../reading-position";
 import { PdfFind } from "../PdfFind";
 import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";

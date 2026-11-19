@@ -1,10 +1,11 @@
 import 'fake-indexeddb/auto';
 import Dexie from 'dexie';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebInkDatabase, setDatabaseForTesting } from '../src/background/database';
 import { handleDataRequest } from '../src/background/data';
 import type { Annotation, Settings } from '../src/core/model';
 import { SELECTION_TOOLBAR_KEY } from '../src/core/selection-toolbar';
+import { MAX_REVISION } from '../src/core/validation';
 
 const pageUrl = 'https://example.test/article?topic=ink';
 const otherPageUrl = 'https://other.test/page';
@@ -84,6 +85,49 @@ describe('handleDataRequest annotation boundary', () => {
       .toMatchObject({ ok: false, code: 'INVALID_INPUT' });
   });
 
+  it.each(['constructor', 'toString', '__proto__'])('rejects inherited operation names as invalid input: %s', async (type) => {
+    await expect(handleDataRequest({ type }, { trusted: true }))
+      .resolves.toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+  });
+
+  it('rolls back an annotation when the statistics write fails and keeps private values out of logs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(db.stats, 'put').mockRejectedValueOnce(new Error('private fixture note and URL'));
+    const result = await handleDataRequest({
+      type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0,
+    }, { trusted: true });
+
+    expect(result).toEqual({ ok: false, code: 'INTERNAL', error: 'Storage request failed.' });
+    expect(warn.mock.calls).toEqual([['[Web Ink background]', 'storage request', 'INTERNAL']]);
+    expect(await db.annotations.count()).toBe(0);
+    expect(await db.pages.count()).toBe(0);
+  });
+
+  it('deletes a record at the revision ceiling and publishes its committed page', async () => {
+    const record = textAnnotation('revision-ceiling', MAX_REVISION);
+    await db.annotations.put(record);
+    let recordAtNotification: Annotation | undefined;
+    const annotationDeleted = vi.fn(async (_page: string, id: string) => {
+      recordAtNotification = await db.annotations.get(id);
+    });
+    const context = { trusted: false, pageUrl, annotationDeleted };
+
+    await expect(handleDataRequest({
+      type: 'annotations.put', annotation: record, expectedRevision: MAX_REVISION,
+    }, context)).resolves.toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+    expect(annotationDeleted).not.toHaveBeenCalled();
+    await expect(handleDataRequest({
+      type: 'annotations.delete', id: record.id, expectedRevision: MAX_REVISION,
+    }, context)).resolves.toEqual({ ok: true, data: { id: record.id, deleted: true } });
+    expect(annotationDeleted).toHaveBeenCalledExactlyOnceWith(pageUrl, record.id);
+    await annotationDeleted.mock.results[0]!.value;
+    expect(recordAtNotification).toBeUndefined();
+    expect(await db.tombstones.get(record.id)).toMatchObject({ revision: MAX_REVISION, pageUrl });
+    await expect(handleDataRequest({ type: 'annotations.restore', annotation: record }, context))
+      .resolves.toMatchObject({ ok: false, code: 'INVALID_INPUT' });
+    expect(await db.annotations.get(record.id)).toBeUndefined();
+  });
+
   it('commits a create once and returns the same record for an identical retry', async () => {
     const request = { type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 };
     const first = await handleDataRequest(request, { trusted: false, pageUrl });
@@ -152,19 +196,24 @@ describe('settings and backup import boundary', () => {
     const localSettings: Settings = { language: 'en', defaultColor: '#ffffff', disabledOrigins: ['https://blocked.test'] };
     await handleDataRequest({ type: 'settings.put', settings: localSettings }, { trusted: true });
     await handleDataRequest({ type: 'annotations.put', annotation: textAnnotation(), expectedRevision: 0 }, { trusted: true });
+    await handleDataRequest({ type: 'page.mode.put', pageUrl, enabled: true, selectionTools: false }, { trusted: true });
     const conflicting = { ...textAnnotation(), note: 'from backup', revision: 7 };
-    const added = textAnnotation('annotation-2');
+    const first = { ...textAnnotation('annotation-2'), pageTitle: 'First title', updatedAt: '2026-09-18T00:02:00.000Z' };
+    const last = { ...textAnnotation('annotation-3'), pageTitle: 'Last imported title' };
     const backup = {
       format: 'web-ink', schemaVersion: 1, exportedAt: '2026-09-18T03:00:00.000Z',
-      annotations: [conflicting, added],
+      annotations: [conflicting, first, last],
       settings: { language: 'zh-CN', defaultColor: '#000000', disabledOrigins: [] },
     };
-    expect(await handleDataRequest({ type: 'backup.preview', backup }, { trusted: true }))
-      .toEqual({ ok: true, data: { added: 1, identical: 0, conflicts: 1, total: 2 } });
-    expect(await handleDataRequest({ type: 'backup.import', backup, overwrite: false }, { trusted: true }))
-      .toEqual({ ok: true, data: { added: 1, identical: 0, conflicts: 1, total: 2 } });
+    const preview = { ok: true, data: { added: 2, identical: 0, conflicts: 1, total: 3 } };
+    expect(await handleDataRequest({ type: 'backup.preview', backup }, { trusted: true })).toEqual(preview);
+    expect(await handleDataRequest({ type: 'backup.import', backup, overwrite: false }, { trusted: true })).toEqual(preview);
     expect((await db.annotations.get('annotation-1'))?.note).toBe('A note');
-    expect((await db.annotations.get('annotation-2'))?.revision).toBe(0);
+    expect((await db.annotations.get(first.id))?.revision).toBe(0);
+    expect(await db.pages.get(pageUrl)).toEqual({
+      url: pageUrl, title: last.pageTitle, updatedAt: last.updatedAt,
+      enabled: true, modeOverride: true, manualSelectionTools: false,
+    });
     expect(await handleDataRequest({ type: 'settings.get' }, { trusted: true })).toEqual({ ok: true, data: { ...localSettings, theme: 'system', reduceMotion: false, reduceTransparency: false } });
   });
 

@@ -44,7 +44,7 @@ Chrome 120 起支持网页标注，PDF 阅读器要求 Chrome 125 或更高。�
 
 ## 支持边界
 
-支持普通网页文字、图片，以及基础 PDF 文字和区域标注。iframe、网页自身 Shadow DOM、canvas、浏览器内部页不属于网页标注范围。PDF 单文件上限 50 MiB；不支持 OCR 或修改 PDF 原文件。普通在线 PDF 使用公开 HTTPS 读取；IEEE 支持明确操作启用的同源登录会话读取，不泛化到其他网站。登录、跳转或密码加密文档的边界请参考[详细说明](docs/USAGE.zh-CN.md)。
+支持普通网页文字、已有图片标注，以及基础 PDF 文字和区域标注。iframe、网页自身 Shadow DOM、canvas、浏览器内部页不属于网页标注范围。PDF 单文件上限 50 MiB；不支持 OCR 或修改 PDF 原文件。普通在线 PDF 使用公开 HTTPS 读取；IEEE 支持明确操作启用的同源登录会话读取，不泛化到其他网站。登录、跳转或密码加密文档的边界请参考[详细说明](docs/USAGE.zh-CN.md)。
 
 ## 项目结构
 
@@ -62,9 +62,13 @@ docs/              产品、设计和使用说明
 skills/            只读标注查询 skill
 ```
 
+[模块边界与内部 API](docs/ARCHITECTURE.md) · [代码审查与技术债](docs/CODE-AUDIT.md)
+
 ## 开发与验证
 
-使用 Node 24.15 或兼容版本及提交的锁文件：
+在仓库根目录使用 Node.js 24.15.0 或 `package.json` 支持的版本。运行 `npm ci` 后，使用 `npm run dev` 启动 WXT 开发模式。手动验证时运行 `npm run build`，在测试用 Chrome 配置文件的扩展页面加载 `.build-output/chrome-mv3`。正式安装和更新按[发布流程](docs/RELEASING.md)执行。
+
+提交前可运行以下检查。
 
 ```sh
 npm ci
@@ -80,11 +84,11 @@ npm run test:benchmark
 npm run zip
 ```
 
-`npm run test:coverage` 同时运行单元测试，统计 `src/` 和 `entrypoints/`；行与语句覆盖率门槛为 80%，函数为 75%，分支为 70%。报告默认写入 `coverage/`，可用 `WEB_INK_COVERAGE_DIR` 指定临时目录。只运行单元测试时使用 `npm test`。
+`npm run test:coverage` 同时运行单元测试，统计 `src/` 和 `entrypoints/`；行覆盖率门槛为 85%，语句为 80%，函数为 75%，分支为 70%。报告默认写入 `coverage/`，可用 `WEB_INK_COVERAGE_DIR` 指定临时目录。只运行单元测试时使用 `npm test`。
 
 `npm run test:benchmark` 使用合成网页、万条标注和最高 1000 页 PDF，在独立临时 profile 中测量。CI 检查样本数量、最多 3 个页面 canvas，以及关闭文档后没有残留 PDF worker。耗时和 GC 后的主页面堆大小供同环境比较；主页面堆不代表整个浏览器内存，耗时也不作为跨机器的固定门槛。运行基准时避免同时构建或测试。
 
-完整浏览器回归需要两份已核验的旧构建：`WEB_INK_OLD_BUILD` 指向校验过的 v0.3.0 解压包，`WEB_INK_RELOAD_OLD_BUILD` 指向提交 `d37555855f4d3f8cec0bbd27d28de8afa12f49fc` 的 v0.3.1 构建。CI 自动准备；本地运行方法见[发布流程](docs/RELEASING.md)。缺少基线会失败，不跳过升级验收。
+完整浏览器回归使用 Playwright Chromium，并需要两份已核验的旧构建。`WEB_INK_OLD_BUILD` 指向校验过的 v0.3.0 解压包，`WEB_INK_RELOAD_OLD_BUILD` 指向提交 `d37555855f4d3f8cec0bbd27d28de8afa12f49fc` 的 v0.3.1 构建。CI 自动准备；本地运行方法见[发布流程](docs/RELEASING.md)。缺少基线会失败，不跳过升级验收。
 
 **清理构建产物：** 清理超过七天的暂存 ZIP 和校验文件，不清理安装目录、恢复备份或浏览器 profile：
 

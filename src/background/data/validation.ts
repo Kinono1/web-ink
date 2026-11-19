@@ -1,12 +1,15 @@
-import type { Annotation, ImportPreview, PageRecord, Result } from "../../core/model";
+import type { Annotation, PageRecord, Result } from "../../core/model";
 import { MAX_REVISION, ValidationError } from "../../core/validation";
 import { pageKey } from "../../core/url";
+import { fail } from "../request-result";
 
 export interface DataRequestContext {
   trusted: boolean;
   pageUrl?: string;
   /** Stable background-derived browser document identity for query cancellation. */
   callerKey?: string;
+  /** Publish the page determined by the committed deletion. */
+  annotationDeleted?: (pageUrl: string, id: string) => Promise<void>;
 }
 
 /** Closed set of data messages; shapes are validated by `parseMessage`. */
@@ -27,11 +30,6 @@ export type KnownMessage =
   | { type: "backup.preview"; backup: unknown }
   | { type: "backup.import"; backup: unknown; overwrite: unknown };
 
-export const ok = <T,>(data: T): Result<T> => ({ ok: true, data });
-export const fail = (error: string, code?: string): Result<never> =>
-  ({ ok: false, error, ...(code === undefined ? {} : { code }) });
-export const invalid = (error: string): Result<never> => fail(error, "INVALID_INPUT");
-
 export function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) &&
     Object.getPrototypeOf(value) === Object.prototype ? (value as Record<string, unknown>) : undefined;
@@ -39,7 +37,7 @@ export function record(value: unknown): Record<string, unknown> | undefined {
 
 export function hasOnly(value: Record<string, unknown>, required: string[], optional: string[] = []): boolean {
   const allowed = new Set([...required, ...optional]);
-  return required.every((key) => key in value) && Object.keys(value).every((key) => allowed.has(key));
+  return required.every((key) => Object.hasOwn(value, key)) && Object.keys(value).every((key) => allowed.has(key));
 }
 
 /** Required/optional keys per protocol type; a table keeps the union and parser in sync. */
@@ -63,7 +61,8 @@ const MESSAGE_SHAPES: Record<string, { required: string[]; optional?: string[] }
 
 export function parseMessage(value: unknown): KnownMessage | undefined {
   const message = record(value);
-  if (!message || typeof message.type !== "string") return undefined;
+  if (!message || typeof message.type !== "string" || !Object.hasOwn(MESSAGE_SHAPES, message.type))
+    return undefined;
   const shape = MESSAGE_SHAPES[message.type];
   return shape && hasOnly(message, shape.required, shape.optional) ? (message as KnownMessage) : undefined;
 }
@@ -92,10 +91,10 @@ export function pageKeyForMode(value: unknown, name: string, trusted: boolean): 
   return canonicalPageUrl(value, name);
 }
 
-export function validExpectedRevision(value: unknown): number {
+export function validExpectedRevision(value: unknown, maximum = MAX_REVISION - 1): number {
   // A put always advances revision by one, so accepting MAX_REVISION would create
   // a record that the persistent schema itself rejects.
-  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) >= MAX_REVISION)
+  if (!Number.isSafeInteger(value) || (value as number) < 0 || (value as number) > maximum)
     throw new ValidationError("expectedRevision must be a non-negative integer");
   return value as number;
 }
@@ -106,7 +105,7 @@ export function validId(value: unknown): string {
   return value;
 }
 
-export function stableJson(value: unknown): string {
+function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (value && typeof value === "object") {
     const source = value as Record<string, unknown>;
@@ -139,19 +138,6 @@ export function isPdfAnnotation(
   annotation: Annotation,
 ): annotation is Extract<Annotation, { kind: "pdf-text" | "pdf-area" }> {
   return annotation.kind === "pdf-text" || annotation.kind === "pdf-area";
-}
-
-export function classifyImport(incoming: Annotation[], existing: Array<Annotation | undefined>): ImportPreview {
-  let added = 0, identical = 0, conflicts = 0;
-  for (let index = 0; index < incoming.length; index += 1) {
-    const candidate = incoming[index];
-    if (!candidate) continue;
-    const local = existing[index];
-    if (!local) added += 1;
-    else if (sameAnnotation(local, candidate)) identical += 1;
-    else conflicts += 1;
-  }
-  return { added, identical, conflicts, total: incoming.length };
 }
 
 export function queryOwner(context: DataRequestContext): string {

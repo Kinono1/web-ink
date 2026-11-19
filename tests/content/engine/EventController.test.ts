@@ -15,7 +15,7 @@ it("releases DOM and Chrome storage callbacks even if extension APIs are invalid
   } } });
   const engine = {
     view: createView(), enabled: () => false, settings: DEFAULT_SETTINGS,
-    data: { schedulePaint: () => { paints++; }, queueRefresh() {} },
+    data: { schedulePaint: () => { paints++; }, sync: { queueRefresh() {} } },
   } as unknown as UIControllerHost;
   const events = new UIController(engine);
   events.start();

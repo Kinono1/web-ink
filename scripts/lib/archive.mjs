@@ -2,6 +2,7 @@ import { createZip } from '@aklinker1/zero-zip';
 import { inflateRawSync, crc32 } from 'node:zlib';
 import assert from 'node:assert/strict';
 import { fileHashes } from './runtime.mjs';
+import { isRuntimePath } from './integrity.mjs';
 
 export async function packFiles(files) {
   const archive = createZip({ level: 9 });
@@ -18,14 +19,14 @@ export function unpackFiles(bytes) {
   const count = bytes.readUInt16LE(end + 10), size = bytes.readUInt32LE(end + 12);
   let cursor = bytes.readUInt32LE(end + 16), total = 0;
   if (count === 65535 || cursor + size !== end) throw Error('Invalid or ZIP64 directory');
-  const files = {};
+  const files = Object.create(null);
   for (let i = 0; i < count; i++) {
     if (bytes.readUInt32LE(cursor) !== 0x02014b50) throw Error('Invalid ZIP directory');
     const method = bytes.readUInt16LE(cursor + 10), checksum = bytes.readUInt32LE(cursor + 16);
     const compressed = bytes.readUInt32LE(cursor + 20), expanded = bytes.readUInt32LE(cursor + 24);
     const nameLength = bytes.readUInt16LE(cursor + 28), extraLength = bytes.readUInt16LE(cursor + 30), commentLength = bytes.readUInt16LE(cursor + 32);
     const name = bytes.subarray(cursor + 46, cursor + 46 + nameLength).toString('utf8');
-    if (!name || name.startsWith('/') || name.includes('\\') || name.split('/').some(part => !part || part === '.' || part === '..') || Object.hasOwn(files, name)) throw Error('Unsafe ZIP path');
+    if (!isRuntimePath(name) || Object.hasOwn(files, name)) throw Error('Unsafe ZIP path');
     if ((bytes.readUInt16LE(cursor + 8) & 1) || (bytes.readUInt32LE(cursor + 38) >>> 16 & 0xf000) === 0xa000) throw Error('Encrypted or linked ZIP entry');
     total += expanded;
     if (total > 64 * 1024 * 1024) throw Error('Expanded archive too large');

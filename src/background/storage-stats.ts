@@ -29,16 +29,23 @@ function applyPage(target: LibraryStatsRecord, page: PageRecord, direction: 1 | 
   target.pageBytes += direction * bytes(page);
 }
 
-/** Called inside the caller's Dexie transaction; it never walks the annotation table. */
-export async function applyIncrementalStats(change: {
-  beforeAnnotation?: Annotation; afterAnnotation?: Annotation; beforePage?: PageRecord; afterPage?: PageRecord;
-}): Promise<void> {
+export type StatsChange = {
+  beforeAnnotation?: Annotation;
+  afterAnnotation?: Annotation;
+  beforePage?: PageRecord;
+  afterPage?: PageRecord;
+};
+
+/** Apply all deltas with one stats read/write inside the caller's transaction. */
+export async function applyIncrementalStats(changes: readonly StatsChange[]): Promise<void> {
   const db = getDatabase();
   const stats = structuredClone((await db.stats.get("library")) ?? emptyStats());
-  if (change.beforeAnnotation) applyAnnotation(stats, change.beforeAnnotation, -1);
-  if (change.afterAnnotation) applyAnnotation(stats, change.afterAnnotation, 1);
-  if (change.beforePage) applyPage(stats, change.beforePage, -1);
-  if (change.afterPage) applyPage(stats, change.afterPage, 1);
+  for (const change of changes) {
+    if (change.beforeAnnotation) applyAnnotation(stats, change.beforeAnnotation, -1);
+    if (change.afterAnnotation) applyAnnotation(stats, change.afterAnnotation, 1);
+    if (change.beforePage) applyPage(stats, change.beforePage, -1);
+    if (change.afterPage) applyPage(stats, change.afterPage, 1);
+  }
   await db.stats.put(stats);
 }
 

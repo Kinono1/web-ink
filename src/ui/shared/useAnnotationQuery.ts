@@ -5,12 +5,11 @@ import type {
   AnnotationPage,
   AnnotationQuery,
 } from "../../core/model";
-import type { FilterKind, Mode } from "./types";
 
 type QueryOptions = {
-  mode: Mode;
+  mode: "library" | "sidepanel";
   pageUrl?: string;
-  kind: FilterKind;
+  kind: Annotation["kind"] | "all";
   color: string;
   tag: string;
   query: string;
@@ -75,16 +74,11 @@ export function useAnnotationQuery(
           page.cancelled
         )
           return;
-        setRecords((old) =>
-          append
-            ? [
-                ...old,
-                ...page.items.filter(
-                  (item) => !old.some((record) => record.id === item.id),
-                ),
-              ]
-            : page.items,
-        );
+        setRecords((old) => {
+          if (!append) return page.items;
+          const loadedIds = new Set(old.map(record => record.id));
+          return [...old, ...page.items.filter(item => !loadedIds.has(item.id))];
+        });
         setNextCursor(page.nextCursor);
         if (!append) callbacks.current.onFirstPage(page.items);
       } catch (cause) {

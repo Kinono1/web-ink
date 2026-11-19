@@ -21,11 +21,7 @@ export class AnnotationController {
   readonly data: DataEngine;
   readonly ui: UIController;
 
-  // Compatibility accessors for the ContentEngine bridge and its tests.
-  get store() { return this.data; }
-  get render() { return this.data; }
-  get save() { return this.data; }
-  get sync() { return this.data; }
+  get sync() { return this.data.sync; }
 
   constructor(readonly view: ReturnType<typeof createView>) {
     this.notifications = createNotifications(this.view.toast);
@@ -38,7 +34,7 @@ export class AnnotationController {
       this.stop();
       throw error;
     }
-    void this.data.refresh();
+    void this.sync.refresh();
   }
 
   private zh = () => this.settings.language === "zh-CN";
@@ -96,12 +92,12 @@ export class AnnotationController {
       });
       if (this.disposed) return false;
       if (pageKey(location.href) !== url) {
-        this.data.queueRefresh();
+        this.sync.queueRefresh();
         return false;
       }
       this.pageEnabled = result.enabled;
       this.notifications.hide();
-      await this.data.refresh();
+      await this.sync.refresh();
       return this.enabled();
     } catch (error) {
       this.fail(error);
@@ -114,18 +110,18 @@ export class AnnotationController {
   private withPageEnabled = async (action: () => void) => {
     const url = pageKey(location.href);
     const actionGeneration = this.actionGeneration;
-    const pending = !this.modeReady || this.data.restoreFailed || this.currentUrl !== url ? this.data.refresh(true) : undefined;
-    const navigationGeneration = this.data.navigationGeneration;
+    const pending = !this.modeReady || this.sync.restoreFailed || this.currentUrl !== url ? this.sync.refresh(true) : undefined;
+    const navigationGeneration = this.sync.navigationGeneration;
     if (pending) await pending;
     if (
       this.disposed || this.stopped || this.actionGeneration !== actionGeneration ||
-      this.data.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
+      this.sync.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
     ) return;
-    if (!this.modeReady || this.data.restoreFailed) return;
+    if (!this.modeReady || this.sync.restoreFailed) return;
     if (!this.enabled() && !(await this.changePageMode(true))) return;
     if (
       this.disposed || this.stopped || this.actionGeneration !== actionGeneration ||
-      this.data.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
+      this.sync.navigationGeneration !== navigationGeneration || pageKey(location.href) !== url
     ) return;
     action();
   };
@@ -153,10 +149,10 @@ export class AnnotationController {
       manual(this.label("没有可预览的候选。可手动选择原文，再点击高亮颜色确认。", "No candidate can be previewed. Select the intended text and apply a color to confirm."));
       return;
     }
-    const generation = this.data.navigationGeneration;
+    const generation = this.sync.navigationGeneration;
     let index = 0;
     const show = () => {
-      if (!this.enabled() || this.ui.rebinding !== record || this.data.navigationGeneration !== generation) {
+      if (!this.enabled() || this.ui.rebinding !== record || this.sync.navigationGeneration !== generation) {
         cancel();
         return;
       }
@@ -193,7 +189,7 @@ export class AnnotationController {
                   candidate.endContainer === end.node && candidate.endOffset === end.offset);
             } catch { /* Detached or changed selections are rejected below. */ }
             const stable = this.enabled() && this.ui.rebinding === record &&
-              this.data.navigationGeneration === generation && current?.revision === record.revision &&
+              this.sync.navigationGeneration === generation && current?.revision === record.revision &&
               contextUnchanged && !this.data.pendingSave && !this.data.unsaved && range.startContainer === start.node &&
               range.startOffset === start.offset && range.endContainer === end.node && range.endOffset === end.offset;
             if (!stable) {
@@ -221,7 +217,7 @@ export class AnnotationController {
   dispatch = (action: "focus" | "rebind" | "draw" | "refresh", id?: string) => {
     if (this.disposed) return;
     if (action === "refresh") {
-      void this.data.refresh(true);
+      void this.sync.refresh(true);
       return;
     }
     if (action === "focus") {
@@ -245,9 +241,9 @@ export class AnnotationController {
       return;
     }
     this.ui.rebinding = record;
-    if (record.kind === "image") this.ui.startDrawing();
+    if (record.kind === "image") this.ui.startImageRebind();
     else {
-      this.ui.exitDrawing();
+      this.ui.exitImageRebind();
       this.previewRebind(record);
     }
   };
@@ -270,9 +266,9 @@ export class AnnotationController {
     if (message.type === "permissions.revoked") {
       this.stopped = true;
       this.actionGeneration++;
-      this.data.cancelPendingRefresh();
+      this.sync.cancelPendingRefresh();
       this.data.clearText();
-      this.ui.exitDrawing();
+      this.ui.exitImageRebind();
       this.view.svg.replaceChildren();
       this.ui.mutationObserver.disconnect();
       this.data.textSession.invalidate();
@@ -280,14 +276,14 @@ export class AnnotationController {
     }
     if (message.type === "permissions.restored") {
       this.stopped = false;
-      void this.data.refresh();
+      void this.sync.refresh();
     }
     if (message.type === "annotations.changed") {
       if (!this.data.applyAnnotationDelta( message.annotation, message.deletedId, message.pageUrl))
-        void this.data.refresh();
+        void this.sync.refresh();
     }
     if (message.type === "settings.changed" || message.type === "page.mode.changed")
-      void this.data.refresh();
+      void this.sync.refresh();
     return false;
   };
 
@@ -296,7 +292,7 @@ export class AnnotationController {
     this.disposed = true;
     this.actionGeneration++;
     this.ui.stop();
-    this.data.disposeSync();
+    this.sync.dispose();
     this.data.disposeRender();
     this.notifications.dispose();
     this.ui.hideSelection();
