@@ -1,49 +1,27 @@
 import type { PdfAnnotationFilter } from "../../core/sidebar";
-import { NativePdfAnnotations, nativePdfRect } from "../native-annotations";
+import { nativePdfRect } from "../native-annotations";
 import { fromPdfRect } from "../geometry";
 import { errorText, type NativePdfAnnotation } from "../../core/pdf-types";
-import { useMemo, useCallback, useEffect, useRef, useState } from "react";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { useCallback, useEffect } from "react";
+import type { ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  NativeNotesState,
+  ExportState,
+} from "./reader-state";
 
-export function useNativeAnnotationsState() {
-  const originalNotes = useRef<NativePdfAnnotations | undefined>(undefined);
-  const nativeScan = useRef<AbortController | undefined>(undefined);
-  const [nativeRecords, setNativeRecords] = useState<NativePdfAnnotation[]>([]);
-  const [nativeFilter, setNativeFilter] = useState<PdfAnnotationFilter>("web-ink");
-  const [nativeLoading, setNativeLoading] = useState(false);
-  const [nativeProgress, setNativeProgress] = useState<{ completed: number; total: number }>();
-  const [nativeError, setNativeError] = useState("");
-  const [nativeOffset, setNativeOffset] = useState(0);
-  const nativeLimit = 50;
-  const nativeHistory = useRef<number[]>([]);
-  const nativeWindow = useMemo(() => {
-    const records: NativePdfAnnotation[] = [];
-    const encoder = new TextEncoder();
-    let bytes = 2, end = nativeOffset, oversized = false;
-    while (end < nativeRecords.length && records.length < nativeLimit) {
-      const record = nativeRecords[end]!;
-      const recordBytes = encoder.encode(JSON.stringify(record)).byteLength;
-      const nextBytes = bytes + recordBytes + (records.length ? 1 : 0);
-      if (nextBytes > 4 * 1024 * 1024) {
-        if (!records.length) { end++; oversized = true; }
-        break;
-      }
-      records.push(record);
-      bytes = nextBytes;
-      end++;
-    }
-    return { records, end, oversized };
-  }, [nativeRecords, nativeOffset]);
-  return {
-    nativeWindow,
-    originalNotes, nativeScan, nativeRecords, setNativeRecords, nativeFilter, setNativeFilter,
-    nativeLoading, setNativeLoading, nativeProgress, setNativeProgress, nativeError,
-    setNativeError, nativeOffset, setNativeOffset, nativeLimit, nativeHistory,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "documentSession" | "documentSessionRef" | "exportController" | "intentEpoch" | "nativeFocus" | "nativeHistory" | "nativeOffset" | "nativeRecords" | "nativeScan" | "nativeWindow" | "opened" | "originalNotes" | "rotation" | "setNativeError" |
-  "setNativeFilter" | "setNativeLoading" | "setNativeOffset" | "setNativeProgress" | "setNativeRecords" | "setPicked" | "setPositionEpoch" | "zoom">;
+type Inputs =
+  Pick<DocumentSessionState, "documentSession" | "documentSessionRef" | "opened"> &
+  Pick<ViewportState, "intentEpoch" | "nativeFocus" | "rotation" | "setPositionEpoch" | "zoom"> &
+  Pick<AnnotationState, "setPicked"> &
+  Pick<NativeNotesState,
+    "nativeHistory" | "nativeOffset" | "nativeRecords" | "nativeScan" | "nativeWindow"
+    | "originalNotes" | "setNativeError" | "setNativeFilter" | "setNativeLoading" | "setNativeOffset"
+    | "setNativeProgress" | "setNativeRecords"
+  > &
+  Pick<ExportState, "exportController">;
 
 export function useNativeAnnotations(state: Inputs, actions: ReaderActionsRef<"jump">,) {
   const { documentSession, documentSessionRef, exportController, intentEpoch, nativeFocus, nativeHistory, nativeOffset, nativeRecords,

@@ -4,7 +4,8 @@ import type { PdfNoteDraft } from "../../core/sidebar";
 import { NativePdfNote, PdfAnnotationFilters } from "./PdfAnnotationParts";
 import { errorText } from "../../core/pdf-types";
 import { Icon } from "../../ui/shared/Icon";
-import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
+import type { ReaderActions } from "../hooks/contracts";
+import type { ReaderSnapshot } from "../hooks/reader-state";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
 type Props = { state: ReaderSnapshot; actions: ReaderActions };

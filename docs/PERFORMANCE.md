@@ -1,5 +1,20 @@
 # v0.3 performance evidence
 
+## Tag query comparison (2026-11-20)
+
+The Mac comparison used Chromium 153.0.8010.12 and Node.js 24.18.0. Both builds queried 10,000 synthetic annotations, with 100 carrying the sparse tag and 8,000 carrying the popular tag. The A/A control used the sealed `9a05411` build on both sides and measured sparse-tag P95 at 45.3 and 45.7 ms. The A/B comparison used that baseline and the local candidate in A → B → B → A order, with 60 measured requests per build and workload after warmup.
+
+| First-page workload | P95 before | P95 after | Annotation rows read before → after |
+| --- | ---: | ---: | ---: |
+| Sparse tag | 48.7 ms | 2.2 ms | 6,681 → 100 |
+| Popular tag | 2.4 ms | 3.0 ms | 281 → 281 |
+| Absent tag | 68.6 ms | 0.4 ms | 10,000 → 0 |
+| Sparse tag with text | 69.6 ms | 2.1 ms | 10,000 → 100 |
+
+Row counts come from a separate pass that observes native IndexedDB results. The popular tag adds one probe returning 129 primary keys before the ordered scan. Sparse matches load at most 128 records in one read transaction and retain the descending `[updatedAt, id]` cursor order. First and continuation pages matched the fixture reference, and a pre-cancelled tag request returned the cancelled result. The reported times cover this synthetic workload and browser.
+
+The separate full webpage and PDF pairing first exceeded the library first-screen P95 budget at 32.4 → 53.2 ms. A full repeat with the same builds measured 32.7 → 33.2 ms and passed all 13 timing gates. Both runs met the PDF canvas and worker limits.
+
 ## Local working-tree comparison (2026-10-31)
 
 On the same Mac with headless Chromium 153.0.8010.12, the existing benchmark compared clean `4a55ef6` with this working-tree candidate. The candidate was uncommitted (`dirty: true`), so its build identity is not a release. Each P95 below uses 60 samples per build, collected in baseline–candidate–candidate–baseline order after warmups. All configured latency and PDF resource gates passed for these synthetic fixtures.
@@ -52,7 +67,7 @@ only external browser/message boundaries are faked. Counts exclude mounting.
 
 These deterministic workloads demonstrate fewer redundant executions. Single-run
 jsdom elapsed times do not establish a browser latency improvement. Reproduce the
-counts with `npm test -- tests/pdf-reader-ui.test.ts
+counts with `npm test -- tests/pdf-reader/viewport.test.ts
 tests/management-dependencies.test.ts --silent=false`.
 
 ### Management dependency audit

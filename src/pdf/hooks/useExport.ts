@@ -1,16 +1,25 @@
 import { errorText } from "../../core/pdf-types";
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { MAX_PDF_BYTES } from "../../core/pdf-source";
-import { safeSource, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
+import { safeSource, type ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  AnnotationState,
+  NativeNotesState,
+  ExportState,
+  ReaderUIState,
+  NotificationState,
+  ReaderDerivedState,
+} from "./reader-state";
 
-export function useExportState() {
-  const exportController = useRef<AbortController | undefined>(undefined);
-  const [exportStage, setExportStage] = useState<"preparing" | "writing" | "verifying">();
-  const downloadUrls = useRef(new Map<string, ReturnType<typeof setTimeout>>());
-  return { exportController, exportStage, setExportStage, downloadUrls };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "documentSessionRef" | "downloadUrls" | "exportController" | "key" | "opened" | "recordsRef" | "setError" | "setExportStage" | "setNativeProgress" | "setNativeRecords" | "setNotice" | "t">;
+type Inputs =
+  Pick<DocumentSessionState, "documentSessionRef" | "opened"> &
+  Pick<AnnotationState, "recordsRef"> &
+  Pick<NativeNotesState, "setNativeProgress" | "setNativeRecords"> &
+  Pick<ExportState, "downloadUrls" | "exportController" | "setExportStage"> &
+  Pick<ReaderUIState, "t"> &
+  Pick<NotificationState, "setError" | "setNotice"> &
+  Pick<ReaderDerivedState, "key">;
 
 export function useExport(state: Inputs, actions: ReaderActionsRef<"cancelNativeScan">,) {
   const { documentSessionRef, downloadUrls, exportController, key, opened, recordsRef, setError, setExportStage, setNativeProgress, setNativeRecords, setNotice, t, } = state;

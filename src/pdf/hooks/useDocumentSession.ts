@@ -1,6 +1,6 @@
 import { NativePdfAnnotations } from "../native-annotations";
-import { errorText, type OpenDocument } from "../../core/pdf-types";
-import { useEffect, useRef, useState } from "react";
+import { errorText } from "../../core/pdf-types";
+import { useEffect } from "react";
 import { request } from "../../core/client";
 import { type Annotation, type PdfHandoff } from "../../core/model";
 import { pdfHash, pdfSourceUrl, readLocalPdf, readRemotePdf } from "../../core/pdf-source";
@@ -9,95 +9,51 @@ import { readPreparedPdf } from "../prepared";
 import { isIeeeSessionPage, isIeeePdfWrapper } from "../../core/pdf-context";
 import { doiUrl, findPreviousPdfVersion, learnPdfPaperIdentity, pdfDisplayName, pdfDoi, readPdfPaperReopen, type PdfMetadataInput, } from "../paper-identity";
 import { readPdfReadingPosition, createPdfReadingPositionWriter, type PdfReadingPosition, } from "../reading-position";
-import { isPdf, type PositionSession, safeSource, ieeeRecordSource, type ReaderSnapshot, type ReaderActionsRef, } from "./contracts";
-import type { PDFDocumentLoadingTask, PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
+import { isPdf, type PositionSession, safeSource, ieeeRecordSource, type ReaderActionsRef } from "./contracts";
+import type { PDFDocumentProxy } from "pdfjs-dist/types/src/display/api";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  NativeNotesState,
+  ReaderUIState,
+  NotificationState,
+} from "./reader-state";
+
+export { PdfSession } from "./reader-state";
+
 type PdfApiModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
 type SourceBytes = { api: PdfApiModule; bytes: Uint8Array; hash: string;
   positionRead: Promise<PdfReadingPosition | undefined> };
 type OpenedDocument = SourceBytes & { doc: PDFDocumentProxy; all: Annotation[]; metadata: PdfMetadataInput };
 type PreparedSource = { remote?: string; ieeeGrant?: PdfHandoff };
-/** Owns the one live PDF.js loading task and its source-read AbortController. */
-export class PdfSession {
-  #generation = 0;
-  #abort?: AbortController;
-  #task?: PDFDocumentLoadingTask;
-  #disposing?: Promise<void>;
-  get generation(): number {
-    return this.#generation;
-  }
-  isCurrent(token: number): boolean {
-    return token === this.#generation;
-  }
-  async begin(): Promise<{ token: number; signal: AbortSignal }> {
-    const token = ++this.#generation;
-    await this.disposeCurrent();
-    if (!this.isCurrent(token))
-      throw new DOMException("Superseded PDF session.", "AbortError");
-    const abort = new AbortController();
-    this.#abort = abort;
-    return { token, signal: abort.signal };
-  }
-  setTask(token: number, task: PDFDocumentLoadingTask): void {
-    if (!this.isCurrent(token)) {
-      void task.destroy();
-      return;
-    }
-    this.#task = task;
-  }
-  async dispose(): Promise<void> {
-    ++this.#generation;
-    await this.disposeCurrent();
-  }
-  async disposeCurrent(): Promise<void> {
-    this.#abort?.abort();
-    this.#abort = undefined;
-    const task = this.#task;
-    this.#task = undefined;
-    if (!task) return this.#disposing;
-    const run = task.destroy().catch(() => undefined);
-    this.#disposing = run;
-    await run;
-    if (this.#disposing === run) this.#disposing = undefined;
-  }
-}
+type Inputs =
+  Pick<DocumentSessionState,
+    "autoOpenAttempted" | "documentSessionRef" | "handoff" | "handoffReady" | "handoffToken"
+    | "initialParams" | "session" | "setBusy" | "setDocumentSession" | "setHandoff" | "setHandoffReady"
+    | "setIeeeRecovery" | "setOpened" | "setPaperDoi" | "setPreviousHash" | "setSource" | "source"
+  > &
+  Pick<ViewportState,
+    "intentEpoch" | "positionSession" | "setPageNumber" | "setPageWindow" | "setPositionEpoch"
+    | "setRotation" | "setZoom"
+  > &
+  Pick<AnnotationState, "recordsRef"> &
+  Pick<NativeNotesState, "originalNotes"> &
+  Pick<ReaderUIState, "setArea" | "settingsReady" | "t"> &
+  Pick<NotificationState, "setError" | "setNotice">;
 
-export function useDocumentSessionState() {
-  const [initialParams] = useState(() => new URLSearchParams(location.search));
-  const localFileEntry = initialParams.get("open") === "local";
-  const handoffToken = initialParams.get("handoff");
-  const autoOpenAttempted = useRef(false);
-  const [source, setSource] = useState(initialParams.get("source") || "");
-  const [opened, setOpened] = useState<OpenDocument>();
-  const [paperDoi, setPaperDoi] = useState<string>();
-  const [previousHash, setPreviousHash] = useState<string>();
-  const [handoff, setHandoff] = useState<PdfHandoff | null>(null);
-  const [handoffReady, setHandoffReady] = useState(!handoffToken);
-  const [ieeeRecovery, setIeeeRecovery] = useState<"permission" | "retry" | "return">();
-  const [busy, setBusy] = useState(false);
-  const [documentSession, setDocumentSession] = useState(0);
-  const session = useRef(new PdfSession());
-  const documentSessionRef = useRef(0);
-  return {
-    initialParams, localFileEntry, handoffToken, autoOpenAttempted, source, setSource, opened,
-    setOpened, paperDoi, setPaperDoi, previousHash, setPreviousHash, handoff, setHandoff,
-    handoffReady, setHandoffReady, ieeeRecovery, setIeeeRecovery, busy, setBusy, documentSession,
-    setDocumentSession, session, documentSessionRef,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "autoOpenAttempted" | "dimensions" | "documentSessionRef" | "draftsRef" | "exportController" | "focusAttempt" | "handoff" | "handoffReady" | "handoffToken" | "initialParams" | "intentEpoch" | "intrinsicDimensions" | "nativeFocus" |
-  "nativeHistory" | "nativeScan" | "originalNotes" | "pendingSearchPosition" | "positionSession" | "recordsRef" | "session" | "setArea" | "setBusy" | "setDocumentSession" | "setError" | "setExportStage" | "setFitWidth" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setHandoff" |
-  "setHandoffReady" | "setIeeeRecovery" | "setNativeError" | "setNativeFilter" | "setNativeLoading" | "setNativeOffset" | "setNativeProgress" | "setNativeRecords" | "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" | "setNotice" | "setOpened" | "setPageNumber" |
-  "setPageWindow" | "setPaperDoi" | "setPicked" | "setPositionEpoch" | "setPositionError" | "setPreviousHash" | "setRotation" | "setSearchMatch" | "setSelection" | "setShowMarks" | "setSource" | "setSourceOpen" | "setUndoRecord" | "setZoom" | "settingsReady" | "source" | "t">;
-
-export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"updateRecords">,) {
-  const { autoOpenAttempted, dimensions, documentSessionRef, draftsRef, exportController, focusAttempt, handoff, handoffReady, handoffToken,
-    initialParams, intentEpoch, intrinsicDimensions, nativeFocus, nativeHistory, nativeScan, originalNotes, pendingSearchPosition,
-    positionSession, recordsRef, session, setArea, setBusy, setDocumentSession, setError, setExportStage, setFitWidth, setFocusBusy, setFocusHint,
-      setFocusMode, setHandoff, setHandoffReady, setIeeeRecovery, setNativeError, setNativeFilter, setNativeLoading, setNativeOffset,
-    setNativeProgress, setNativeRecords, setNoteConflicts, setNoteDrafts, setNotesOpen, setNotice, setOpened, setPageNumber,
-      setPageWindow, setPaperDoi, setPicked, setPositionEpoch, setPositionError, setPreviousHash, setRotation, setSearchMatch, setSelection,
-    setShowMarks, setSource, setSourceOpen, setUndoRecord, setZoom, settingsReady, source, t, } = state;
+export function useDocumentSession(
+  state: Inputs,
+  actions: ReaderActionsRef<"updateRecords">,
+  resetWorkspace: () => void,
+) {
+  const {
+    autoOpenAttempted, documentSessionRef, handoff, handoffReady, handoffToken, initialParams,
+    intentEpoch, originalNotes, positionSession, recordsRef, session, setArea, setBusy,
+    setDocumentSession, setError, setHandoff, setHandoffReady, setIeeeRecovery, setNotice,
+    setOpened, setPageNumber, setPageWindow, setPaperDoi, setPositionEpoch, setPreviousHash,
+    setRotation, setSource, setZoom, settingsReady, source, t,
+  } = state;
   useEffect(() => () => {
     documentSessionRef.current++;
     void session.current.dispose();
@@ -154,48 +110,7 @@ export function useDocumentSession(state: Inputs, actions: ReaderActionsRef<"upd
     setIeeeRecovery(undefined);
     setBusy(true);
     documentSessionRef.current++;
-    exportController.current?.abort();
-    exportController.current = undefined;
-    setExportStage(undefined);
-    nativeScan.current?.abort();
-    nativeScan.current = undefined;
-    originalNotes.current?.dispose();
-    originalNotes.current = undefined;
-    nativeFocus.current = undefined;
-    setNativeRecords([]);
-    setNativeFilter("web-ink");
-    setNativeLoading(false);
-    setNativeProgress(undefined);
-    setNativeError("");
-    setNativeOffset(0);
-    nativeHistory.current = [];
-    positionSession.current?.writer.dispose();
-    positionSession.current = undefined;
-    setOpened(undefined);
-    setSearchMatch(undefined);
-    pendingSearchPosition.current = undefined;
-    setSelection(undefined);
-    setPicked(undefined);
-    setUndoRecord(undefined);
-    actions.current.updateRecords([]);
-    setNoteDrafts({});
-    draftsRef.current = {};
-    setNoteConflicts({});
-    setShowMarks(true);
-    setNotesOpen(false);
-    focusAttempt.current++;
-    setFocusMode(false);
-    setFocusBusy(false);
-    setFocusHint(false);
-    setSourceOpen(false);
-    setPositionError("");
-    setFitWidth(false);
-    intrinsicDimensions.current.clear();
-    setZoom(1);
-    setRotation(0);
-    setPageNumber(1);
-    dimensions.current.clear();
-    setPageWindow({ start: 0, end: 3 });
+    resetWorkspace();
   }
   async function prepareSource(
     file: File | undefined, automatic: boolean, chosenSource: string, siteSession: boolean, token: number) : Promise<PreparedSource | undefined> {

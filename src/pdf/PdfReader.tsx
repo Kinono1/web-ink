@@ -13,15 +13,27 @@ import { PdfInlineNotesPanel } from "./components/PdfInlineNotesPanel";
 import { PdfCanvas } from "./components/PdfCanvas";
 import { PdfDocumentContext } from "./contexts/PdfDocumentContext";
 import { PdfUIProvider } from "./contexts/PdfUIContext";
-import { useDocumentSession, useDocumentSessionState } from "./hooks/useDocumentSession";
-import { useViewport, useViewportState } from "./hooks/useViewport";
-import { useAnnotations, useAnnotationsState } from "./hooks/useAnnotations";
-import { useNativeAnnotations, useNativeAnnotationsState } from "./hooks/useNativeAnnotations";
-import { useExport, useExportState } from "./hooks/useExport";
-import { useNotifications, useNotificationsState, useReaderDerived, useReaderUI, useReaderUIState } from "./hooks/useReaderUI";
-import { useSidebarSync, useSidebarSyncState } from "./hooks/useSidebarSync";
-import { useLeaveGuard, useLeaveGuardState } from "./hooks/useLeaveGuard";
+import { useDocumentSession } from "./hooks/useDocumentSession";
+import { useViewport } from "./hooks/useViewport";
+import { useAnnotations } from "./hooks/useAnnotations";
+import { useNativeAnnotations } from "./hooks/useNativeAnnotations";
+import { useExport } from "./hooks/useExport";
+import { useNotifications, useReaderUI } from "./hooks/useReaderUI";
+import { useSidebarSync } from "./hooks/useSidebarSync";
+import { useLeaveGuard } from "./hooks/useLeaveGuard";
 import { useVersionRecovery } from "./hooks/useVersionRecovery";
+import {
+  useDocumentSessionState,
+  useViewportState,
+  useAnnotationsState,
+  useNativeAnnotationsState,
+  useExportState,
+  useReaderUIState,
+  useSidebarSyncState,
+  useLeaveGuardState,
+  useNotificationsState,
+  useReaderDerived,
+} from "./hooks/reader-state";
 import "pdfjs-dist/web/pdf_viewer.css";
 import "../ui/management.css";
 import "./pdf.css";
@@ -54,8 +66,55 @@ export function PdfReader() {
   // Bind commands after every domain renders. Async work still captures its
   // own session/intent; the ref only resolves commands across domain cycles.
   const actions = useRef<ReaderActions>(undefined!);
+
+  // The session invalidates the old document before this cross-domain reset.
+  function resetWorkspace() {
+    exports.exportController.current?.abort();
+    exports.exportController.current = undefined;
+    exports.setExportStage(undefined);
+    native.nativeScan.current?.abort();
+    native.nativeScan.current = undefined;
+    native.originalNotes.current?.dispose();
+    native.originalNotes.current = undefined;
+    viewport.nativeFocus.current = undefined;
+    native.setNativeRecords([]);
+    native.setNativeFilter("web-ink");
+    native.setNativeLoading(false);
+    native.setNativeProgress(undefined);
+    native.setNativeError("");
+    native.setNativeOffset(0);
+    native.nativeHistory.current = [];
+    viewport.positionSession.current?.writer.dispose();
+    viewport.positionSession.current = undefined;
+    document.setOpened(undefined);
+    viewport.setSearchMatch(undefined);
+    viewport.pendingSearchPosition.current = undefined;
+    viewport.setSelection(undefined);
+    annotations.setPicked(undefined);
+    annotations.setUndoRecord(undefined);
+    actions.current.updateRecords([]);
+    annotations.setNoteDrafts({});
+    annotations.draftsRef.current = {};
+    annotations.setNoteConflicts({});
+    ui.setShowMarks(true);
+    ui.setNotesOpen(false);
+    ui.focusAttempt.current++;
+    ui.setFocusMode(false);
+    ui.setFocusBusy(false);
+    ui.setFocusHint(false);
+    ui.setSourceOpen(false);
+    viewport.setPositionError("");
+    viewport.setFitWidth(false);
+    viewport.intrinsicDimensions.current.clear();
+    viewport.setZoom(1);
+    viewport.setRotation(0);
+    viewport.setPageNumber(1);
+    viewport.dimensions.current.clear();
+    viewport.setPageWindow({ start: 0, end: 3 });
+  }
+
   const recovery = useVersionRecovery(snapshot, actions);
-  const documentActions = useDocumentSession(snapshot, actions);
+  const documentActions = useDocumentSession(snapshot, actions, resetWorkspace);
   const viewportActions = useViewport(snapshot, actions);
   const annotationActions = useAnnotations(snapshot, actions);
   const nativeActions = useNativeAnnotations(snapshot, actions);

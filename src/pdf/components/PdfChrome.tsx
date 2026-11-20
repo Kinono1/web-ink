@@ -2,7 +2,8 @@ import { COLORS } from "../../core/model";
 import { Icon } from "../../ui/shared/Icon";
 import { type PdfRotation, PDF_MIN_ZOOM, PDF_MAX_ZOOM } from "../reading-position";
 import { PdfFind } from "../PdfFind";
-import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
+import type { ReaderActions } from "../hooks/contracts";
+import type { ReaderSnapshot } from "../hooks/reader-state";
 import { usePdfDocument } from "../contexts/PdfDocumentContext";
 import { usePdfUI } from "../contexts/PdfUIContext";
 
