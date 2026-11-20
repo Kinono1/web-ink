@@ -1,21 +1,44 @@
 import { errorText } from "../../core/pdf-types";
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { request, RequestError } from "../../core/client";
 import { type PdfReturnResult } from "../../core/model";
 import { ieeePaperUrl } from "../../core/pdf-context";
 import { doiUrl, readPdfPaperIdentity } from "../paper-identity";
-import { dirtyDraft, type LeaveAction, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
+import { dirtyDraft, type LeaveAction, type ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  NativeNotesState,
+  ExportState,
+  ReaderUIState,
+  SidebarState,
+  LeaveGuardState,
+  NotificationState,
+  ReaderDerivedState,
+} from "./reader-state";
 
-export function useLeaveGuardState() {
-  const [pendingLeave, setPendingLeave] = useState<LeaveAction>();
-  const [leaving, setLeaving] = useState(false);
-  const [guardSaving, setGuardSaving] = useState(false);
-  return { pendingLeave, setPendingLeave, leaving, setLeaving, guardSaving, setGuardSaving };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "annotationWrites" | "autoOpenAttempted" | "currentParams" | "draftsRef" | "exportController" | "focusBusy" | "focusMode" | "guardSaving" | "handoff" | "handoffToken" | "intentEpoch" | "leaving" | "nativeScan" | "noteAfterSave" | "paperDoi" |
-  "paperUrl" | "pendingLeave" | "positionSession" | "presetDraft" | "presetSaving" | "previousHash" | "publicUrl" | "setError" | "setGuardSaving" | "setHandoff" | "setLeaving" | "setMoreOpen" | "setNativeFilter" | "setNoteConflicts" | "setNoteDrafts" | "setNotesOpen" |
-  "setPendingLeave" | "setSelection" | "setSourceOpen" | "setUnsaved" | "sidebarAttachedRef" | "supportsSidebar" | "t" | "unsavedRef">;
+type Inputs =
+  Pick<DocumentSessionState,
+    "autoOpenAttempted" | "handoff" | "handoffToken" | "paperDoi" | "previousHash" | "setHandoff"
+  > &
+  Pick<ViewportState, "intentEpoch" | "positionSession" | "setSelection"> &
+  Pick<AnnotationState,
+    "annotationWrites" | "draftsRef" | "noteAfterSave" | "setNoteConflicts" | "setNoteDrafts"
+    | "setUnsaved" | "unsavedRef"
+  > &
+  Pick<NativeNotesState, "nativeScan" | "setNativeFilter"> &
+  Pick<ExportState, "exportController"> &
+  Pick<ReaderUIState,
+    "focusBusy" | "focusMode" | "presetDraft" | "presetSaving" | "setMoreOpen" | "setNotesOpen"
+    | "setSourceOpen" | "t"
+  > &
+  Pick<SidebarState, "sidebarAttachedRef" | "supportsSidebar"> &
+  Pick<LeaveGuardState,
+    "guardSaving" | "leaving" | "pendingLeave" | "setGuardSaving" | "setLeaving" | "setPendingLeave"
+  > &
+  Pick<NotificationState, "setError"> &
+  Pick<ReaderDerivedState, "currentParams" | "paperUrl" | "publicUrl">;
 
 export function useLeaveGuard(state: Inputs, actions:
   ReaderActionsRef< "cancelExport" | "cancelFocusAttempt" | "cancelNativeScan" | "exportAnnotations" | "flushPosition" | "loadPdf" | "openNotes" | "save" | "saveNote" >,) {

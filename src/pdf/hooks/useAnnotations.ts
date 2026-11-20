@@ -1,73 +1,35 @@
 import type { PdfNoteDraft } from "../../core/sidebar";
 import { errorText, type PdfAnnotation, type SelectionTarget } from "../../core/pdf-types";
-import { useMemo, useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { request, RequestError, releaseChromeListener } from "../../core/client";
 import { type Annotation, type PdfTarget } from "../../core/model";
 import { isIeeeSessionPage } from "../../core/pdf-context";
 import { doiUrl } from "../paper-identity";
-import { isPdf, noteTags, dirtyDraft, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
+import { isPdf, noteTags, dirtyDraft, type ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  ReaderUIState,
+  SidebarState,
+  NotificationState,
+  ReaderDerivedState,
+} from "./reader-state";
+export { useAnnotationsState } from "./reader-state";
 
-export function useAnnotationsState() {
-  const [records, setRecords] = useState<PdfAnnotation[]>([]);
-  const recordsRef = useRef(records);
-  const [picked, setPicked] = useState<PdfAnnotation>();
-  const [undoRecord, setUndoRecord] = useState<PdfAnnotation>();
-  const [unsaved, setUnsaved] = useState<PdfAnnotation>();
-  const [saving, setSaving] = useState(false);
-  const [removing, setRemoving] = useState(false);
-  const [notesLimit, setNotesLimit] = useState(50);
-  const [noteDrafts, setNoteDrafts] = useState<Record<string, PdfNoteDraft>>(
-    {},
-  );
-  const draftsRef = useRef(noteDrafts);
-  const unsavedRef = useRef(unsaved);
-  const noteAfterSave = useRef(false);
-  const annotationWrites = useRef(new Set<Promise<unknown>>());
-  const [writeCount, setWriteCount] = useState(0);
-  const [noteSaving, setNoteSaving] = useState<string>();
-  const [noteConflicts, setNoteConflicts] = useState<Record<string, boolean>>({});
-  const annotationChangeEpoch = useRef(0);
-  recordsRef.current = records;
-  draftsRef.current = noteDrafts;
-  unsavedRef.current = unsaved;
-  const savedIds = useMemo(() => new Set(records.map((record) => record.id)), [records]);
-  const deletedDrafts = useMemo(() => Object.values(noteDrafts).filter(
-    (draft) => dirtyDraft(draft) && !savedIds.has(draft.base.id),
-  ), [noteDrafts, savedIds]);
-  const sortedNotes = useMemo(
-    () =>
-      records
-        .slice()
-        .sort(
-          (a, b) =>
-            a.target.pageNumber - b.target.pageNumber ||
-            a.createdAt.localeCompare(b.createdAt) ||
-            a.id.localeCompare(b.id),
-        ),
-    [records],
-  );
-  const recordsByPage = useMemo(() => {
-    const pages = new Map<number, PdfAnnotation[]>();
-    for (const record of records) {
-      const page = pages.get(record.target.pageNumber);
-      if (page) page.push(record);
-      else pages.set(record.target.pageNumber, [record]);
-    }
-    return pages;
-  }, [records]);
-  return {
-    savedIds, deletedDrafts, sortedNotes, recordsByPage,
-    records, setRecords, recordsRef, picked, setPicked, undoRecord, setUndoRecord, unsaved,
-    setUnsaved, saving, setSaving, removing, setRemoving, notesLimit, setNotesLimit, noteDrafts,
-    setNoteDrafts, draftsRef, unsavedRef, noteAfterSave, annotationWrites, writeCount,
-    setWriteCount, noteSaving, setNoteSaving, noteConflicts, setNoteConflicts,
-    annotationChangeEpoch,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "annotationChangeEpoch" | "annotationWrites" | "color" | "documentSession" | "documentSessionRef" | "draftsRef" | "fallbackNotes" | "key" | "locked" | "noteAfterSave" | "opened" | "paperDoi" | "records" | "recordsRef" | "removing" | "saving" |
-  "setError" | "setNoteConflicts" | "setNoteDrafts" | "setNoteSaving" | "setNotesLimit" | "setNotesOpen" | "setPicked" | "setRecords" | "setRemoving" | "setSaving" | "setSelection" | "setUndoRecord" | "setUnsaved" | "setWriteCount" | "supportsSidebar" | "t" | "undoRecord" |
-  "unsaved" | "unsavedRef"> & Partial<Pick<ReaderSnapshot, "previousHash">>;
+type Inputs =
+  Pick<DocumentSessionState, "documentSession" | "documentSessionRef" | "opened" | "paperDoi"> &
+  Pick<ViewportState, "setSelection"> &
+  Pick<AnnotationState,
+    "annotationChangeEpoch" | "annotationWrites" | "draftsRef" | "noteAfterSave" | "records"
+    | "recordsRef" | "removing" | "saving" | "setNoteConflicts" | "setNoteDrafts" | "setNoteSaving"
+    | "setNotesLimit" | "setPicked" | "setRecords" | "setRemoving" | "setSaving" | "setUndoRecord"
+    | "setUnsaved" | "setWriteCount" | "undoRecord" | "unsaved" | "unsavedRef"
+  > &
+  Pick<ReaderUIState, "color" | "setNotesOpen" | "t"> &
+  Pick<SidebarState, "fallbackNotes" | "supportsSidebar"> &
+  Pick<NotificationState, "setError"> &
+  Pick<ReaderDerivedState, "key" | "locked"> & Partial<Pick<DocumentSessionState, "previousHash">>;
 
 export function useAnnotations(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const { annotationChangeEpoch, annotationWrites, color, documentSession, documentSessionRef, draftsRef, fallbackNotes, key, locked,

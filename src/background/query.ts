@@ -11,6 +11,7 @@ import { hasOnly, record, validId } from "./data/validation";
 
 const FIRST_BATCH_SIZE = 25;
 const RESIDUAL_BATCH_SIZE = 128;
+const MAX_INDEXED_TAG_RECORDS = 128;
 const PRE_CANCEL_TTL_MS = 5_000;
 const MAX_PRE_CANCELS = 1_024;
 
@@ -196,6 +197,34 @@ function needsResidualFiltering(query: AnnotationQuery): boolean {
   );
 }
 
+async function readSmallTag(tag: string, task: QueryTask | undefined) {
+  const db = getDatabase();
+  return db.transaction("r", db.annotations, async () => {
+    // A popular tag needs the ordered index. Check its size without reading
+    // annotation bodies, and keep the keys and records in one snapshot.
+    const keys = await db.annotations.where("tags").equals(tag)
+      .limit(MAX_INDEXED_TAG_RECORDS + 1).primaryKeys();
+    if (task?.cancelled || keys.length > MAX_INDEXED_TAG_RECORDS) return undefined;
+    return db.annotations.bulkGet(keys);
+  });
+}
+
+function descendingKey(left: AnnotationCursor, right: AnnotationCursor): number {
+  return indexedDB.cmp([right.updatedAt, right.id], [left.updatedAt, left.id]);
+}
+
+function queryPage(rows: Annotation[], limit: number): AnnotationPage {
+  const hasNext = rows.length > limit;
+  const items = hasNext ? rows.slice(0, limit) : rows;
+  const last = items.at(-1);
+  return {
+    items,
+    ...(hasNext && last
+      ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } }
+      : {}),
+  };
+}
+
 /**
  * Retains the native getAll/toArray fast path. The initial residual batch stays
  * at 25 so an immediately cancelled request cannot read more than that batch.
@@ -215,15 +244,17 @@ export async function executeAnnotationQuery(
         .limit(limit + 1)
         .toArray();
       if (task?.cancelled) return { items: [], cancelled: true };
-      const hasNext = rows.length > limit;
-      const items = hasNext ? rows.slice(0, limit) : rows;
-      const last = items.at(-1);
-      return {
-        items,
-        ...(hasNext && last
-          ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } }
-          : {}),
-      };
+      return queryPage(rows, limit);
+    }
+    if (query.tag && !query.pageUrl && !query.kind && !query.color) {
+      const candidates = await readSmallTag(query.tag, task);
+      if (task?.cancelled) return { items: [], cancelled: true };
+      if (candidates) {
+        const rows = candidates.filter((record): record is Annotation =>
+          record !== undefined && (!query.cursor || descendingKey(record, query.cursor) > 0) &&
+          matchesAnnotation(record, query));
+        return queryPage(rows.sort(descendingKey), limit);
+      }
     }
     const items: Annotation[] = [];
     let cursor = query.cursor;
@@ -245,14 +276,7 @@ export async function executeAnnotationQuery(
       if (hasNext || rows.length < batchSize) break;
       batchSize = RESIDUAL_BATCH_SIZE;
     }
-    const visibleItems = hasNext ? items.slice(0, limit) : items;
-    const last = visibleItems.at(-1);
-    return {
-      items: visibleItems,
-      ...(hasNext && last
-        ? { nextCursor: { updatedAt: last.updatedAt, id: last.id } }
-        : {}),
-    };
+    return queryPage(items, limit);
   } finally {
     if (requestId && task) registry.complete(owner, requestId, task);
   }

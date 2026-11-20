@@ -1,51 +1,38 @@
 import { defaultAnnotationPresets, readAnnotationPresets, validateAnnotationPresets, type AnnotationPreset, } from "../../core/annotation-presets";
 import { errorText } from "../../core/pdf-types";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect } from "react";
 import { request, releaseChromeListener } from "../../core/client";
-import { COLORS, DEFAULT_SETTINGS, type Settings } from "../../core/model";
+import { type Settings } from "../../core/model";
 import { THEME_TOKENS } from "../../core/theme";
-import type { PdfAnnotation } from "../../core/pdf-types";
-import { ieeePaperUrl } from "../../core/pdf-context";
-import { doiUrl } from "../paper-identity";
-import { dirtyDraft, type LeaveAction, safeSource, type ReaderState, type ReaderSnapshot, type ReaderActionsRef } from "./contracts";
+import { dirtyDraft, type ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  ReaderUIState,
+  SidebarState,
+  LeaveGuardState,
+  NotificationState,
+  ReaderDerivedState,
+} from "./reader-state";
+export { useReaderUIState } from "./reader-state";
 
-export function useReaderUIState() {
-  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [settingsReady, setSettingsReady] = useState(false);
-  const [showMarks, setShowMarks] = useState(true);
-  const [area, setArea] = useState(false);
-  const [color, setColor] = useState<string>(COLORS[0]);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [sourceOpen, setSourceOpen] = useState(false);
-  const [focusMode, setFocusMode] = useState(false);
-  const [focusBusy, setFocusBusy] = useState(false);
-  const [focusHint, setFocusHint] = useState(false);
-  const focusScroll = useRef<number | undefined>(undefined);
-  const focusAttempt = useRef(0);
-  const [presets, setPresets] = useState(() => defaultAnnotationPresets(DEFAULT_SETTINGS.language));
-  const [presetsOpen, setPresetsOpen] = useState(false);
-  const presetReadGeneration = useRef(0);
-  const presetDraft = useRef(false);
-  const presetSaving = useRef(false);
-  const moreMenu = useRef<HTMLDivElement>(null);
-  const moreTrigger = useRef<HTMLButtonElement>(null);
-  const notesRail = useRef<HTMLElement>(null);
-  const zh = settings.language === "zh-CN";
-  const t = useCallback((cn: string, en: string) => (zh ? cn : en), [zh]);
-  return {
-    zh, t,
-    settings, setSettings, settingsReady, setSettingsReady, showMarks, setShowMarks, area,
-    setArea, color, setColor, notesOpen, setNotesOpen, moreOpen, setMoreOpen, sourceOpen,
-    setSourceOpen, focusMode, setFocusMode, focusBusy, setFocusBusy, focusHint, setFocusHint,
-    focusScroll, focusAttempt, presets, setPresets, presetsOpen, setPresetsOpen,
-    presetReadGeneration, presetDraft, presetSaving, moreMenu, moreTrigger, notesRail,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "container" | "documentSession" | "documentSessionRef" | "deletedDrafts" | "dirtyNotes" | "draftsRef" | "focusAttempt" | "focusMode" | "focusScroll" | "inlineNotes" | "locked" | "moreMenu" | "moreOpen" | "notesRail" | "pendingLeave" |
-  "presetReadGeneration" | "presetsOpen" | "readerTab" | "readerWindow" | "selection" | "setColor" | "setError" | "setFallbackNotes" | "setFocusBusy" | "setFocusHint" | "setFocusMode" | "setMoreOpen" | "setNotesOpen" | "setPresets" | "setSettings" | "setSettingsReady" |
-  "settings" | "settingsReady" | "sidebarAttachedRef" | "sourceOpen" | "supportsSidebar" | "t">;
+type Inputs =
+  Pick<DocumentSessionState, "documentSession" | "documentSessionRef"> &
+  Pick<ViewportState, "container" | "selection"> &
+  Pick<AnnotationState, "deletedDrafts" | "draftsRef"> &
+  Pick<ReaderUIState,
+    "focusAttempt" | "focusMode" | "focusScroll" | "moreMenu" | "moreOpen" | "notesRail"
+    | "presetReadGeneration" | "presetsOpen" | "setColor" | "setFocusBusy" | "setFocusHint"
+    | "setFocusMode" | "setMoreOpen" | "setNotesOpen" | "setPresets" | "setSettings" | "setSettingsReady"
+    | "settings" | "settingsReady" | "sourceOpen" | "t"
+  > &
+  Pick<SidebarState,
+    "readerTab" | "readerWindow" | "setFallbackNotes" | "sidebarAttachedRef" | "supportsSidebar"
+  > &
+  Pick<LeaveGuardState, "pendingLeave"> &
+  Pick<NotificationState, "setError"> &
+  Pick<ReaderDerivedState, "dirtyNotes" | "inlineNotes" | "locked">;
 
 export function useReaderUI(state: Inputs, actions: ReaderActionsRef<"mark">,) {
   const { container, documentSession, documentSessionRef, deletedDrafts, dirtyNotes, draftsRef, focusAttempt, focusMode, focusScroll,
@@ -196,14 +183,7 @@ export function useReaderUI(state: Inputs, actions: ReaderActionsRef<"mark">,) {
   }, []);
   return { cancelFocusAttempt, openNotes, enterFocus, exitFocus, choosePreset, dialogKeys };
 }
-// Transient reader notices share the UI feedback state and timer.
-export function useNotificationsState() {
-  const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
-  const noticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  return { error, setError, notice, setNotice, noticeTimer };
-}
-type NotificationInputs = Pick<ReaderSnapshot, "noticeTimer" | "setNotice">;
+type NotificationInputs = Pick<NotificationState, "noticeTimer" | "setNotice">;
 
 export function useNotifications(state: NotificationInputs) {
   const { noticeTimer, setNotice, } = state;
@@ -216,34 +196,4 @@ export function useNotifications(state: NotificationInputs) {
     noticeTimer.current = setTimeout(() => setNotice(""), 1800);
   }, []);
   return { tell };
-}
-type DerivedInputs = Pick<ReaderState,
-  "nativeWindow" | "t" | "busy" | "documentSession" | "exportStage" | "fallbackNotes" | "focusBusy" | "guardSaving" | "handoff" | "leaving" | "nativeError" | "nativeFilter" | "nativeProgress" | "nativeRecords" | "noteDrafts" | "notesOpen" |
-  "opened" | "paperDoi" | "records" | "removing" | "saving" | "sidebarAttached" | "supportsSidebar" | "unsaved" | "writeCount">;
-
-export function useReaderDerived(state: DerivedInputs) {
-  const { nativeWindow, t, busy, documentSession, exportStage, fallbackNotes, focusBusy, guardSaving, handoff, leaving, nativeError,
-    nativeFilter, nativeProgress, nativeRecords, noteDrafts, notesOpen, opened, paperDoi, records, removing, saving, sidebarAttached,
-    supportsSidebar, unsaved, writeCount, } = state;
-  const sidebarSession = useMemo(() => crypto.randomUUID(), [documentSession]);
-  const key = opened ? `urn:web-ink:pdf:${opened.hash}` : undefined;
-  const inlineNotes = notesOpen && (!supportsSidebar || fallbackNotes) && !sidebarAttached;
-  const originalError = nativeWindow.oversized
-    ? t("这条原文件笔记超过侧栏显示上限；完整内容仍保留在当前文档，可导出给 AI。", "This original note exceeds the sidebar display limit. Its full contents remain in this document and can be exported for AI.")
-    : nativeError;
-  const nativeComplete = nativeProgress?.completed === opened?.document.numPages;
-  const noteCount = nativeFilter === "web-ink" ? records.length : nativeFilter === "original" ? nativeRecords.length : records.length + nativeRecords.length;
-  const currentParams = new URLSearchParams(location.search);
-  const publicUrl = opened ? safeSource(opened.sourceUrl) : safeSource(currentParams.get("source") || undefined);
-  const paperUrl = doiUrl(paperDoi) || ieeePaperUrl(handoff?.returnUrl || publicUrl);
-  const locked = busy || saving || removing || !!unsaved || leaving || guardSaving || writeCount > 0 || !!exportStage || focusBusy;
-  const dirtyNotes = Object.values(noteDrafts).some(dirtyDraft);
-  const backLabel = handoff ? t("返回原阅读器", "Return to original reader") : publicUrl
-    ? t("打开 PDF 来源", "Open PDF source") : t("重新选择 PDF", "Choose PDF again");
-  const backAction: LeaveAction = { kind: handoff ? "return" : publicUrl ? "source" : "choose" };
-  return {
-    sidebarSession, key, inlineNotes, originalError, nativeComplete,
-    noteCount, currentParams, publicUrl,
-    paperUrl, locked, dirtyNotes, backLabel, backAction,
-  };
 }

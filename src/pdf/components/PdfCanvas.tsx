@@ -1,6 +1,7 @@
 import type { PdfAnnotation, SelectionTarget } from "../../core/pdf-types";
 import { PdfPage } from "../PdfPage";
-import type { ReaderSnapshot, ReaderActions } from "../hooks/contracts";
+import type { ReaderActions } from "../hooks/contracts";
+import type { ReaderSnapshot } from "../hooks/reader-state";
 import { usePdfPageBindings } from "../hooks/useViewport";
 import { usePdfDocument } from "../contexts/PdfDocumentContext";
 import { usePdfUI } from "../contexts/PdfUIContext";

@@ -1,30 +1,38 @@
 import { connectPdfSidebar } from "../sidebar-connection";
-import type { PdfReaderRequest, PdfSidebarState } from "../../core/sidebar";
+import type { PdfSidebarState } from "../../core/sidebar";
 import { errorText } from "../../core/pdf-types";
-import { useEffect, useRef, useState } from "react";
-import type { ReaderSnapshot, ReaderActionsRef } from "./contracts";
+import { useEffect } from "react";
+import type { ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  AnnotationState,
+  NativeNotesState,
+  ReaderUIState,
+  SidebarState,
+  LeaveGuardState,
+  NotificationState,
+  ReaderDerivedState,
+} from "./reader-state";
 
-export function useSidebarSyncState() {
-  const readerTab = useRef<number | undefined>(undefined);
-  const readerWindow = useRef<number | undefined>(undefined);
-  const supportsSidebar = typeof chrome.sidePanel?.open === "function";
-  const [fallbackNotes, setFallbackNotes] = useState(false);
-  const [sidebarAttached, setSidebarAttached] = useState(false);
-  const sidebarAttachedRef = useRef(false);
-  const sidebarClient = useRef<ReturnType<typeof connectPdfSidebar> | undefined>(undefined);
-  const sidebarHandler = useRef<(message: PdfReaderRequest) => void>(() => {});
-  const sidebarView = useRef<PdfSidebarState | null>(null);
-  const [sidebarAck, setSidebarAck] = useState<string>();
-  return {
-    readerTab, readerWindow, supportsSidebar, fallbackNotes, setFallbackNotes, sidebarAttached,
-    setSidebarAttached, sidebarAttachedRef, sidebarClient, sidebarHandler, sidebarView,
-    sidebarAck, setSidebarAck,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "annotationWrites" | "busy" | "draftsRef" | "error" | "key" | "locked" | "nativeFilter" | "nativeLimit" | "nativeLoading" | "nativeOffset" | "nativeProgress" | "nativeRecords" | "nativeWindow" | "noteConflicts" | "noteDrafts" | "noteSaving" |
-  "notesLimit" | "notice" | "opened" | "originalError" | "pendingLeave" | "readerTab" | "readerWindow" | "records" | "recordsRef" | "removing" | "setError" | "setFallbackNotes" | "setNoteConflicts" | "setNotesLimit" | "setPicked" | "setSidebarAck" | "setSidebarAttached" |
-  "sidebarAck" | "sidebarAttachedRef" | "sidebarClient" | "sidebarHandler" | "sidebarSession" | "sidebarView" | "sortedNotes" | "sourceOpen" | "undoRecord" | "unsavedRef">;
+type Inputs =
+  Pick<DocumentSessionState, "busy" | "opened"> &
+  Pick<AnnotationState,
+    "annotationWrites" | "draftsRef" | "noteConflicts" | "noteDrafts" | "noteSaving" | "notesLimit"
+    | "records" | "recordsRef" | "removing" | "setNoteConflicts" | "setNotesLimit" | "setPicked"
+    | "sortedNotes" | "undoRecord" | "unsavedRef"
+  > &
+  Pick<NativeNotesState,
+    "nativeFilter" | "nativeLimit" | "nativeLoading" | "nativeOffset" | "nativeProgress"
+    | "nativeRecords" | "nativeWindow"
+  > &
+  Pick<ReaderUIState, "sourceOpen"> &
+  Pick<SidebarState,
+    "readerTab" | "readerWindow" | "setFallbackNotes" | "setSidebarAck" | "setSidebarAttached"
+    | "sidebarAck" | "sidebarAttachedRef" | "sidebarClient" | "sidebarHandler" | "sidebarView"
+  > &
+  Pick<LeaveGuardState, "pendingLeave"> &
+  Pick<NotificationState, "error" | "notice" | "setError"> &
+  Pick<ReaderDerivedState, "key" | "locked" | "originalError" | "sidebarSession">;
 
 export function useSidebarSync(state: Inputs, actions:
   ReaderActionsRef< "cancelNativeScan" | "filterAnnotations" | "focusOriginalNote" | "jump" | "nextOriginalPage" | "previousOriginalPage" | "remove" | "restoreRemoved" | "saveNote" | "updateDraft" >,

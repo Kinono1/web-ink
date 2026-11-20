@@ -1,70 +1,37 @@
-import type { PdfSearchMatch } from "../search";
 import {
   errorText, type PdfAnnotation, type SelectionPreview, type SelectionTarget,
 } from "../../core/pdf-types";
-import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { PageLayoutIndex } from "../reading-position";
+import { useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef } from "react";
 import {
   PDF_MIN_ZOOM, PDF_MAX_ZOOM, capturePdfReadingPosition, restorePdfReadingPosition,
   type PdfRotation,
 } from "../reading-position";
-import {
-  type PositionSession, type ReaderSnapshot, type ReaderActions, type ReaderActionsRef,
-} from "./contracts";
+import { type ReaderActions, type ReaderActionsRef } from "./contracts";
+import { FALLBACK_SELECTION_STYLE } from "./reader-state";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  AnnotationState,
+  NativeNotesState,
+  ReaderUIState,
+  NotificationState,
+} from "./reader-state";
+export { useViewportState } from "./reader-state";
 
-const FALLBACK_SELECTION_STYLE: React.CSSProperties = {};
-
-export function useViewportState() {
-  const nativeFocus = useRef<{ session: number; pageNumber: number; top: number; intent: number } | undefined>(undefined);
-  const [zoom, setZoom] = useState(1);
-  const [rotation, setRotation] = useState<PdfRotation>(0);
-  const [pageNumber, setPageNumber] = useState(1);
-  const [searchMatch, setSearchMatch] = useState<PdfSearchMatch>();
-  const pendingSearchPosition = useRef<{ pageNumber: number; intent: number } | undefined>(undefined);
-  const [zoomText, setZoomText] = useState("100%");
-  const [fitWidth, setFitWidth] = useState(false);
-  const intrinsicDimensions = useRef(new Map<number, { width: number; height: number }>());
-  const currentView = useRef({ zoom, rotation });
-  const [selection, setSelection] = useState<SelectionPreview>();
-  const selectionBar = useRef<HTMLDivElement>(null);
-  const [selectionStyle, setSelectionStyle] = useState(FALLBACK_SELECTION_STYLE);
-  const [positionError, setPositionError] = useState("");
-  const [positionEpoch, setPositionEpoch] = useState(0);
-  const positionSession = useRef<PositionSession | undefined>(undefined);
-  const intentEpoch = useRef(0);
-  const [pageWindow, setPageWindow] = useState({ start: 0, end: 3 });
-  const container = useRef<HTMLDivElement>(null);
-  const layoutIndex = useRef(new PageLayoutIndex());
-  const measureFrame = useRef(0);
-  const layoutGeneration = useRef(0);
-  const pendingScrollAdjustment = useRef(0);
-  const pendingMeasures = useRef(
-      new Map<number, { width: number; height: number }>(),
-    );
-  const dimensions = useRef(new Map<number, { width: number; height: number }>());
-  const [layoutEpoch, setLayoutEpoch] = useState(0);
-  const [measurementGeneration, setMeasurementGeneration] = useState(0);
-  currentView.current = { zoom, rotation };
-  return {
-    nativeFocus, zoom, setZoom, rotation, setRotation, pageNumber, setPageNumber, searchMatch,
-    setSearchMatch, pendingSearchPosition, zoomText, setZoomText, fitWidth, setFitWidth,
-    intrinsicDimensions, currentView, selection, setSelection, selectionBar, selectionStyle,
-    setSelectionStyle, positionError, setPositionError, positionEpoch, setPositionEpoch,
-    positionSession, intentEpoch, pageWindow, setPageWindow, container, layoutIndex,
-    measureFrame, layoutGeneration, pendingScrollAdjustment, pendingMeasures, dimensions,
-    layoutEpoch, setLayoutEpoch, measurementGeneration, setMeasurementGeneration,
-  };
-}
-type Inputs = Pick<ReaderSnapshot,
-  "container" | "currentView" | "dimensions" | "documentSession" | "documentSessionRef" |
-  "fitWidth" | "focusMode" | "intentEpoch" | "intrinsicDimensions" | "layoutEpoch" |
-  "layoutGeneration" | "layoutIndex" | "measureFrame" | "nativeFocus" | "opened" |
-  "pageNumber" | "pageWindow" | "pendingMeasures" | "pendingScrollAdjustment" | "positionEpoch" |
-  "positionSession" | "rotation" | "selection" | "selectionBar" | "setError" | "setFitWidth" |
-  "setLayoutEpoch" | "setMeasurementGeneration" | "setPageNumber" | "setPageWindow" |
-  "setPicked" | "setPositionEpoch" | "setPositionError" | "setRotation" | "setSelection" |
-  "setSelectionStyle" | "setZoom" | "setZoomText" | "t" | "zoom"
->;
+type Inputs =
+  Pick<DocumentSessionState, "documentSession" | "documentSessionRef" | "opened"> &
+  Pick<ViewportState,
+    "container" | "currentView" | "dimensions" | "fitWidth" | "intentEpoch" | "intrinsicDimensions"
+    | "layoutEpoch" | "layoutGeneration" | "layoutIndex" | "measureFrame" | "nativeFocus" | "pageNumber"
+    | "pageWindow" | "pendingMeasures" | "pendingScrollAdjustment" | "positionEpoch" | "positionSession"
+    | "rotation" | "selection" | "selectionBar" | "setFitWidth" | "setLayoutEpoch"
+    | "setMeasurementGeneration" | "setPageNumber" | "setPageWindow" | "setPositionEpoch"
+    | "setPositionError" | "setRotation" | "setSelection" | "setSelectionStyle" | "setZoom"
+    | "setZoomText" | "zoom"
+  > &
+  Pick<AnnotationState, "setPicked"> &
+  Pick<ReaderUIState, "focusMode" | "t"> &
+  Pick<NotificationState, "setError">;
 
 export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
   const {
@@ -359,11 +326,14 @@ export function useViewport(state: Inputs, actions: ReaderActionsRef<"tell">,) {
     jump, applyView, changeZoom, commitZoom,
   };
 }
-type PageBindingsInputs = Pick<ReaderSnapshot,
-  "annotationWrites" | "container" | "documentSession" | "documentSessionRef" |
-  "intentEpoch" | "layoutIndex" | "pendingSearchPosition" | "setError" |
-  "setNativeError" | "setPicked" | "setSelection" | "unsavedRef"
->;
+type PageBindingsInputs =
+  Pick<DocumentSessionState, "documentSession" | "documentSessionRef"> &
+  Pick<ViewportState,
+    "container" | "intentEpoch" | "layoutIndex" | "pendingSearchPosition" | "setSelection"
+  > &
+  Pick<AnnotationState, "annotationWrites" | "setPicked" | "unsavedRef"> &
+  Pick<NativeNotesState, "setNativeError"> &
+  Pick<NotificationState, "setError">;
 type Commands = Pick<ReaderActions, "mark" | "onPageDimensions" | "pagesPadding">;
 type PageProps = { onSelection: (value: SelectionPreview | undefined) => void; onPick: (record: PdfAnnotation) => void; onArea: (target:
   SelectionTarget) => void; onError: (message: string) => void; onDimensions: (generation: number, width: number, height: number) => void;

@@ -6,24 +6,7 @@ import { type Annotation, type PdfHandoff } from "../../core/model";
 import { pdfSourceUrl } from "../../core/pdf-source";
 import { ieeeSourceUrl } from "../ieee";
 import { type PdfReadingPosition, type PdfReadingPositionWriter, type PdfRotation, } from "../reading-position";
-import type { useDocumentSessionState } from "./useDocumentSession";
-import type { useViewportState } from "./useViewport";
-import type { useAnnotationsState } from "./useAnnotations";
-import type { useNativeAnnotationsState } from "./useNativeAnnotations";
-import type { useExportState } from "./useExport";
-import type { useNotificationsState, useReaderUIState, useReaderDerived } from "./useReaderUI";
-import type { useSidebarSyncState } from "./useSidebarSync";
-import type { useLeaveGuardState } from "./useLeaveGuard";
-export type ReaderState = ReturnType<typeof useDocumentSessionState> &
-  ReturnType<typeof useViewportState> &
-  ReturnType<typeof useAnnotationsState> &
-  ReturnType<typeof useNativeAnnotationsState> &
-  ReturnType<typeof useExportState> &
-  ReturnType<typeof useReaderUIState> &
-  ReturnType<typeof useSidebarSyncState> &
-  ReturnType<typeof useLeaveGuardState> &
-  ReturnType<typeof useNotificationsState>;
-export type ReaderSnapshot = ReaderState & ReturnType<typeof useReaderDerived>;
+
 export interface ReaderActions {
   claimIeeeGrant(): Promise<PdfHandoff>; loadPdf(file?: File, automatic?: boolean, chosenSource?: string, siteSession?: boolean): Promise<void>; userIntent(): void; pagesPadding(): number;
   currentPosition(): PdfReadingPosition | undefined; savePosition(): void; flushPosition():

@@ -16,11 +16,13 @@ Web Ink 是 Manifest V3 扩展。WXT 从 `entrypoints/` 构建后台 Service Wor
 
 新增持久化功能时，先在 `core/model.ts` 定义消息和结果，再在后台验证输入、确认发送者权限并提交存储。其他页面通过 `core/client.ts` 发请求。新增跨页面显示组件时，把通用部分放入 `ui/shared/`，把 PDF 专用部分放入 `pdf/components/`。
 
+PDF 的会话、视口和草稿状态在 `reader-state.ts` 分别定义。行为 hook 从对应状态中选择所需字段。`PdfReader.tsx` 组装渲染快照，在换文档时按顺序清理各模块状态。
+
 ## 请求与数据契约
 
 | 请求 | 约定 |
 | --- | --- |
-| `annotations.list`、`annotations.query` | 扩展页面可查询资料库。网页脚本限当前顶层文档的规范 URL。`query` 使用 `updatedAt` 与 `id` 游标，`requestId` 在发送文档内有效。 |
+| `annotations.list`、`annotations.query` | 扩展页面可查询资料库。网页脚本限当前顶层文档的规范 URL。`query` 使用 `updatedAt` 与 `id` 游标，`requestId` 在发送文档内有效。没有页面、类型或颜色限制的标签查询可通过现有索引批量读取最多 128 条记录。更大的集合沿用按游标顺序扫描。 |
 | `annotations.put`、`annotations.delete`、`annotations.restore` | 新建使用 `expectedRevision: 0`。更新、删除和恢复对照事务中读取的版本或删除记录。冲突返回 `CONFLICT`。相同内容的 `annotations.put` 可安全重试。 |
 | `backup.preview`、`backup.import`、`backup.export`、`storage.stats` | 仅扩展页面可调用。导入先验证完整 JSON，再在单个事务中查找本地版本与墓碑、批量写入标注和页面、更新统计。每页按导入顺序采用最后一条写入记录的标题和时间。校验上限为 20 MiB 和 50,000 条标注。 |
 | `pdf.openCurrent`、`pdf.handoff.*`、`pdf.prepared.*` | 后台核对入口、标签页、文档或会话。`pdf-handoff/tab-context.ts` 固定 Chrome 标签页、文档和代次。`pdf-handoff/session-store.ts` 验证用于返回原页面的临时记录。普通在线 PDF 使用显式站点授权和无凭据 HTTPS 请求。IEEE 会话流限定授权源，按期限回收临时数据。 |

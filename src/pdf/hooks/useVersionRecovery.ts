@@ -1,10 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { PdfAnnotation, SelectionTarget } from "../../core/pdf-types";
-import type { ReaderActionsRef, ReaderSnapshot } from "./contracts";
+import type { ReaderActionsRef } from "./contracts";
+import type {
+  DocumentSessionState,
+  ViewportState,
+  ReaderUIState,
+  NotificationState,
+} from "./reader-state";
 
-export function useVersionRecovery(state: Pick<ReaderSnapshot,
-  "documentSession" | "documentSessionRef" | "focusMode" | "setArea" | "setError" | "setSelection"
->, actions: ReaderActionsRef<"copyPrevious" | "exitFocus">) {
+export function useVersionRecovery(state: Pick<DocumentSessionState, "documentSession" | "documentSessionRef"> &
+  Pick<ViewportState, "setSelection"> &
+  Pick<ReaderUIState, "focusMode" | "setArea"> &
+  Pick<NotificationState, "setError">, actions: ReaderActionsRef<"copyPrevious" | "exitFocus">) {
   const { documentSession, documentSessionRef, focusMode, setArea, setError, setSelection } = state;
   const [open, setOpen] = useState(false);
   const [recovery, setRecovery] = useState<{ record: PdfAnnotation; session: number }>();

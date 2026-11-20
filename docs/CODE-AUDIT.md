@@ -118,8 +118,8 @@ A/B 第一轮通过全部 7 项网页门槛。第二轮捕获保存 P95 为 5.90
 
 | 优先级 | 证据与影响 | 可验收的后续改动 |
 | --- | --- | --- |
-| P2 | 含关键词或标签组合的查询在无法充分利用索引时按批扫描。网页恢复仍加载当前页整批记录。 [查询实现](../src/background/query.ts) · [页面恢复](../src/content/engine/PageRefresh.ts) | 以缺失词、稀有词、组合筛选和长页恢复的基准为依据，优先减少扫描和反序列化。 |
-| P2 | PDF hooks 通过 `ReaderState` 聚合多个 hook 返回值，形成一组类型依赖环。较长的会话和视口 hooks 还承担多个生命周期。 [阅读器契约](../src/pdf/hooks/contracts.ts) | 先明确文档会话和视口的独立数据契约，保持缩放、重绘取消和阅读位置行为。 |
-| P2 | 14 个测试文件超过 500 行。设置页单测行覆盖率 47.69%，浏览器用例覆盖部分用户流程。 [设置页](../src/ui/screens/SettingsScreen.tsx) · [浏览器用例](../tests/e2e/extension.spec.ts) | 按同一功能拆分较长用例。复用 fixture，并优先补独立的导入、预设和设置错误路径。 |
+| P2 | 全库小标签查询已用现有索引缩小候选集。纯文本和部分组合筛选仍分批扫描，网页恢复仍加载当前页整批记录。 [标签基准](PERFORMANCE.md) · [页面恢复](../src/content/engine/PageRefresh.ts) | 以缺失词、稀有词、组合筛选和长页恢复的基准为依据，优先减少扫描和反序列化。 |
+| P2 | PDF 会话和视口已依赖各自的状态字段，静态类型导入环已移除。视口 hook 仍处理滚动、布局测量和位置恢复。 [阅读器状态](../src/pdf/hooks/reader-state.ts) · [视口](../src/pdf/hooks/useViewport.ts) | 涉及这几个流程的后续改动可以沿现有职责拆分，保持缩放、重绘取消和阅读位置行为。 |
+| P2 | PDF 阅读器测试已按行为拆分，仍有 13 个测试文件超过 500 行。第二轮审查时设置页单测行覆盖率为 47.69%。 [设置页](../src/ui/screens/SettingsScreen.tsx) · [浏览器用例](../tests/e2e/extension.spec.ts) | 按同一功能拆分较长用例。复用 fixture，并优先补独立的导入、预设和设置错误路径。 |
 | P3 | TypeScript 严格检查已进 CI。仓库缺少独立的格式、lint 和 Markdown 检查配置，源码仍有不同引号风格及紧凑的多语句行。 [CI](../.github/workflows/ci.yml) | 确定一项可运行的规范检查，再在适合的提交中统一格式。 |
 | P3 | ZIP 校验在读入完整压缩文件后检查体积。运行完整性检查覆盖已知入口和静态引用，依赖 WXT 输出结构。 [解包入口](../scripts/extract-runtime.mjs) · [完整性检查](../scripts/lib/integrity.mjs) | 在 CLI 读入前检查压缩文件大小。保留发布基线校验，并在升级 WXT 时运行打包测试。 |
