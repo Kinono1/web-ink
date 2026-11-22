@@ -265,6 +265,7 @@ export type Request = | { type: "runtime.health" }
   | { type: "backup.export" }
   | { type: "backup.preview"; backup: unknown }
   | { type: "backup.import"; backup: unknown; overwrite: boolean }
+  | { type: "library.clear" }
   | { type: "page.states"; states: AnchorState[]; pageUrl: string }
   | { type: "page.state.get"; tabId: number }
   | {

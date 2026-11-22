@@ -5,6 +5,7 @@ import { getStorageStats } from "../storage-stats";
 import { fail, invalid, ok, requestFailure } from "../request-result";
 import { handleAnnotationRequest, isAnnotationRequest } from "./annotation-requests";
 import { exportBackup, importBackup, previewBackup } from "./backup";
+import { clearLibrary } from "./clear";
 import { getPageMode, putPageMode } from "./pages";
 import { readSettings, writeSettings } from "./settings";
 import {
@@ -55,6 +56,11 @@ export async function handleDataRequest(message: unknown, context: DataRequestCo
       case "backup.preview":
       case "backup.import":
         return await handleBackupRequest(request, context);
+      case "library.clear": {
+        const forbidden = requireTrusted(context, "delete the library");
+        if (forbidden) return forbidden;
+        return ok(await clearLibrary());
+      }
     }
   } catch (error) {
     return requestFailure(error, "storage request", "Storage request failed.");

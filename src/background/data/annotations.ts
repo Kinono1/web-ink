@@ -1,7 +1,7 @@
 import type { Annotation, Result } from "../../core/model";
 import { MAX_REVISION, ValidationError } from "../../core/validation";
 import { getDatabase } from "../database";
-import { applyIncrementalStats } from "../storage-stats";
+import { applyIncrementalStats, type StatsChange } from "../storage-stats";
 import { fail, ok } from "../request-result";
 import { committedVersion, pageRecord, sameAnnotation } from "./validation";
 
@@ -89,7 +89,7 @@ export async function deleteAnnotation(
   ownPage?: string,
 ): Promise<Result<{ id: string; deleted: true; pageUrl: string }>> {
   const db = getDatabase();
-  return db.transaction("rw", db.annotations, db.stats, db.tombstones, async () => {
+  return db.transaction("rw", db.annotations, db.pages, db.stats, db.tombstones, async () => {
     const existing = await db.annotations.get(id);
     if (!existing) return fail("Annotation no longer exists.", "CONFLICT");
     if (ownPage !== undefined && existing.pageUrl !== ownPage)
@@ -97,7 +97,28 @@ export async function deleteAnnotation(
     if (existing.revision !== expectedRevision) return fail("Annotation changed in another tab.", "CONFLICT");
     await db.annotations.delete(id);
     await db.tombstones.put({ id: existing.id, pageUrl: existing.pageUrl, revision: existing.revision });
-    await applyIncrementalStats([{ beforeAnnotation: existing }]);
+    const pageChange = await forgetEmptyPage(existing.pageUrl);
+    await applyIncrementalStats([{ beforeAnnotation: existing, ...pageChange }]);
     return ok({ id, deleted: true, pageUrl: existing.pageUrl });
   });
+}
+
+/**
+ * Once a page has no annotations, its title is no longer needed. A page with a
+ * local on/off choice keeps that choice under its URL; any other row is removed.
+ * Return the page delta for the caller to record in the same transaction.
+ */
+async function forgetEmptyPage(pageUrl: string): Promise<StatsChange | undefined> {
+  const db = getDatabase();
+  if (await db.annotations.where("pageUrl").equals(pageUrl).count()) return;
+  const page = await db.pages.get(pageUrl);
+  if (!page) return;
+  if (!page.modeOverride && page.enabled === undefined) {
+    await db.pages.delete(pageUrl);
+    return { beforePage: page };
+  }
+  if (!page.title) return;
+  const untitled = { ...page, title: "" };
+  await db.pages.put(untitled);
+  return { beforePage: page, afterPage: untitled };
 }

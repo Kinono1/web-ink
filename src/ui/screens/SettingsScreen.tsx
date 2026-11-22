@@ -21,6 +21,7 @@ export function SettingsScreen({ visible }: { visible: boolean }) {
   const [preview, setPreview] = useState<ImportPreview>();
   const [overwrite, setOverwrite] = useState(false);
   const [busyImport, setBusyImport] = useState(false);
+  const [clearState, setClearState] = useState<"idle" | "confirming" | "busy">("idle");
   useEffect(() => {
     const guard = (event: BeforeUnloadEvent) => {
       if (!presetDraft.current && !presetSaving.current) return;
@@ -94,6 +95,18 @@ export function SettingsScreen({ visible }: { visible: boolean }) {
       setBusyImport(false);
     }
   };
+  const clearLibrary = async () => {
+    setClearState("busy");
+    try {
+      await request({ type: "library.clear" });
+      setNotice(t.deleteAllDone);
+      await loadRecords();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setClearState("idle");
+    }
+  };
   const editPresets = () => {
     if (presetsLoading) return;
     presetTrigger.current = document.activeElement as HTMLElement;
@@ -123,6 +136,9 @@ export function SettingsScreen({ visible }: { visible: boolean }) {
           selectionToolbarSaving={selectionToolbarSaving}
           toggleSelectionToolbar={() => void toggleSelectionToolbar()}
           onPresets={editPresets}
+          clearLibrary={() => void clearLibrary()}
+          clearState={clearState}
+          setClearState={setClearState}
         />
       ) : null}
       {presetEditor && (

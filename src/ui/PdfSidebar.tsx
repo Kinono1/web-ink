@@ -16,7 +16,6 @@ export function PdfSidebar({ tabId, language }: { tabId?: number; language: Lang
   const [operation, setOperation] = useState<string>();
   const connection = useRef<ReturnType<typeof connectPdfSidebar> | undefined>(undefined);
   const scope = useRef<string | undefined>(undefined);
-  const zh = language === "zh-CN";
   const t = textFor(language);
   useEffect(() => {
     setView(null);

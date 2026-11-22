@@ -51,6 +51,7 @@ See the [module boundaries and internal API](docs/ARCHITECTURE.md) and the [code
 ```sh
 npm ci
 npm run check
+npm run lint
 npm test
 npm run test:bulk
 npm run test:release
@@ -59,7 +60,7 @@ npm run test:e2e
 npm run zip
 ```
 
-The full browser suite requires two verified baselines: `WEB_INK_OLD_BUILD` is the extracted v0.3.0 release archive, and `WEB_INK_RELOAD_OLD_BUILD` is the v0.3.1 build at commit `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`. CI prepares both. See [release process](docs/RELEASING.md) for local setup; missing baselines fail instead of skipping upgrade acceptance.
+The full browser suite requires two verified baselines: `WEB_INK_OLD_BUILD` is the extracted v0.3.0 release archive, and `WEB_INK_RELOAD_OLD_BUILD` is the v0.3.1 build at commit `d37555855f4d3f8cec0bbd27d28de8afa12f49fc`. CI prepares both and fails if either is missing. Locally, a test whose baseline is missing is skipped with a note; see [release process](docs/RELEASING.md) to prepare them.
 
 Use Node 24.15+ within the package engine range and the committed lockfile. `build` checks entry points, static resource references and prepared PDF assets, then writes `runtime-integrity.json`. Installation and packaging reject missing, modified or unlisted runtime files. Complete legacy installs can still be upgraded. `zip` verifies and packages the existing build without rebuilding. Clean builds use the commit timestamp as their reproducible build epoch.
 

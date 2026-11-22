@@ -73,6 +73,7 @@ skills/            只读标注查询 skill
 ```sh
 npm ci
 npm run check
+npm run lint
 npm run test:coverage
 npm run test:skill
 npm run test:bulk
@@ -88,7 +89,7 @@ npm run zip
 
 `npm run test:benchmark` 使用合成网页、万条标注和最高 1000 页 PDF，在独立临时 profile 中测量。CI 检查样本数量、最多 3 个页面 canvas，以及关闭文档后没有残留 PDF worker。耗时和 GC 后的主页面堆大小供同环境比较；主页面堆不代表整个浏览器内存，耗时也不作为跨机器的固定门槛。运行基准时避免同时构建或测试。
 
-完整浏览器回归使用 Playwright Chromium，并需要两份已核验的旧构建。`WEB_INK_OLD_BUILD` 指向校验过的 v0.3.0 解压包，`WEB_INK_RELOAD_OLD_BUILD` 指向提交 `d37555855f4d3f8cec0bbd27d28de8afa12f49fc` 的 v0.3.1 构建。CI 自动准备；本地运行方法见[发布流程](docs/RELEASING.md)。缺少基线会失败，不跳过升级验收。
+完整浏览器回归使用 Playwright Chromium，需要两份已核验的旧构建。`WEB_INK_OLD_BUILD` 指向校验过的 v0.3.0 解压包，`WEB_INK_RELOAD_OLD_BUILD` 指向提交 `d37555855f4d3f8cec0bbd27d28de8afa12f49fc` 的 v0.3.1 构建。CI 自动准备，缺少基线时会失败。本地缺少基线时，对应测试会跳过并给出提示。准备方法见[发布流程](docs/RELEASING.md)。
 
 **清理构建产物：** 清理超过七天的暂存 ZIP 和校验文件，不清理安装目录、恢复备份或浏览器 profile：
 

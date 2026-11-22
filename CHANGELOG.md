@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Page keys drop known tracking parameters (`utm_*`, `fbclid`, `gclid`, `msclkid` and similar), so the same article matches however it was reached and click IDs stay out of the library and backups. IndexedDB v4 re-keys existing annotations, deletion records and page rows; older backups are re-keyed on import.
+- Deleting a page's last annotation removes its page row, or clears its title when the page keeps a local on/off choice.
+- Added **Delete all data** in Settings & data. It removes annotations, page rows, deletion records and PDF reading state, and keeps settings.
+- Moved the service-worker message routing into `src/background/router.ts` with a route table and dedicated tests.
+- Added Biome linting (`npm run lint`), declared `vite` directly, pinned `@vitest/coverage-v8`, and moved `@types/node` to Node 24.
+- Browser tests that need historical baselines skip locally when the baseline is missing; CI still requires them.
+- Split CI into parallel jobs and moved dated validation records to `docs/archive/`.
+- Since 0.3.17: smoother PDF scrolling, a refined reading workspace, better annotation recovery and page export.
+
+## 0.3.1 – 0.3.17 — 2026-09-19 to 2026-10-31
+
+These versions were released without individual changelog entries. Highlights, grouped from the commit history:
+
+- **PDF reader:** same-tab PDF handoff from the floating pen and side panel; saved reading positions; zoom, text search and focus reading; preserving original PDF notes and exporting a separate annotated PDF; IEEE sign-in reading with a scoped, short-lived session; corrupt-PDF failure handling; consistent highlight colors and geometry.
+- **Webpages:** automatic or manual selection tools, annotation presets, pencil size, a draggable floating menu, recovery of annotations on dynamic feeds, and Markdown export of a page's annotations. Image drawing is marked as coming soon.
+- **Library and side panel:** redesigned library, side panel and in-page toolbars on shared design tokens; PDF annotations in the Chrome side panel.
+- **Reliability:** generation-aware runtime replacement and retried registration across worker wakes and extension Reload; verified local updates with backup and rollback; CRX packaging.
+- **Engineering:** content engine, PDF reader and management UI split into owned modules; coverage thresholds, paired performance benchmarks and minimum-Chrome regression jobs in CI; the optional read-only annotation skill.
+
 ## 0.3.0 — performance preview, 2026-09-19
 
 - Shared the webpage text index between selection capture and restoration, flushing queued DOM mutations before save and releasing replaced roots. Successful saves apply record deltas instead of full-page refreshes.

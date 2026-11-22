@@ -259,7 +259,7 @@ test("preset editor retains keyboard focus inside its dialog while a write is pe
   await page.evaluate(() => {
     const original = chrome.storage.local.set.bind(chrome.storage.local);
     chrome.storage.local.set = async (entries) => {
-      if (Object.prototype.hasOwnProperty.call(entries, "ui.annotationPresets")) return new Promise<void>(() => {});
+      if (Object.hasOwn(entries, "ui.annotationPresets")) return new Promise<void>(() => {});
       return original(entries);
     };
   });

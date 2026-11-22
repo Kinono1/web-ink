@@ -1,7 +1,8 @@
 import {
   SCHEMA_VERSION, type Annotation, type BackupEnvelope, type Settings,
 } from "./model";
-import { validateBackup } from "./validation";
+import { isWebPage, pageKey } from "./url";
+import { MAX_BACKUP_ANNOTATIONS, validateBackup } from "./validation";
 
 function clone<T>(value: T): T {
   return structuredClone(value);
@@ -17,16 +18,39 @@ export function serializeBackup(annotations: Annotation[], settings?: Settings):
   return validateBackup(envelope);
 }
 
+/**
+ * Backups written before a page-key rule changed (for example, before tracking
+ * parameters were dropped) store the older key. Re-key web pages to the current
+ * form so they import and match the page instead of failing validation.
+ */
+function currentPageKeys(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const backup = value as { annotations?: unknown };
+  if (!Array.isArray(backup.annotations) || backup.annotations.length > MAX_BACKUP_ANNOTATIONS) return value;
+  let changed = false;
+  const annotations = backup.annotations.map((annotation: unknown) => {
+    if (!annotation || typeof annotation !== "object" || Array.isArray(annotation)) return annotation;
+    const pageUrl = (annotation as { pageUrl?: unknown }).pageUrl;
+    if (typeof pageUrl !== "string" || !isWebPage(pageUrl)) return annotation;
+    let current: string;
+    try { current = pageKey(pageUrl); } catch { return annotation; }
+    if (current === pageUrl) return annotation;
+    changed = true;
+    return { ...annotation, pageUrl: current };
+  });
+  return changed ? { ...backup, annotations } : value;
+}
+
 /** Parse and fully validate before data code starts an import transaction. */
 export function parseBackup(value: unknown): BackupEnvelope {
-  return validateBackup(value);
+  return validateBackup(currentPageKeys(value));
 }
 
 /** Escape content rather than treating annotations as Markdown syntax. */
 function markdownInline(value: string): string {
   return value
     .replace(/\\/g, "\\\\")
-    .replace(/([`*_{}\[\]<>#!()+\-=|~])/g, "\\$1");
+    .replace(/([`*_{}[\]<>#!()+\-=|~])/g, "\\$1");
 }
 
 /** Keep each source line inside a quote; no source line can start a Markdown block. */

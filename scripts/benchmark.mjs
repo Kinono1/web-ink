@@ -1,8 +1,8 @@
 // Performance benchmarks on artificial fixtures and disposable browser profiles.
 // Usage: node scripts/benchmark.mjs [--mode=v02|v03|pdf] [label]
-//   v02  webpage restore, image paint and library timings (docs/performance-v0.2.json)
-//   v03  v02 plus capture/save and search, 30 samples each (docs/performance-v0.3.json)
-//   pdf  PDF reader open and page-jump timings (docs/performance-v0.3.json)
+//   v02  webpage restore, image paint and library timings (docs/archive/performance-v0.2.json)
+//   v03  v02 plus capture/save and search, 30 samples each (docs/archive/performance-v0.3.json)
+//   pdf  PDF reader open and page-jump timings (docs/archive/performance-v0.3.json)
 import { chromium } from "@playwright/test";
 import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";

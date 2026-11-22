@@ -26,7 +26,7 @@ function largePdf(size) {
   parts.push(header, Buffer.alloc(padding), "\nendstream\nendobj\n");
   length += header.length + padding + "\nendstream\nendobj\n".length;
   const xref = length;
-  let tail = `xref\n0 7\n0000000000 65535 f \n${offsets
+  const tail = `xref\n0 7\n0000000000 65535 f \n${offsets
     .slice(1)
     .map((n) => `${String(n).padStart(10, "0")} 00000 n \n`)
     .join("")}trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;

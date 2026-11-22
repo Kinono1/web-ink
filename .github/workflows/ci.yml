@@ -12,8 +12,73 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Jobs run in parallel. Each browser job builds its own runtime from the same
+# lockfile, so no job waits for another.
 jobs:
-  verify:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+      - run: npm run lint
+      - run: npm run test:coverage
+      - run: npm run test:skill
+      - name: Run bulk correctness tests
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$RUNNER_TEMP/web-ink-ci-logs"
+          npm run test:bulk 2>&1 | tee "$RUNNER_TEMP/web-ink-ci-logs/bulk.log"
+      - run: npm run test:benchmark:tools
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-ink-checks-diagnostics
+          if-no-files-found: warn
+          retention-days: 7
+          path: ${{ runner.temp }}/web-ink-ci-logs/bulk.log
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run test:release
+      - run: npm run zip
+      - run: node scripts/checksum.mjs
+      - name: Verify release checksums
+        working-directory: releases
+        run: sha256sum -c *.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-ink-extension
+          if-no-files-found: error
+          # Only these two explicit patterns are uploaded; other hidden files stay out.
+          include-hidden-files: true
+          path: |
+            releases/web-ink-*-chrome.zip
+            releases/web-ink-*-chrome.zip.sha256
+
+  e2e:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -26,18 +91,7 @@ jobs:
           node-version: '24.15.0'
           cache: npm
       - run: npm ci
-      - run: npm run check
-      - run: npm run test:coverage
-      - run: npm run test:skill
-      - name: Run bulk correctness tests
-        shell: bash
-        run: |
-          set -o pipefail
-          mkdir -p "$RUNNER_TEMP/web-ink-ci-logs"
-          npm run test:bulk 2>&1 | tee "$RUNNER_TEMP/web-ink-ci-logs/bulk.log"
       - run: npm run build
-      - run: npm run test:release
-      - run: npm run test:benchmark:tools
       - run: npx playwright install --with-deps chromium
       - name: Prepare checksum-verified upgrade baseline
         shell: bash
@@ -73,6 +127,32 @@ jobs:
           node -e 'const fs=require("fs"); const p=process.argv[1]; const info=JSON.parse(fs.readFileSync(p+"/build-info.json")); if(info.commit!==process.argv[2]||info.version!=="0.3.1"||info.dirty) throw Error("Invalid Reload baseline identity")' "$BASELINE_WORKTREE/.output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_RELOAD_OLD_BUILD=$BASELINE_WORKTREE/.output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:e2e
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-ink-e2e-traces
+          if-no-files-found: warn
+          retention-days: 7
+          # Traces come from authored test fixtures only. Do not add user backups,
+          # IndexedDB snapshots, or imports.
+          path: test-results/**/trace.zip
+
+  minimum-chrome:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
       - name: Verify minimum PDF browser (Chrome 125)
         shell: bash
         run: |
@@ -90,6 +170,32 @@ jobs:
           curl -fL --retry 2 "$WEB_BROWSER_URL" -o "$RUNNER_TEMP/chrome120.zip"
           unzip -q "$RUNNER_TEMP/chrome120.zip" -d "$RUNNER_TEMP/chrome120"
           WEB_INK_TEST_BROWSER_PATH="$RUNNER_TEMP/chrome120/chrome-linux64/chrome" npx playwright test tests/e2e/extension.spec.ts -g "real text marking|existing image marks|query|palette is quiet"
+      - name: Upload failure traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-ink-minimum-chrome-traces
+          if-no-files-found: warn
+          retention-days: 7
+          # Traces come from authored test fixtures only. Do not add user backups,
+          # IndexedDB snapshots, or imports.
+          path: test-results/**/trace.zip
+
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
       - name: Prepare pre-refactor performance baseline
         shell: bash
         run: |
@@ -108,29 +214,3 @@ jobs:
           node -e 'const fs=require("fs"); const info=JSON.parse(fs.readFileSync(process.argv[1]+"/build-info.json")); if(info.commit!==process.argv[2]||info.dirty) throw Error("Invalid performance baseline identity")' "$BASELINE_WORKTREE/.build-output/chrome-mv3" "$BASELINE_COMMIT"
           echo "WEB_INK_BENCHMARK_BASELINE=$BASELINE_WORKTREE/.build-output/chrome-mv3" >> "$GITHUB_ENV"
       - run: npm run test:benchmark
-      - run: npm run zip
-      - run: node scripts/checksum.mjs
-      - name: Verify release checksums
-        working-directory: releases
-        run: sha256sum -c *.zip.sha256
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-ink-failure-diagnostics
-          if-no-files-found: warn
-          retention-days: 7
-          # Keep diagnostics limited to CI logs and traces made from authored
-          # test fixtures. Do not add user backups, IndexedDB snapshots, or imports.
-          path: |
-            ${{ runner.temp }}/web-ink-ci-logs/bulk.log
-            test-results/**/trace.zip
-      - uses: actions/upload-artifact@v4
-        with:
-          name: web-ink-extension
-          if-no-files-found: error
-          # Only these two explicit patterns are uploaded; other hidden files stay out.
-          include-hidden-files: true
-          path: |
-            releases/web-ink-*-chrome.zip
-            releases/web-ink-*-chrome.zip.sha256
