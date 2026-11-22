@@ -28,7 +28,8 @@ export type KnownMessage =
   | { type: "storage.stats"; recalculate?: unknown }
   | { type: "backup.export" }
   | { type: "backup.preview"; backup: unknown }
-  | { type: "backup.import"; backup: unknown; overwrite: unknown };
+  | { type: "backup.import"; backup: unknown; overwrite: unknown }
+  | { type: "library.clear" };
 
 export function record(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value) &&
@@ -57,6 +58,7 @@ const MESSAGE_SHAPES: Record<string, { required: string[]; optional?: string[] }
   "backup.export": { required: ["type"] },
   "backup.preview": { required: ["type", "backup"] },
   "backup.import": { required: ["type", "backup", "overwrite"] },
+  "library.clear": { required: ["type"] },
 };
 
 export function parseMessage(value: unknown): KnownMessage | undefined {

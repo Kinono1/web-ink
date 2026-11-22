@@ -3,7 +3,7 @@ import type { Annotation, Language } from "../../../core/model";
 import type { FilterKind } from "../types";
 import type { COPY } from "../copy";
 
-export function FilterPopover({ language, t, kind, color, tag, records,
+export function FilterPopover({ t, kind, color, tag, records,
   setKind, setColor, setTag, clear }: {
   language: Language; t: (typeof COPY)[Language]; kind: FilterKind; color: string; tag: string;
   records: Annotation[]; setKind: (value: FilterKind) => void;

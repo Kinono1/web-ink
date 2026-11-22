@@ -7,6 +7,7 @@ import {
   type Worker,
 } from "@playwright/test";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   cp, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile,
 } from "node:fs/promises";
@@ -209,6 +210,9 @@ async function markWithPresetShortcut(page: Page, selector: string) {
 }
 
 test("in-place extension Reload replaces old runtimes three times without navigating existing pages", async ({}, testInfo) => {
+  // CI always provides the baseline, so a missing one still fails there.
+  test.skip(!process.env.CI && !existsSync(path.join(oldBuild, "manifest.json")),
+    `Build the v0.3.1 Reload baseline at ${oldBuild} or set WEB_INK_RELOAD_OLD_BUILD to run this locally`);
   test.setTimeout(180_000);
   const baseline = await readBuild(oldBuild, "Old");
   const candidate = await readBuild(newBuild, "New");

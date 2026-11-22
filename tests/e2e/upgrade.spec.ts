@@ -5,6 +5,8 @@ import path from 'node:path';
 
 test('v0.3.0 profile upgrade preserves every durable annotation and local preference', async () => {
   const oldBuild = process.env.WEB_INK_OLD_BUILD;
+  // CI always provides the baseline, so a missing one still fails there.
+  test.skip(!oldBuild && !process.env.CI, 'Set WEB_INK_OLD_BUILD to the verified v0.3.0 release archive to run this locally');
   if (!oldBuild) throw new Error('Set WEB_INK_OLD_BUILD to the verified v0.3.0 release archive');
 
   const candidateBuild = process.env.WEB_INK_BUILD || path.resolve('.build-output/chrome-mv3');

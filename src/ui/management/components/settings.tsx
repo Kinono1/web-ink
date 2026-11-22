@@ -9,7 +9,7 @@ import { ColorPicker } from "./detail";
 export function SettingsView({ settings, t, language, saveSettings, exportJson, exportMarkdown,
   readImport, preview, overwrite, setOverwrite, busyImport, importBackup, onPresets,
   presetsLoading = false, selectionToolbarEnabled, selectionToolbarSaving = false,
-  toggleSelectionToolbar }: {
+  toggleSelectionToolbar, clearLibrary, clearState = "idle", setClearState }: {
   settings: Settings; t: (typeof COPY)[Language]; language: Language;
   saveSettings: (patch: Partial<Settings>) => void;
   exportJson: () => void; exportMarkdown: () => void;
@@ -19,6 +19,9 @@ export function SettingsView({ settings, t, language, saveSettings, exportJson, 
   onPresets?: () => void; presetsLoading?: boolean;
   selectionToolbarEnabled: boolean; selectionToolbarSaving?: boolean;
   toggleSelectionToolbar: () => void;
+  clearLibrary?: () => void;
+  clearState?: "idle" | "confirming" | "busy";
+  setClearState?: (state: "idle" | "confirming") => void;
 }) {
   return (
     <section className="settings-view">
@@ -83,6 +86,23 @@ export function SettingsView({ settings, t, language, saveSettings, exportJson, 
         ) : null}
         <p className="hint">{t.importSettings}</p>
       </section>
+      {clearLibrary && setClearState ? (
+        <section className="settings-group">
+          <h2>{t.deleteAllTitle}</h2>
+          <p className="hint">{t.deleteAllHint}</p>
+          {clearState === "idle" ? (
+            <div className="detail-actions">
+              <button className="quiet danger" onClick={() => setClearState("confirming")}>{t.deleteAll}</button>
+            </div>
+          ) : (
+            <div className="detail-actions">
+              <button className="danger" disabled={clearState === "busy"} onClick={clearLibrary}>
+                {clearState === "busy" ? t.deletingAll : t.deleteAllConfirm}</button>
+              <button className="quiet" disabled={clearState === "busy"} onClick={() => setClearState("idle")}>{t.cancel}</button>
+            </div>
+          )}
+        </section>
+      ) : null}
       <BuildInfo language={language} />
     </section>
   );

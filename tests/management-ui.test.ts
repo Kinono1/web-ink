@@ -285,6 +285,30 @@ it("updates the pencil size from Settings without changing annotation settings",
   expect(chrome.runtime.sendMessage).not.toHaveBeenCalledWith(expect.objectContaining({ type: "settings.put" }));
 });
 
+it("deletes all library data only after an explicit second confirmation", async () => {
+  const requests: string[] = [];
+  installChrome((message) => {
+    requests.push(message.type);
+    if (message.type === "settings.get") return { ok: true, data: settings };
+    if (message.type === "annotations.query") return { ok: true, data: { items: [], total: 0 } };
+    if (message.type === "library.clear") return { ok: true, data: { annotations: 3, pages: 2 } };
+    return { ok: false, error: "Unavailable in this fixture" };
+  });
+  Object.assign(chrome, { storage: { local: { get: async () => ({}), set: async () => {} } } });
+  const host = await mount("library");
+  const button = (text: string) => [...host.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === text);
+  await act(async () => button("设置与数据")!.click());
+  await act(async () => button("删除全部标注…")!.click());
+  expect(requests).not.toContain("library.clear");
+  await act(async () => button("取消")!.click());
+  expect(button("永久删除全部")).toBeUndefined();
+  await act(async () => button("删除全部标注…")!.click());
+  await act(async () => button("永久删除全部")!.click());
+  expect(requests.filter(type => type === "library.clear")).toHaveLength(1);
+  expect(host.textContent).toContain("已删除全部标注");
+  expect(button("删除全部标注…")).toBeTruthy();
+});
+
 it("rolls back a failed pencil-size write to the latest external value", async () => {
   const changes = new Set<StorageListener>();
   let stored = 48;

@@ -1,0 +1,93 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "includes": [
+      "src/**",
+      "entrypoints/**",
+      "tests/**",
+      "scripts/**",
+      "*.ts",
+      "!tests/fixtures"
+    ]
+  },
+  "formatter": {
+    "enabled": false
+  },
+  "assist": {
+    "enabled": false
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "a11y": {
+        "useButtonType": "off",
+        "useSemanticElements": "off",
+        "noAutofocus": "off",
+        "useAriaPropsSupportedByRole": "warn",
+        "noStaticElementInteractions": "warn",
+        "useKeyWithClickEvents": "warn",
+        "noNoninteractiveTabindex": "warn",
+        "noLabelWithoutControl": "warn",
+        "noRedundantRoles": "warn"
+      },
+      "complexity": {
+        "noImportantStyles": "off",
+        "useOptionalChain": "off"
+      },
+      "correctness": {
+        "useExhaustiveDependencies": "off",
+        "noEmptyPattern": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off",
+        "useTemplate": "off",
+        "useImportType": "off",
+        "noDescendingSpecificity": "off"
+      },
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noControlCharactersInRegex": "off",
+        "noFocusedTests": "off",
+        "noAssignInExpressions": "off",
+        "useIterableCallbackReturn": "off",
+        "noDuplicateProperties": "off",
+        "noNonNullAssertedOptionalChain": "off",
+        "noArrayIndexKey": "warn",
+        "noImplicitAnyLet": "off"
+      },
+      "performance": {
+        "useDomNodeTextContent": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "tests/**"
+      ],
+      "linter": {
+        "rules": {
+          "correctness": {
+            "noComponentHookFactories": "off",
+            "noUnsafeOptionalChaining": "off",
+            "noUnusedFunctionParameters": "off"
+          },
+          "suspicious": {
+            "noExportsInTest": "off",
+            "noShadowRestrictedNames": "off"
+          },
+          "complexity": {
+            "noCommaOperator": "off",
+            "noUselessConstructor": "off"
+          }
+        }
+      }
+    }
+  ]
+}

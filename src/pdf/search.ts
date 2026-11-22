@@ -180,7 +180,7 @@ export class PdfTextSearchIndex {
           );
           result.total += pageMatches.total;
           result.matches.push(...pageMatches.matches);
-        } catch (cause) {
+        } catch {
           if (controller.signal.aborted || this.#disposed || generation !== this.#generation) throw abortError();
           result.failedPages++;
         }

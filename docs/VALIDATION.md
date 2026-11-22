@@ -2,11 +2,11 @@
 
 ## 0.3.5 native PDF interoperability — 2026-10-12
 
-[Native-note/export evidence and compatibility limits](VALIDATION-v0.3.5.md) records original Preview notes, standard PDF export, independent readback, AI snapshot compatibility, performance samples and untested-reader boundaries. Exact-commit CI, installation and actual Chrome activation are separate delivery gates.
+[Native-note/export evidence and compatibility limits](archive/VALIDATION-v0.3.5.md) records original Preview notes, standard PDF export, independent readback, AI snapshot compatibility, performance samples and untested-reader boundaries. Exact-commit CI, installation and actual Chrome activation are separate delivery gates.
 
 ## 0.3.2 local candidate — 2026-10-10
 
-[Current candidate checkpoint and remaining gates](VALIDATION-v0.3.2.md): clean-source type/build checks, 285 unit tests, 3 large-data cases, 17 installation/release tests and 57 browser regressions passed. Same-tab PDF, in-place Reload and upgrade coverage use isolated synthetic profiles; native Chrome acceptance, exact-head CI, main integration and the actual user installation remain pending. No public v0.3.2 Release or tag is claimed.
+[Current candidate checkpoint and remaining gates](archive/VALIDATION-v0.3.2.md): clean-source type/build checks, 285 unit tests, 3 large-data cases, 17 installation/release tests and 57 browser regressions passed. Same-tab PDF, in-place Reload and upgrade coverage use isolated synthetic profiles; native Chrome acceptance, exact-head CI, main integration and the actual user installation remain pending. No public v0.3.2 Release or tag is claimed.
 
 ## 0.3.1 candidate — acceptance gates
 
@@ -43,7 +43,7 @@ Performance results and their limits are in [PERFORMANCE.md](PERFORMANCE.md). PD
 
 The minimum PDF target is Chrome 125; the dedicated CI step runs the PDF suite in Chrome for Testing 125.0.6422.141. Its result must pass before publishing this prerelease. No account, credential or real research PDF is used in those tests.
 
-Public-page automation passed text creation and reload on Wikipedia and MDN. GitHub navigation timed out before DOMContentLoaded and was not verified in this run; see [raw site results](real-sites-v0.2.json).
+Public-page automation passed text creation and reload on Wikipedia and MDN. GitHub navigation timed out before DOMContentLoaded and was not verified in this run; see [raw site results](archive/real-sites-v0.2.json).
 
 
 ## 0.1.3 — 2026-09-18
@@ -99,7 +99,7 @@ The following text-create → refresh → restore checks passed on 2026-09-18 in
 | MDN | `https://developer.mozilla.org/en-US/docs/Web/API/CSS_Custom_Highlight_API` | PASS |
 | GitHub | `https://github.com/wxt-dev/wxt` README | PASS |
 
-Exact check timestamps and results: [real-sites-2026-09-18.json](real-sites-2026-09-18.json).
+Exact check timestamps and results: [real-sites-2026-09-18.json](archive/real-sites-2026-09-18.json).
 
 These checks cover selected text on these pages, not every page on those domains, all types of images, or site-wide compatibility. They found and led to fixing a selection toolbar disappearing during delayed scrolling. Image behavior is verified against the artificial responsive fixture, not these three public pages.
 

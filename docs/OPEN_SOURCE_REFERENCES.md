@@ -8,7 +8,7 @@ contains runtime `b7137e3`, reading `c8f1cac`, management `cae074c`, theme
 `4db975d`, notice preparation `fbc9f6d`, and PDF UI `9b3d368`. Source and
 declared unit-test mappings are verified at that head. The clean `6df483c`
 checkpoint subsequently passed all 57 local E2E cases and
-an actual ZIP/resource-notice audit; see [the validation record](VALIDATION-v0.3.2.md).
+an actual ZIP/resource-notice audit; see [the validation record](archive/VALIDATION-v0.3.2.md).
 Native acceptance, CI, final main and installation remain separate pending gates.
 
 | Pinned reference | Exact commit and license | Examined contract | Web Ink boundary |

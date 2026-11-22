@@ -4,7 +4,7 @@ Web Ink is designed for local use.
 
 ## Data stored in the browser profile
 
-- Web annotations: canonical URL, page title, selected text or image-identification metadata, drawing geometry, note, tags, color, timestamps, revision, and per-page enabled preference.
+- Web annotations: canonical URL (heading anchors and known tracking parameters such as `utm_*`, `fbclid` and `gclid` are removed; other query parameters are kept because they can select page content), page title, selected text or image-identification metadata, drawing geometry, note, tags, color, timestamps, revision, and per-page enabled preference.
 - PDF annotations: SHA-256 document hash, file name, optional source URL, page number, text anchor/context, and area geometry.
 - Settings: language, theme, reduced-motion/reduced-transparency preferences, default color, and paused origins.
 
@@ -34,10 +34,14 @@ Web Ink has no account, server API, cloud synchronization, analytics, telemetry,
 
 ## Retention and user controls
 
-You can pause an origin, disable a page, and delete individual annotations. Export JSON before uninstalling, clearing browser or extension data, changing profiles, or replacing a profile. Uninstalling removes extension-local data; Web Ink cannot recover records that were not backed up.
+You can pause an origin, disable a page, delete individual annotations, or use **Delete all data** in **Library → Settings & data**. Delete all data removes every annotation, page record, deletion record and PDF reading position or paper identity; settings and interface preferences stay. Export JSON before uninstalling, clearing browser or extension data, changing profiles, or replacing a profile. Uninstalling removes extension-local data; Web Ink cannot recover records that were not backed up.
 
 Backup schema v2 accepts v1 imports. Imported settings do not replace local settings. Conflicting IDs retain local records unless overwrite is explicitly selected.
 
 ## Deletion metadata
 
-Deleting an annotation removes its content from the annotation library. A small local deletion record (ID, source key and revision, without quotation/note/drawing data) remains to reject stale writes and support safe session undo. These internal deletion records are not included in exported backups.
+Deleting an annotation removes its content from the annotation library. A small local deletion record (ID, source key and revision, without quotation/note/drawing data) remains to reject stale writes and support safe session undo. These internal deletion records are not included in exported backups and are removed by Delete all data.
+
+When a page's last annotation is deleted, its page record is removed. If you switched annotations on or off for that page, the record keeps the URL and that choice, and its title is cleared.
+
+A URL can itself carry private values, such as a sign-in or sharing token in its query string. Web Ink keeps query parameters it does not recognize as tracking, so avoid annotating pages whose address contains a secret, or remove those annotations before exporting.

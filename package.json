@@ -13,6 +13,7 @@
     "prebuild": "node scripts/icons.mjs && node scripts/licenses.mjs && node scripts/pdf-assets.mjs && node scripts/build-info.mjs",
     "build": "wxt build",
     "check": "wxt prepare && tsc --noEmit",
+    "lint": "biome lint",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:benchmark": "node scripts/check-benchmark.mjs",
@@ -20,7 +21,7 @@
     "test:e2e": "playwright test",
     "zip": "node scripts/package-release.mjs",
     "crx": "node scripts/package-crx.mjs",
-    "release:local": "npm run check && npm test && npm run test:skill && npm run test:bulk && npm run test:release && npm run build && npm run test:e2e && npm run zip -- --release",
+    "release:local": "npm run check && npm run lint && npm test && npm run test:skill && npm run test:bulk && npm run test:release && npm run build && npm run test:e2e && npm run zip -- --release",
     "postinstall": "wxt prepare",
     "benchmark": "node scripts/benchmark.mjs --mode=v02",
     "benchmark:v03": "node scripts/benchmark.mjs --mode=v03",
@@ -44,9 +45,10 @@
   },
   "devDependencies": {
     "@aklinker1/zero-zip": "1.0.1",
+    "@biomejs/biome": "2.6.4",
     "@playwright/test": "1.63.0",
     "@types/chrome": "0.3.0",
-    "@types/node": "22.20.3",
+    "@types/node": "24.19.1",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@vitest/coverage-v8": "5.0.3",
@@ -54,6 +56,7 @@
     "fake-indexeddb": "6.2.5",
     "jsdom": "30.1.0",
     "typescript": "7.0.2",
+    "vite": "8.3.8",
     "vitest": "5.0.3",
     "wxt": "0.21.4"
   }

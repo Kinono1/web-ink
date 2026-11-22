@@ -4,7 +4,7 @@ Web Ink is a local-first Chrome annotation tool for webpage text and PDF text an
 
 [中文](../README.md) · [Privacy](../PRIVACY.md) · [Third-party notices](../THIRD_PARTY_NOTICES.md) · [Release process](RELEASING.md)
 
-> See [package.json](../package.json) for the current source version and Settings for the installed version and build commit; public archives may be older. See [0.3.6 focus/preset validation](VALIDATION-v0.3.6.md), [historical validation boundaries](VALIDATION.md), and [existing performance measurements](PERFORMANCE.md).
+> See [package.json](../package.json) for the current source version and Settings for the installed version and build commit; public archives may be older. See [0.3.6 focus/preset validation](archive/VALIDATION-v0.3.6.md), [historical validation boundaries](VALIDATION.md), and [existing performance measurements](PERFORMANCE.md).
 
 ## v0.3 improvements
 

@@ -3,7 +3,10 @@ import { isIeeeDocumentPath } from "./pdf-context";
 import {
   createIeeePdfDiagnostic,
   createIeeePdfReadId,
+  IeeePdfError,
+  ieeeSourceUrl,
   type IeeePdfDiagnostic,
+  type IeeePdfReason,
   type IeeePdfPhase,
   type IeeePdfSourceKind,
 } from "./ieee-contract";
@@ -17,7 +20,6 @@ interface IeeePdfReadOptions {
   sourcePage?: boolean;
 }
 
-import { IeeePdfError, ieeeSourceUrl, type IeeePdfReason } from "./ieee-contract";
 /** Read actual element attributes in inert template content; never run scripts. */
 function parseIeeePdfSource(html: string, pageUrl: string): string {
   const page = ieeeSourceUrl(pageUrl);

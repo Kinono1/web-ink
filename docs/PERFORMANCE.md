@@ -193,7 +193,7 @@ WEB_INK_BENCHMARK_BASELINE=/path/to/baseline/chrome-mv3 npm run test:benchmark
 ## PDF remote startup follow-up (2026-10-11)
 
 Baseline `4e74a0f` and the source hashes in
-[performance-pdf-startup-v0.3.2.json](performance-pdf-startup-v0.3.2.json) identify
+[performance-pdf-startup-v0.3.2.json](archive/performance-pdf-startup-v0.3.2.json) identify
 this comparison. The public 11-page MICCAI PDF contains 836,561 bytes. This uses
 disposable, preauthorized Chromium profiles and interface timing, without
 Computer Use or screenshots; it is separate from native Chrome acceptance.
@@ -239,7 +239,7 @@ linked final report.
 
 ## Earlier v0.3 measurements
 
-Measured 2026-09-19, Asia/Shanghai, on an Apple M4 Pro (14 logical cores, 48 GiB), macOS 26.6.2, Node 26.5.0 and Playwright Chromium 153.0.8010.12. Baseline: published v0.2.1 `282ac0c`; candidate webpage runtime/benchmark source: `69bdd60`. PDF measurements use `0326026`; the PDF source and dependencies are unchanged by the later isolated SVGPoint compatibility fix. Raw samples, archive identities, environment, and Boolean acceptance gates are in [performance-v0.3.json](performance-v0.3.json).
+Measured 2026-09-19, Asia/Shanghai, on an Apple M4 Pro (14 logical cores, 48 GiB), macOS 26.6.2, Node 26.5.0 and Playwright Chromium 153.0.8010.12. Baseline: published v0.2.1 `282ac0c`; candidate webpage runtime/benchmark source: `69bdd60`. PDF measurements use `0326026`; the PDF source and dependencies are unchanged by the later isolated SVGPoint compatibility fix. Raw samples, archive identities, environment, and Boolean acceptance gates are in [performance-v0.3.json](archive/performance-v0.3.json).
 
 ## Method
 
@@ -291,7 +291,7 @@ Run `npm run build`, then `npm run benchmark:v03` and `npm run benchmark:pdf`. T
 
 # v0.2 performance evidence
 
-Measured locally on macOS arm64 with Playwright Chromium 153.0.8010.12. Artificial fixtures only. Raw samples and exact byte counts are in [performance-v0.2.json](performance-v0.2.json); repeat with `npm run build` and `npm run benchmark`.
+Measured locally on macOS arm64 with Playwright Chromium 153.0.8010.12. Artificial fixtures only. Raw samples and exact byte counts are in [performance-v0.2.json](archive/performance-v0.2.json); repeat with `npm run build` and `npm run benchmark`.
 
 The reading fixture contains **113,600 characters and 200 annotations**. The library contains **10,000 annotations**. Restoration has 20 measured samples after two warmups; query timing has ten samples after two warmups. First-paint timing has five measured navigations after one warmup. These small local samples describe this setup, not a cross-device performance guarantee.
 

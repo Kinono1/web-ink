@@ -91,12 +91,13 @@ export function useLeaveGuard(state: Inputs, actions:
           if (publicUrl) location.assign(doiUrl(paperDoi) || ieeePaperUrl(publicUrl) || publicUrl);
           else setSourceOpen(true);
           break;
-        case "paper":
+        case "paper": {
           const identity = await readPdfPaperIdentity(currentParams.get("document") || undefined, handoff?.returnUrl || publicUrl);
           const destination = doiUrl(paperDoi || identity?.doi) || paperUrl;
           if (destination) location.assign(destination);
           else setSourceOpen(true);
           break;
+        }
         case "library": location.assign(chrome.runtime.getURL("/library.html")); break;
         case "previous":
           if (previousHash) location.assign(chrome.runtime.getURL(`/library.html?document=${previousHash}`));
